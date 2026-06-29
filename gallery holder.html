@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gallery Holder Preview</title>
+    
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+
+    <style>
+        body {
+            margin: 0; padding: 0;
+            background-color: #111; color: #eee;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+        
+        /* === TOPBAR === */
+        #topbar {
+            background: #1b1b1b; padding: 12px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid #222; z-index: 20;
+        }
+        .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+        .topbar-section.left { justify-content: flex-start; }
+        .topbar-section.center { justify-content: center; text-align: center; }
+        .topbar-section.right { justify-content: flex-end; }
+        
+        #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+        
+        button, select {
+            background: #333; color: #fff; border: none; 
+            padding: 8px 15px; border-radius: 8px; cursor: pointer; transition: 0.15s; 
+            font-family: inherit; font-size: 13px; font-weight: bold;
+        }
+        button:hover, select:hover { background: #00aa66; color: #000; }
+        select { outline: none; min-width: 200px; border: 1px solid #444; }
+        
+        #filter-tag, #batch-tag-input, #rename-input {
+            background: #111; color: #00ff99; border: 1px solid #444; 
+            padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none;
+        }
+        #filter-tag { width: 140px; }
+        #filter-tag:focus, #batch-tag-input:focus, #rename-input:focus { border-color: #00aa66; }
+
+        #btn-remove { background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; padding: 8px 12px; }
+        #btn-remove:hover { background: #6a1822; color: #fff; }
+        #btn-batch-json { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; }
+        #btn-batch-json:hover { background: #1e4a78; color: #fff; }
+        #btn-refresh { background: #263b5a; color: #9ecfff; border: 1px solid #1a3a5c; padding: 8px 12px; }
+        #btn-refresh:hover { background: #4db8ff; color: #000; }
+        
+        #workspace { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 0px; } 
+        
+        #left-col { 
+            flex: 1; display: flex; flex-direction: column; overflow: hidden; 
+            background: #1b1b1b; border-radius: 12px; padding: 15px; position: relative;
+        }
+        
+        /* === GRID MODES & ITEM WRAPPER === */
+        #grid-view { 
+            overflow-y: auto; flex: 1; padding-right: 5px; 
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); 
+            gap: 15px; align-content: start; 
+            align-items: start;
+        }
+        
+        .grid-item-wrapper { 
+            border-radius: 10px; cursor: pointer; border: 2px solid transparent; 
+            transition: 0.1s; background-color: #0d0d0d; position: relative;
+            display: flex; flex-direction: column;
+        }
+        .grid-item-wrapper:hover { border-color: #00ff99; transform: scale(1.02); }
+        .grid-item { width: 100%; height: auto; display: block; border-radius: 8px; }
+
+        /* Estilo da Legenda do Arquivo */
+        .grid-item-label {
+            font-size: 11px; color: #888; text-align: center; padding: 6px 4px;
+            background: #0d0d0d; border-radius: 0 0 8px 8px; border-top: 1px solid #222;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold;
+        }
+        .grid-item-wrapper:hover .grid-item-label { color: #00ff99; }
+        #grid-view.hide-filenames .grid-item-label { display: none; }
+        #grid-view:not(.hide-filenames) .grid-item { border-radius: 8px 8px 0 0; }
+
+        .tag-checkbox, .rename-checkbox {
+            position: absolute; top: 10px; left: 10px;
+            width: 20px; height: 20px; cursor: pointer; z-index: 10; accent-color: #00ff99;
+        }
+        .rename-checkbox { accent-color: #b890ff; }
+
+        /* === RESIZERS === */
+        .resizer { display: flex; align-items: center; justify-content: center; z-index: 10; flex-shrink: 0; cursor: pointer; }
+        .resizer::after { content: ''; background: #333; transition: 0.2s; border-radius: 2px; }
+        .resizer.vertical { width: 16px; cursor: col-resize; }
+        .resizer.vertical::after { width: 4px; height: 40px; }
+        .resizer:hover::after, .resizer.dragging::after { background: #00ff99; }
+        
+        #resizer-right { width: 20px; }
+
+        /* === DETAIL VIEW & THUMBNAILS === */
+        #detail-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+        #main-image-container {
+            flex: 1; display: flex; justify-content: center; align-items: center;
+            background-color: #0d0d0d; border-radius: 10px; margin: 0; margin-bottom: 15px;
+            position: relative; overflow: hidden; min-width: 0; min-height: 0;
+        }
+        #detail-view.thumb-left #main-image-container { margin-bottom: 0; margin-left: 15px; }
+
+        #main-image { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; }
+        
+        #btn-close {
+            position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); 
+            color: #aaa; border: 2px solid #555; border-radius: 50%;
+            width: 32px; height: 32px; font-weight: bold; font-size: 14px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer; padding: 0;
+        }
+        #btn-close:hover { background: #00aa66; border-color: #00cc88; color: #000; }
+        
+        #btn-layout {
+            position: absolute; top: 10px; right: 50px; background: rgba(0,0,0,0.7); 
+            color: #aaa; border: 2px solid #555; border-radius: 8px;
+            width: 32px; height: 32px; font-weight: bold; font-size: 16px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer; padding: 0;
+        }
+        #btn-layout:hover { background: #00aa66; border-color: #00cc88; color: #000; }
+
+        #thumbnail-strip { height: 80px; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; flex-shrink: 0; padding-bottom: 5px; }
+        .thumb { height: 100%; width: auto; border-radius: 6px; cursor: pointer; border: 2px solid transparent; opacity: 0.5; transition: 0.15s; object-fit: cover; aspect-ratio: 1/1;}
+        .thumb:hover, .thumb.active { border-color: #00ff99; opacity: 1; }
+        
+        /* Thumb Left Mode */
+        #detail-view.thumb-left { flex-direction: row-reverse; }
+        #detail-view.thumb-left #thumbnail-strip { width: 110px; height: 100%; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding-bottom: 0; padding-right: 5px;}
+        #detail-view.thumb-left .thumb { width: 100%; height: auto; }
+        
+        /* === RIGHT COLUMN === */
+        #right-col {
+            width: 380px; flex-shrink: 0; background: #1b1b1b; border-radius: 12px;
+            padding: 15px; display: none; flex-direction: column; gap: 15px; overflow-y: auto;
+            position: relative;
+        }
+        
+        /* --- ALERTS --- */
+        #alertBar {
+            display: none; border-radius: 8px;
+            padding: 8px 16px; margin-bottom: 5px; font-size: 12px;
+            line-height: 1.5; text-align: center; font-weight: bold;
+        }
+        #alertBar.error   { background:#2a0000; border:1px solid #aa0000; color:#ff6060; }
+        #alertBar.warn    { background:#2a1a00; border:1px solid #aa6600; color:#ffcc66; }
+        #alertBar.info    { background:#001a2a; border:1px solid #0066aa; color:#66ccff; }
+        #alertBar.success { background:#0d2a18; border:1px solid #00aa66; color:#00ff99; }
+        
+        #sourceBar {
+            display: none; border-radius: 8px; padding: 8px 16px; margin-bottom: -5px; font-size: 12px;
+            line-height: 1.5; text-align: center; font-weight: bold;
+            background:#001a2a; border:1px solid #0066aa; color:#66ccff;
+        }
+        #sourceBar.json-source {
+            background: #0d2a18; border: 1px solid #00aa66; color: #00ff99;
+        }
+        
+        #btn-reset-json {
+            background: rgba(0, 0, 0, 0.3); border: 1px solid currentColor; color: inherit;
+            border-radius: 4px; padding: 2px 8px; margin-left: 10px; cursor: pointer;
+            font-size: 11px; font-weight: bold; transition: 0.15s; vertical-align: middle;
+        }
+        #btn-reset-json:hover { background: rgba(255, 255, 255, 0.2); }
+
+        .promptBlock { background: #0d0d0d; border-radius: 8px; padding: 12px; }
+        .promptTitle { display: flex; justify-content: space-between; align-items: center; color: #aaa; margin-bottom: 6px; font-size: 14px; font-weight: bold; }
+        .promptTitle-actions { display: flex; gap: 5px; align-items: center; }
+        .copy-btn, .collapse-btn { background: none; border: none; color: #555; cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 14px; transition: 0.15s; }
+        .collapse-btn { font-size: 12px; }
+        .copy-btn:hover, .collapse-btn:hover { color: #00cc88; background: #1a2a22; }
+        .copy-btn.copied { color: #00cc88; }
+        
+        .note-title-input { 
+            background: transparent; border: 1px dashed transparent; color: #aaa; font-weight: bold; font-size: 14px; outline: none; width: 60%; transition: 0.2s; font-family: inherit;
+        }
+        .note-title-input:not([readonly]) { border-bottom-color: #444; color: #eee; }
+        .note-title-input:not([readonly]):focus { border-bottom-color: #00aa66; }
+
+        .lora-item { 
+            background: #111; border: 1px solid #222; border-radius: 6px; padding: 6px 10px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .lora-input { 
+            background: transparent; border: none; color: #eee; width: 100%; outline: none; font-size: 12px; font-family: inherit;
+        }
+        .lora-input:not([readonly]) { border-bottom: 1px dashed #444; }
+        .lora-input:not([readonly]):focus { border-bottom-color: #00aa66; }
+
+        textarea, input.meta-input {
+            background: #0d0d0d; color: #00ff99; border: 1px solid #222;
+            border-radius: 8px; padding: 12px; width: 100%; box-sizing: border-box; 
+            font-family: inherit; font-size: 13px; outline: none; transition: 0.15s;
+        }
+        textarea { resize: none; min-height: 60px; max-height: 380px; overflow-y: auto; }
+        input.meta-input { color: #eee; } 
+        textarea:focus, input.meta-input:focus { border-color: #00aa66; }
+        textarea:not([readonly]), input.meta-input:not([readonly]) { background: #111; border-color: #00aa66; color: #fff; }
+        .meta-table { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        .meta-table-full { grid-column: span 2; }
+        .meta-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; font-weight: bold; }
+        .meta-table input { padding: 8px; font-size: 12px; min-height: 0; }
+        
+        #right-col:not(.is-editing) .meta-table.hide-extras .extra-field { display: none; }
+        #right-col:not(.is-editing) #tag-block.hide-tag { display: none; }
+
+        #notes-container { display: flex; flex-direction: column; gap: 15px; }
+
+        .action-buttons { display: flex; gap: 10px; margin-top: auto; }
+        .btn-action {
+            background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;
+            padding: 12px; border-radius: 8px; cursor: pointer; transition: 0.15s; font-weight: bold; font-size: 12px;
+        }
+        .btn-action:hover { background: #1e4a78; }
+        #btn-manual.edit-mode { background: #00aa66; color: #000; border-color: #00cc88; }
+        #btn-save { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
+        #btn-save:hover { background: #40247a; }
+        
+        #btn-delete-img { flex: 0.2; background: #4a1118; color: #ffb6c0; border-color: #7a222c; font-size: 16px; display: flex; justify-content: center; align-items: center; }
+        #btn-delete-img:hover { background: #6a1822; color: #fff; }
+
+        /* === FOOTER === */
+        .footerbar { margin-top: 20px; text-align: center; font-size: 13px; }
+        .footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
+        .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
+        .footer-copy { margin-bottom: 20px; text-align: center; font-size: 11px; color: #555; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1b1b1b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00aa66; }
+
+        #btn-rename-top, #btn-settings, #btn-sort, #btn-batch-tag { background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px;}
+        #btn-sort { font-size: 14px; }
+        #btn-rename-top:hover, #btn-settings:hover, #btn-sort:hover, #btn-batch-tag:hover { color: #00ff99; border-color:#00ff99; }
+        #btn-batch-tag.active { background: #00aa66; color: #000; border-color: #00cc88; }
+        #btn-rename-top.active { background: #b890ff; color: #000; border-color: #9060cc; }
+
+        .settings-dropdown {
+            display: none; position: absolute; top: 55px; right: 20px; background: #111827; border: 1px solid #263b5a; border-radius: 8px;
+            padding: 14px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.6); min-width: 220px; flex-direction: column; gap: 10px;
+        }
+        .settings-dropdown.open { display: flex; }
+        .settings-dropdown label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
+        .settings-dropdown input[type="checkbox"] { width: auto; margin: 0; }
+    </style>
+</head>
+<body>
+
+<datalist id="all-tags-list"></datalist>
+
+<div id="topbar">
+    <div class="topbar-section left">
+        <button onclick="addDirectory()">+ Add Directory</button>
+        <select id="dir-list" onchange="loadSelectedDirectory()">
+            <option value="">Select a directory...</option>
+        </select>
+        <button id="btn-refresh" onclick="loadSelectedDirectory()" style="display:none;" title="Refresh Current Folder">↻</button>
+        <button id="btn-remove" onclick="removeDirectory()" style="display:none;" title="Remove this directory from the list">Remove Path</button>
+        <button id="btn-batch-json" onclick="batchUpdateJSONs()" style="display:none;" title="Create or Update all JSONs in this folder">Batch Update JSONs</button>
+        <input type="text" id="filter-tag" placeholder="Filter by tag..." list="all-tags-list" oninput="filterGallery()" style="display:none;" title="Type a tag to filter the gallery">
+    </div>
+    <div class="topbar-section center"><span id="app-title">🖼️️‍ Gallery Holder 🖼️️‍</span></div>
+    
+    <div class="topbar-section right" id="topbar-right">
+        <button id="btn-rename-top" onclick="toggleRenameBalloon()" title="Rename Current Image" style="display:none; font-size: 15px;">✏️</button>
+        
+        <button id="btn-batch-tag" onclick="toggleBatchTagMode()" title="Add Tag to Multiple Images" style="display:none;">🏷️ Tag</button>
+        <button id="btn-sort" onclick="toggleSort()" title="Sort Gallery">🔀 Normal</button>
+        <button id="btn-settings" onclick="toggleSettings()" title="Settings">⚙️</button>
+    </div>
+</div>
+
+<div id="tag-dropdown" class="settings-dropdown" style="right: 130px; width: 230px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Add Tag:</span>
+    <input type="text" id="batch-tag-input" placeholder="Enter tag name..." list="all-tags-list" onkeydown="if(event.key === 'Enter') applyBatchTags()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="applyBatchTags()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="cancelBatchTags()" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="rename-dropdown" class="settings-dropdown" style="right: 170px; width: 230px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Rename Image:</span>
+    <input type="text" id="rename-input" placeholder="New name..." onkeydown="if(event.key === 'Enter') renameCurrentImage()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="renameCurrentImage()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="document.getElementById('rename-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="settings-dropdown" class="settings-dropdown">
+    <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields()"> Show Extra Gen Data</label>
+    <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField()"> Show Image Tag</label>
+    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()"> Show File Names</label>
+</div>
+
+<div id="workspace">
+    <div id="left-col">
+        <div id="grid-view"></div>
+        <div id="detail-view">
+            <div id="main-image-container">
+                <button id="btn-layout" onclick="toggleThumbPosition()" title="Toggle Thumbnail Layout">◧</button>
+                <button id="btn-close" onclick="backToGrid()">X</button>
+                 <img id="main-image" src="">
+            </div>
+            <div id="thumbnail-strip"></div>
+        </div>
+    </div>
+    
+    <div class="resizer vertical" id="resizer-right" style="display:none;"></div>
+
+    <div id="right-col">
+        <div id="alertBar"></div>
+        
+        <div id="sourceBar">
+            Source: <span id="source-text"></span>
+            <button id="btn-reset-json" onclick="resetPNGParameters()" style="display:none;" title="Rescan image and reset parameters (keeps notes and tags)">↺ Reset</button>
+        </div>
+        
+        <div class="promptBlock">
+             <div class="promptTitle"><span>Generation Data</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+            <div class="collapsible-content meta-table hide-extras">
+                <div class="extra-field"><div class="meta-label">CFG Scale</div><input type="text" id="val-cfg" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Steps</div><input type="text" id="val-steps" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Seed</div><input type="text" id="val-seed" class="meta-input" readonly></div>
+                 <div class="extra-field"><div class="meta-label">Sampler</div><input type="text" id="val-sampler" class="meta-input" readonly></div>
+                <div class="meta-table-full extra-field"><div class="meta-label">Size</div><input type="text" id="val-size" class="meta-input" readonly></div>
+                <div class="meta-table-full"><div class="meta-label">Checkpoint</div><input type="text" id="val-ckpt" class="meta-input" readonly></div>
+            </div>
+        </div>
+
+        <div class="promptBlock" id="loras-block" style="display: none;">
+             <div class="promptTitle"><span>LoRAs</span>
+                <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+            </div>
+            <div class="collapsible-content">
+                <div id="loras-container"></div>
+            </div>
+        </div>
+
+        <div class="promptBlock">
+             <div class="promptTitle"><span>Positive Prompt</span>
+                <div class="promptTitle-actions">
+                    <button class="copy-btn" onclick="copyText(this, 'val-pos')" title="Copy">⧉</button>
+                    <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+                </div>
+            </div>
+            <div class="collapsible-content"><textarea id="val-pos" readonly oninput="autoResize(this)"></textarea></div>
+        </div>
+        
+        <div class="promptBlock">
+            <div class="promptTitle"><span>Negative Prompt</span>
+                <div class="promptTitle-actions">
+                    <button class="copy-btn" onclick="copyText(this, 'val-neg')" title="Copy">⧉</button>
+                    <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+                </div>
+            </div>
+            <div class="collapsible-content"><textarea id="val-neg" readonly oninput="autoResize(this)"></textarea></div>
+        </div>
+
+        <div class="promptBlock hide-tag" id="tag-block">
+            <div class="promptTitle"><span>Image Tag</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+             <div class="collapsible-content"><input type="text" id="val-tag" class="meta-input" placeholder="Ex: naruto" list="all-tags-list" readonly title="Add one tag for this image"></div>
+        </div>
+        
+        <div id="notes-container"></div>
+        
+        <div id="edit-controls" style="display: none; justify-content: flex-end; gap: 10px; margin-bottom: 10px;">
+            <button class="btn-action" style="padding: 6px 12px; flex: none;" onclick="addLora()">+ LoRA</button>
+            <button class="btn-action" style="padding: 6px 12px; flex: none;" onclick="addNote()">+ Note / Prompt</button>
+        </div>
+        
+        <input type="hidden" id="file-name">
+        
+        <div class="action-buttons">
+            <button id="btn-manual" class="btn-action" onclick="toggleManualEdit()">Edit</button>
+            <button id="btn-save" class="btn-action" onclick="saveSidecarFile()">Save JSON</button>
+            <button id="btn-delete-img" onclick="deleteCurrentImage()" title="Excluir imagem e JSON">🗑️</button>
+        </div>
+    </div>
+</div>
+
+<div class="footerbar" style="margin-top:-10px;">
+    <a href="https://github.com/shirosaki33/PNG-Metadata-Reader" target="_blank">GitHub Repository</a>
+</div>
+<div class="footer-copy">© 2026 shirosaki33 · MIT License</div>
+
+<script src="parsers/png-chunks.js"></script>
+<script src="parsers/stable-diffusion.js"></script>
+<script src="parsers/novelai.js"></script>
+<script src="parsers/comfy.js"></script>
+<script src="parsers/swarmui.js"></script>
+<script src="parsers/invokeai.js"></script>
+<script src="parsers/fooocus.js"></script>
+
+<script src="tools/quick_links.js"></script>
+<script src="tools/gallery_tag_system.js"></script>
+<script src="tools/gallery_file_manager.js"></script>
+
+<script>
+/* ================================================================
+   BLOCK 1 — UI UTILITIES & SETTINGS
+   ================================================================ */
+function autoResize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+
+function copyText(btn, id) { 
+    let el = id ? document.getElementById(id) : btn.closest('.promptBlock').querySelector('.collapsible-content textarea, .collapsible-content input'); 
+    if (!el || !el.value) return; 
+    navigator.clipboard.writeText(el.value).then(() => { 
+        const old = btn.innerText; btn.innerText = '✓'; btn.classList.add('copied'); 
+        setTimeout(() => { btn.innerText = old; btn.classList.remove('copied'); }, 1500); 
+    }); 
+}
+
+function setCollapseState(block, isCollapsed) { 
+    if (!block) return; 
+    const btn = block.querySelector('.collapse-btn'); 
+    const content = block.querySelector('.collapsible-content'); 
+    if (!btn || !content) return; 
+    if (isCollapsed) { 
+        content.style.display = 'none'; btn.textContent = '▶'; 
+    } else { 
+        content.style.display = ''; btn.textContent = '▼'; 
+        const textareas = content.querySelectorAll('textarea'); 
+        textareas.forEach(ta => autoResize(ta)); 
+    } 
+}
+
+function toggleCollapse(btn) { 
+    const block = btn.closest('.promptBlock'); 
+    const content = block.querySelector('.collapsible-content'); 
+    const isCollapsed = content.style.display === 'none'; 
+    setCollapseState(block, !isCollapsed); 
+}
+
+let alertTimeout;
+let deferredSourceBarUpdate = null;
+
+function showAlert(msg, type) {
+    const bar = document.getElementById('alertBar'); 
+    clearTimeout(alertTimeout);
+    
+    if (deferredSourceBarUpdate) {
+        clearTimeout(deferredSourceBarUpdate);
+        deferredSourceBarUpdate = null;
+    }
+
+    if (!msg) { 
+        bar.style.display = 'none'; bar.className = ''; bar.textContent = ''; 
+        return; 
+    }
+    
+    if (msg.includes('JSON') && !msg.includes('not found') && !msg.includes('Error')) {
+       document.getElementById('sourceBar').style.display = 'none'; bar.className = 'success';
+       
+       if (msg.includes('loaded from sidecar')) {
+           deferredSourceBarUpdate = setTimeout(() => {
+               const sourceBar = document.getElementById('sourceBar');
+               const sourceText = document.getElementById('source-text');
+               sourceText.textContent = 'JSON Sidecar';
+               sourceBar.className = 'json-source';
+               sourceBar.style.display = 'block';
+           }, 5000);
+       }
+       
+    } else if (msg.includes('extracted from PNG') || msg.includes('Processing batch')) {
+        document.getElementById('sourceBar').style.display = 'none'; bar.className = 'info'; 
+
+        deferredSourceBarUpdate = setTimeout(() => {
+           const sourceBar = document.getElementById('sourceBar');
+           sourceBar.className = '';
+           sourceBar.style.display = 'block';
+        }, 5000);
+    } else if (msg.includes('not found') || msg.includes('Error') || type === 'error' || msg.includes('⚠️') || msg.includes('❌') || msg.includes('🗑️')) {
+         bar.className = 'error';
+         if(type === 'success') bar.className = 'success'; 
+    } else {
+         bar.className = type || 'info';
+    }
+
+    bar.textContent = msg; 
+    bar.style.display = 'block';
+    
+    alertTimeout = setTimeout(() => { 
+        bar.style.display = 'none'; 
+    }, 5000); 
+}
+
+function toggleSettings() { document.getElementById('settings-dropdown').classList.toggle('open'); }
+
+function toggleExtraFields() { 
+    const isChecked = document.getElementById('toggle-extra-fields').checked; 
+    const table = document.querySelector('.meta-table'); 
+    if (isChecked) table.classList.remove('hide-extras'); else table.classList.add('hide-extras'); 
+    localStorage.setItem('gh_show_extra_fields', isChecked); 
+}
+
+function toggleTagField() { 
+    const isChecked = document.getElementById('toggle-tag-field').checked; 
+    const block = document.getElementById('tag-block'); 
+    if (isChecked) block.classList.remove('hide-tag'); else block.classList.add('hide-tag'); 
+    localStorage.setItem('gh_show_tag_field', isChecked); 
+}
+
+function toggleFilenameField() { 
+    const isChecked = document.getElementById('toggle-filename-field').checked; 
+    const grid = document.getElementById('grid-view'); 
+    if (isChecked) grid.classList.remove('hide-filenames'); else grid.classList.add('hide-filenames'); 
+    localStorage.setItem('gh_show_filenames', isChecked); 
+}
+
+function toggleThumbPosition() {
+    const detailView = document.getElementById('detail-view');
+    const btn = document.getElementById('btn-layout');
+    detailView.classList.toggle('thumb-left');
+
+    if (detailView.classList.contains('thumb-left')) {
+        btn.innerHTML = '⬒';
+    } else {
+        btn.innerHTML = '◧';
+    }
+}
+
+// Lógica de clicar fora para fechar os balões
+document.addEventListener('click', (e) => { 
+    const dropdownSettings = document.getElementById('settings-dropdown'); 
+    const btnSettings = document.getElementById('btn-settings'); 
+    if (dropdownSettings && dropdownSettings.classList.contains('open') && !dropdownSettings.contains(e.target) && !btnSettings.contains(e.target)) {
+        dropdownSettings.classList.remove('open');
+    }
+
+    const dropdownRename = document.getElementById('rename-dropdown'); 
+    const btnRename = document.getElementById('btn-rename-top'); 
+    if (dropdownRename && dropdownRename.classList.contains('open') && !dropdownRename.contains(e.target) && !btnRename.contains(e.target)) {
+        dropdownRename.classList.remove('open');
+    }
+    
+    const dropdownTag = document.getElementById('tag-dropdown'); 
+    const btnTag = document.getElementById('btn-batch-tag'); 
+    if (dropdownTag && dropdownTag.classList.contains('open') && !dropdownTag.contains(e.target) && !btnTag.contains(e.target)) {
+        dropdownTag.classList.remove('open');
+    }
+});
+
+let isDraggingRight = false;
+window.addEventListener('DOMContentLoaded', () => {
+    const showExtras = localStorage.getItem('gh_show_extra_fields') === 'true'; document.getElementById('toggle-extra-fields').checked = showExtras; toggleExtraFields();
+    const showTag = localStorage.getItem('gh_show_tag_field') === 'true'; document.getElementById('toggle-tag-field').checked = showTag; toggleTagField();
+    const showFilenames = localStorage.getItem('gh_show_filenames') !== 'false'; document.getElementById('toggle-filename-field').checked = showFilenames; toggleFilenameField();
+
+    const resizerRight = document.getElementById('resizer-right');
+    const rightCol = document.getElementById('right-col');
+
+    resizerRight.addEventListener('mousedown', () => {
+        isDraggingRight = true;
+        resizerRight.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (isDraggingRight) {
+            let newWidth = window.innerWidth - e.clientX - 20; 
+            if (newWidth < 250) newWidth = 250;
+            if (newWidth > window.innerWidth * 0.6) newWidth = window.innerWidth * 0.6; 
+            rightCol.style.width = newWidth + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDraggingRight = false;
+        resizerRight.classList.remove('dragging');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+    });
+});
+
+/* ================================================================
+   BLOCK 2 — DYNAMIC NOTES & LORAS
+   ================================================================ */
+function addNote(name = 'Note', value = '') {
+    const container = document.getElementById('notes-container');
+    const block = document.createElement('div'); 
+    block.className = 'promptBlock note-block'; 
+    const rmStyle = isEditing ? 'inline-block' : 'none';
+    const readonlyAttr = isEditing ? '' : 'readonly';
+    block.innerHTML = `
+        <div class="promptTitle">
+            <input type="text" class="note-title-input" value="${name}" ${readonlyAttr}>
+            <div class="promptTitle-actions">
+                <button class="copy-btn" onclick="copyText(this)" title="Copy">⧉</button>
+                <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+                 <button class="remove-btn" style="display:${rmStyle}; color:#ff6060; background:none; border:none; cursor:pointer; font-size:12px; margin-left:5px; padding:0 3px;" onclick="this.closest('.note-block').remove()" title="Remove Note">✖</button>
+            </div>
+        </div>
+        <div class="collapsible-content">
+            <textarea class="val-note-input" ${readonlyAttr} oninput="autoResize(this)">${value}</textarea>
+        </div>`;
+    container.appendChild(block); 
+    setTimeout(() => autoResize(block.querySelector('textarea')), 10);
+}
+
+function addLora(value = '') {
+    const container = document.getElementById('loras-container');
+    const item = document.createElement('div');
+    item.className = 'lora-item';
+    const rmStyle = isEditing ? 'inline-block' : 'none';
+    const readonlyAttr = isEditing ? '' : 'readonly';
+    item.innerHTML = `
+        <input type="text" class="lora-input" value="${value}" ${readonlyAttr} placeholder="LoRA name / weight">
+        <button class="remove-btn" style="display:${rmStyle}; color:#ff6060; background:none; border:none; cursor:pointer; font-size:12px; margin-left:5px; padding:0 3px;" onclick="removeLora(this)" title="Remove LoRA">✖</button>
+    `;
+    container.appendChild(item);
+    document.getElementById('loras-block').style.display = 'block';
+}
+
+function removeLora(btn) {
+    btn.closest('.lora-item').remove();
+    checkLorasVisibility();
+}
+
+function checkLorasVisibility() {
+    const container = document.getElementById('loras-container');
+    const block = document.getElementById('loras-block');
+    if (!isEditing && container.children.length === 0) {
+        block.style.display = 'none';
+    } else {
+        block.style.display = 'block';
+    }
+}
+
+/* ================================================================
+   BLOCK 3 — MANUAL EDITING CONTROL
+   ================================================================ */
+let isEditing = false;
+const EDITABLE_FIELDS = ['val-pos','val-neg','val-tag','val-cfg','val-steps','val-seed','val-sampler','val-ckpt','val-size'];
+
+function toggleManualEdit() {
+    const btn = document.getElementById('btn-manual'); 
+    const rightCol = document.getElementById('right-col');
+    isEditing = !isEditing;
+    if (isEditing) { 
+        rightCol.classList.add('is-editing'); 
+        setCollapseState(document.getElementById('tag-block'), false); 
+        setCollapseState(document.querySelector('.meta-table').closest('.promptBlock'), false); 
+    } else { 
+        rightCol.classList.remove('is-editing'); 
+    }
+    
+    EDITABLE_FIELDS.forEach(id => { 
+        const el = document.getElementById(id); 
+        if (isEditing) el.removeAttribute('readonly'); 
+        else el.setAttribute('readonly', 'true'); 
+    });
+    
+    document.querySelectorAll('.note-title-input').forEach(el => { if (isEditing) el.removeAttribute('readonly'); else el.setAttribute('readonly', 'true'); });
+    document.querySelectorAll('.val-note-input').forEach(el => { if (isEditing) el.removeAttribute('readonly'); else el.setAttribute('readonly', 'true'); });
+    document.querySelectorAll('.lora-input').forEach(el => { if (isEditing) el.removeAttribute('readonly'); else el.setAttribute('readonly', 'true'); });
+    
+    document.getElementById('edit-controls').style.display = isEditing ? 'flex' : 'none';
+    document.querySelectorAll('.remove-btn').forEach(b => b.style.display = isEditing ? 'inline-block' : 'none');
+    
+    checkLorasVisibility();
+
+    if (isEditing) { 
+        btn.textContent = 'Save to UI'; 
+        btn.classList.add('edit-mode'); 
+        showAlert(null); 
+    } else { 
+        btn.textContent = 'Edit'; 
+        btn.classList.remove('edit-mode'); 
+    }
+}
+
+function fillFields(d) {
+    const posEl  = document.getElementById('val-pos');
+    const negEl  = document.getElementById('val-neg');
+    posEl.value  = d?.pos  ?? ''; negEl.value  = d?.neg  ?? '';
+    document.getElementById('val-tag').value = d?.tag ?? '';
+    document.getElementById('val-cfg').value = d?.cfg ?? ''; document.getElementById('val-steps').value = d?.steps ?? ''; document.getElementById('val-seed').value = d?.seed ?? '';
+    document.getElementById('val-sampler').value = d?.sampler ?? ''; document.getElementById('val-ckpt').value = d?.ckpt ?? ''; document.getElementById('val-size').value = d?.size ?? '';
+    autoResize(posEl); autoResize(negEl);
+
+    // Process LoRAs
+    document.getElementById('loras-container').innerHTML = '';
+    let lorasText = d?.loras ?? '';
+    if (lorasText) {
+        let loraArr = lorasText.split(',').map(s => s.trim()).filter(s => s);
+        loraArr.forEach(l => addLora(l));
+    }
+    checkLorasVisibility();
+
+    // Process Notes
+    document.getElementById('notes-container').innerHTML = '';
+    if (d?.notes && Array.isArray(d.notes) && d.notes.length > 0) {
+        d.notes.forEach((n, i) => {
+            if (typeof n === 'string') {
+                addNote(`Note ${i + 1}`, n);
+            } else if (n && typeof n === 'object') {
+                addNote(n.name || `Note ${i + 1}`, n.value || '');
+            }
+        });
+    } else if (d?.note) {
+        addNote('Note 1', typeof d.note === 'string' ? d.note : (d.note.value || ''));
+    } else {
+        addNote('Note', '');
+    }
+    
+    setCollapseState(negEl.closest('.promptBlock'), true); 
+    setCollapseState(posEl.closest('.promptBlock'), posEl.value.split(/\r\n|\r|\n/).length > 10);
+    
+    let srcName = d?.source || '';
+    if (srcName.toLowerCase().includes('stable diffusion')) {
+        srcName = 'Stable Diffusion';
+    }
+
+    const sourceBar = document.getElementById('sourceBar'); 
+    const sourceText = document.getElementById('source-text');
+    const btnReset = document.getElementById('btn-reset-json');
+    
+    sourceBar.className = '';
+    if (btnReset) btnReset.style.display = 'none';
+
+    if (srcName === 'json') {
+        sourceText.textContent = 'JSON Sidecar';
+        sourceBar.className = 'json-source';
+        if (btnReset) btnReset.style.display = 'inline-block'; 
+        
+        if(!document.getElementById('alertBar').style.display || document.getElementById('alertBar').style.display === 'none') {
+            sourceBar.style.display = 'block';
+        }
+    } else if (srcName) {
+        sourceText.textContent = srcName;
+        if(!document.getElementById('alertBar').style.display || document.getElementById('alertBar').style.display === 'none') {
+            sourceBar.style.display = 'block';
+        }
+    } else { 
+        sourceBar.style.display = 'none';
+    }
+}
+
+// === RESCAN FUNCTION ===
+async function resetPNGParameters() {
+    const fileName = document.getElementById('file-name').value;
+    if (!fileName) return;
+    const fileItem = currentFiles.find(a => a.name === fileName);
+    if (!fileItem?.file) {
+        showAlert('❌ Original image not found in cache.', 'error');
+        return;
+    }
+
+    const notesArray = Array.from(document.querySelectorAll('.note-block')).map(block => {
+        return {
+            name: block.querySelector('.note-title-input').value,
+            value: block.querySelector('.val-note-input').value
+        };
+    }).filter(n => n.value.trim() !== '' || n.name.trim() !== 'Note');
+
+    const currentTag = document.getElementById('val-tag').value.trim();
+    const lorasArray = Array.from(document.querySelectorAll('.lora-input')).map(inp => inp.value.trim()).filter(v => v !== '');
+    const currentLoras = lorasArray.join(', ');
+
+    showAlert('🔍 Scanning image...', 'info');
+
+    try {
+        const meta = await extractPNGMetadata(fileItem.file);
+        if (meta) {
+            fillFields({
+                pos: meta.pos ?? '',
+                neg: meta.neg ?? '',
+                tag: currentTag, 
+                notes: notesArray.length > 0 ? notesArray : (meta.notes ?? []), 
+                cfg: meta.cfg ?? '',
+                steps: meta.steps ?? '',
+                seed: meta.seed ?? '',
+                sampler: meta.sampler ?? meta.scheduler ?? '',
+                ckpt: meta.ckpt ?? meta.checkpoint ?? '',
+                loras: currentLoras !== '' ? currentLoras : (meta.loras ?? ''), 
+                size: meta.size ?? '',
+                source: meta.source 
+            });
+            showAlert('✔ Parameters reloaded from image (Notes and Tags preserved). Remember to save.', 'success');
+        } else {
+            showAlert('⚠️ No generation metadata found in the image.', 'warn');
+        }
+    } catch (e) {
+        console.error(e);
+        showAlert('❌ Error trying to read original image.', 'error');
+    }
+}
+
+// === DELETE IMAGE FUNCTION ===
+async function deleteCurrentImage() {
+    if (!currentHandle) return;
+    const fname = document.getElementById('file-name').value;
+    if (!fname) return;
+    
+    if (!confirm(`Tem certeza que deseja excluir permanentemente o arquivo:\n${fname}\n(e o JSON dele, se existir)?`)) return;
+
+    try {
+        await currentHandle.removeEntry(fname);
+        
+        // Tenta deletar o sidecar
+        const baseName = fname.substring(0, fname.lastIndexOf('.')) || fname;
+        try { await currentHandle.removeEntry(baseName + '.json'); } catch(e) {}
+        
+        tagsPerFile.delete(fname);
+        currentFiles = currentFiles.filter(f => f.name !== fname);
+        
+        showAlert('🗑️ Arquivo excluído com sucesso.', 'success');
+        backToGrid();
+        renderGrid();
+    } catch (e) {
+        console.error(e);
+        showAlert('❌ Erro ao excluir arquivo. Verifique permissões.', 'error');
+    }
+}
+
+/* ================================================================
+   BLOCK 4A — COMFYUI + NOVELAI CUSTOM NODES PARSER
+   ================================================================ */
+(function () {
+    function _txt(v) { return v === undefined || v === null ? '' : String(v); }
+    function _nodeTitle(n) { return _txt((n && n._meta && n._meta.title) || (n && n.title) || ''); }
+    function _widgets(n) { return Array.isArray(n && n.widgets_values) ? n.widgets_values : []; }
+    function _isMuted(n) { return !!(n && (n.mode === 4 || n.mode === '4')); }
+
+    function _hasComfyNAI(json) {
+        if (!json || typeof json !== 'object') return false;
+        for (const id in json) {
+            const t = _txt(json[id]?.class_type);
+            if (/^NovelAI(?:T2I|I2I|Parameters|Character|CharacterStack|RetrySettings|Token)$/i.test(t)) return true;
+        }
+        return false;
+    }
+
+    function _findNodes(json, re) {
+        const out = [];
+        for (const id in json) {
+            if (re.test(_txt(json[id]?.class_type))) out.push({ id, node: json[id] });
+        }
+        return out;
+    }
+
+    function _firstNode(json, re) {
+        return _findNodes(json, re).find(x => !_isMuted(x.node)) || null;
+    }
+
+    function _inputNode(json, val) {
+        if (!Array.isArray(val)) return null;
+        const id = _txt(val[0]);
+        return id && json[id] ? { id, node: json[id] } : null;
+    }
+
+    function _resolveStr(json, val, depth, seen) {
+        depth = depth || 0; seen = seen || {};
+        if (depth > 20) return '';
+        if (typeof val === 'string') return val;
+        if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+        const ref = _inputNode(json, val);
+        if (!ref || seen[ref.id]) return '';
+        seen[ref.id] = true;
+        const n = ref.node, inp = n.inputs || {}, wv = _widgets(n);
+        const all = _txt(n.class_type) + ' ' + _nodeTitle(n);
+        if (/List of strings|String.*Concat|Concat|Join|Merge/i.test(all)) {
+            let delim = inp.delimiter;
+            if (delim === undefined || Array.isArray(delim)) delim = wv[wv.length - 1] ?? ' ';
+            const keys = Object.keys(inp)
+                .filter(k => /^(string|text|input)_?\d+$/i.test(k))
+                .sort((a, b) => Number((a.match(/\d+/) || [9999])[0]) - Number((b.match(/\d+/) || [9999])[0]));
+            return keys.map(k => _resolveStr(json, inp[k], depth + 1, { ...seen }).trim())
+                .filter(Boolean).join(_txt(delim || ' ')).trim();
+        }
+
+        const direct = inp.value ?? inp.text ?? inp.prompt ?? inp.string ?? inp.caption ?? inp.positive ?? inp.negative ?? inp.uc;
+        if (typeof direct === 'string') return direct;
+        if (Array.isArray(direct)) return _resolveStr(json, direct, depth + 1, seen);
+        const ws = wv.find(v => typeof v === 'string' && v.trim());
+        if (ws) return ws;
+        const linked = Object.keys(inp).filter(k => Array.isArray(inp[k]))
+            .sort((a, b) => Number((a.match(/\d+/) || [9999])[0]) - Number((b.match(/\d+/) || [9999])[0]));
+        for (const k of linked) {
+            const r = _resolveStr(json, inp[k], depth + 1, { ...seen });
+            if (r.trim()) return r;
+        }
+        return '';
+    }
+
+    function _displayModel(raw) {
+        const s = _txt(raw).trim();
+        const low = s.toLowerCase().replace(/[\s_]+/g, '-');
+        if (/nai-diffusion-4-5-full|v4\.5.*4bde2a90/.test(low))    return 'NAI Diffusion 4.5 FULL';
+        if (/nai-diffusion-4-5-curated|v4\.5.*c02d4f98/.test(low)) return 'NAI Diffusion 4.5 Curated';
+        if (/nai-diffusion-4-full|v4.*37442fca/.test(low))          return 'NAI Diffusion 4.0 FULL';
+        if (/nai-diffusion-4-curated|v4.*7abffa2a/.test(low))       return 'NAI Diffusion 4.0 Curated';
+        return s ? s.replace(/[\\\/]+/g, '/').split('/').pop()
+                    .replace(/\.(safetensors|ckpt|pt|pth|bin|gguf|onnx)$/i, '')
+                    .replace(/_+/g, ' ').trim() : '';
+    }
+
+    function _parseCharactersAsNotes(json, positionMode) {
+        const notes = [];
+        const isRandom = /random/i.test(_txt(positionMode));
+        _findNodes(json, /^NovelAICharacter$/i).forEach(({ node }) => {
+            const inp = node.inputs || {}, wv = _widgets(node);
+            let enabled = inp.enabled ?? wv[0] ?? true;
+            if (enabled === false || enabled === 'false') return;
+            let pos = _txt(inp.prompt    ?? wv[1] ?? '').trim();
+            let neg = _txt(inp.negative  ?? wv[2] ?? '').trim();
+            if (!pos && !neg) return;
+
+            let label = '';
+            if (!isRandom) {
+                const col = _txt(inp.position_col ?? wv[3] ?? '').trim().toUpperCase();
+                const row = _txt(inp.position_row ?? wv[4] ?? '').trim();
+                if (col && row) label = `Character ${col}${row}`;
+            }
+            if (!label) label = `Character ${notes.length + 1}`;
+
+            let value = '';
+            if (pos) value += `Positive: ${pos}`;
+            if (neg) value += (value ? '\n' : '') + `Negative: ${neg}`;
+
+            notes.push({ name: label, value });
+        });
+        return notes;
+    }
+
+    window.parseComfyNovelAI = function(jsonStr) {
+        let json;
+        try { json = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr; } catch { return null; }
+
+        if (Array.isArray(json?.nodes)) {
+            const dict = {};
+            json.nodes.forEach(n => { if (n?.id != null) dict[String(n.id)] = n; });
+            json = dict;
+        }
+
+        if (!_hasComfyNAI(json)) return null;
+
+        const main = _firstNode(json, /^NovelAI(?:T2I|I2I)$/i);
+        const mainInp = main?.node?.inputs || {};
+        const mainWv  = _widgets(main?.node);
+
+        const pRef = _inputNode(json, mainInp.parameters) || _firstNode(json, /^NovelAIParameters$/i);
+        const p    = pRef?.node?.inputs || {};
+        const pWv  = _widgets(pRef?.node);
+        const width  = p.width  ?? pWv[0] ?? '';
+        const height = p.height ?? pWv[1] ?? '';
+        const model  = p.model  ?? pWv[2] ?? '';
+        const steps   = _txt(p.steps     ?? pWv[6]  ?? '');
+        const cfg     = _txt(p.cfg_scale ?? p.scale ?? pWv[7] ?? '');
+        const seed    = _txt(p.seed      ?? pWv[3]  ?? '');
+        const sampler = _txt(p.sampler   ?? pWv[4]  ?? '');
+        const scheduler = _txt(p.scheduler ?? p.noise_schedule ?? pWv[5] ?? '');
+        const size    = (width && height) ? `${width} x ${height}` : '';
+
+        let pos = _resolveStr(json, mainInp.prompt, 0, {});
+        let neg = _resolveStr(json, mainInp.negative_prompt, 0, {});
+        if (!pos && typeof mainWv[0] === 'string') pos = mainWv[0];
+        if (!neg && typeof mainWv[1] === 'string') neg = mainWv[1];
+        pos = pos.replace(/^parameters[\s\0]*/i, '').replace(/^\0+/, '').trim();
+        neg = neg.replace(/^parameters[\s\0]*/i, '').replace(/^\0+/, '').trim();
+        
+        const stackRef  = _inputNode(json, mainInp.characters) || _firstNode(json, /^NovelAICharacterStack$/i);
+        const stackInp  = stackRef?.node?.inputs || {};
+        const stackWv   = _widgets(stackRef?.node);
+        const stackMode = stackInp.position_mode ?? stackWv[0] ?? '';
+        const notes = _parseCharactersAsNotes(json, stackMode);
+
+        return {
+            pos,
+            neg,
+            steps,
+            cfg,
+            seed,
+            size,
+            sampler,
+            scheduler,
+            ckpt:   _displayModel(model),
+            loras:  '',
+            notes,
+            source: 'ComfyUI (NovelAI)',
+        };
+    };
+
+    window._hasComfyNovelAINodes = _hasComfyNAI;
+})();
+
+/* ================================================================
+   BLOCK 4 — PNG METADATA EXTRACTION  (dispatcher only)
+   ================================================================ */
+
+function extractTextFromBytes(buf) {
+    const bytes = new Uint8Array(buf);
+    let raw = '';
+    for (let i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+    const candidates = [];
+    const jsonRe = /\{[\s\S]{10,}/g;
+    let m;
+    while ((m = jsonRe.exec(raw)) !== null) {
+        const start = m.index;
+        let depth = 0, inStr = false, esc = false;
+        for (let i = start; i < raw.length && i < start + 2000000; i++) {
+            const c = raw[i];
+            if (esc) { esc = false; continue; }
+            if (c === '\\') { esc = true; continue; }
+            if (c === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (c === '{') depth++;
+            else if (c === '}') {
+                depth--;
+                if (depth === 0) {
+                    const candidate = raw.slice(start, i + 1);
+                    if (candidate.includes('class_type') || candidate.includes('sui_image_params') ||
+                        candidate.includes('v4_prompt') || candidate.includes('invokeai_metadata') ||
+                        candidate.includes('base_model')) {
+                        candidates.push(candidate);
+                    }
+                    break;
+                }
+            }
+        }
+        if (candidates.length) break;
+    }
+
+    const sdIdx = raw.indexOf('Steps:');
+    if (sdIdx !== -1) {
+        const win = raw.slice(Math.max(0, sdIdx - 5000), sdIdx + 2000).replace(/\0/g, '');
+        candidates.push(win);
+    }
+
+    return candidates;
+}
+
+async function extractPNGMetadata(file) {
+    const isPng = file.name.match(/\.png$/i);
+    if (isPng) {
+        const chunks = await window.lerChunksPNG(file);
+        if (chunks.has('prompt')) {
+            const promptStr = chunks.get('prompt');
+            const nai = window.parseComfyNovelAI(promptStr);
+            if (nai) return nai;
+            const parsed = window.parseComfyJSON(promptStr);
+            if (parsed) return parsed;
+        }
+
+        let textChunk = chunks.get('parameters') ?? '';
+        if (!textChunk) {
+            for (const [k, v] of chunks.entries()) {
+                if (k === 'prompt' || k === 'workflow') continue;
+                if (v.includes('Steps:')          ||
+                    v.includes('"v4_prompt"')     ||
+                    v.includes('invokeai_metadata') ||
+                    v.includes('base_model')      ||
+                    v.includes('sui_image_params')
+                ) {
+                    textChunk = v;
+                    break;
+                }
+            }
+        }
+
+        let textChunkJson = null;
+        if (textChunk) {
+            try { textChunkJson = JSON.parse(textChunk); } catch {}
+        }
+
+        if (textChunk) {
+            const swarm = window.parseSwarmUI(textChunk, textChunkJson);
+            if (swarm) return swarm;
+
+            const invoke = window.parseInvokeAI(textChunk, textChunkJson);
+            if (invoke) return invoke;
+
+            const fooocus = window.parseFooocus(textChunk, textChunkJson);
+            if (fooocus) return fooocus;
+
+            const novelai = window.parseNovelAI(textChunk, textChunkJson);
+            if (novelai) return novelai;
+
+            const sd = window.parseStableDiffusion(textChunk);
+            if (sd) return sd;
+        }
+
+        for (const [k, v] of chunks.entries()) {
+            if (k === 'prompt' || k === 'workflow') continue;
+            try {
+                const j = JSON.parse(v);
+                if (j && typeof j === 'object' && Object.values(j).some(n => n?.class_type)) {
+                    const parsed = window.parseComfyJSON(v);
+                    if (parsed) return parsed;
+                }
+            } catch {}
+        }
+
+        return null;
+    }
+
+    if (file.name.match(/\.(jpg|jpeg|webp)$/i)) {
+        try {
+            const buf = await file.arrayBuffer();
+            const candidates = extractTextFromBytes(buf);
+            for (const candidate of candidates) {
+                let j = null;
+                try { j = JSON.parse(candidate); } catch {}
+                if (j && typeof j === 'object' && Object.values(j).some(n => n?.class_type)) {
+                    const parsed = window.parseComfyJSON(candidate);
+                    if (parsed) return parsed;
+                }
+
+                let jsonObj = null;
+                try { jsonObj = JSON.parse(candidate); } catch {}
+
+                const swarm = window.parseSwarmUI(candidate, jsonObj);
+                if (swarm) return swarm;
+
+                const invoke = window.parseInvokeAI(candidate, jsonObj);
+                if (invoke) return invoke;
+
+                const fooocus = window.parseFooocus(candidate, jsonObj);
+                if (fooocus) return fooocus;
+
+                const novelai = window.parseNovelAI(candidate, jsonObj);
+                if (novelai) return novelai;
+
+                const sd = window.parseStableDiffusion(candidate);
+                if (sd) return sd;
+            }
+        } catch (e) { console.warn('Non-PNG parser error:', e); }
+    }
+
+    return null;
+}
+
+/* ================================================================
+   BLOCK 5 — JSON SIDECAR (save & batch update)
+   tag/filter/index functions live in tools/gallery_tag_system.js
+   ================================================================ */
+async function saveSidecarFile() {
+    if (!currentHandle) { alert('No directory loaded.'); return; }
+    const fname = document.getElementById('file-name').value;
+    if (!fname) { alert('No image selected.'); return; }
+
+    const baseName = fname.substring(0, fname.lastIndexOf('.')) || fname;
+    const sidecarName = baseName + '.json';
+    const savedTag = document.getElementById('val-tag').value.trim();
+    
+    const lorasArray = Array.from(document.querySelectorAll('.lora-input')).map(inp => inp.value.trim()).filter(v => v !== '');
+    const formattedLoras = lorasArray.join(', ');
+
+    const notesArray = Array.from(document.querySelectorAll('.note-block')).map(block => {
+        return {
+            name: block.querySelector('.note-title-input').value,
+            value: block.querySelector('.val-note-input').value
+        };
+    }).filter(n => n.value.trim() !== '');
+    
+    const dataObj = {
+        file_name:  fname,
+        positive:   document.getElementById('val-pos').value,
+        negative:   document.getElementById('val-neg').value,
+        tag:        savedTag,
+        notes:      notesArray, 
+        cfg:        document.getElementById('val-cfg').value,
+        steps:      document.getElementById('val-steps').value,
+        seed:       document.getElementById('val-seed').value,
+        sampler:    document.getElementById('val-sampler').value,
+        checkpoint: document.getElementById('val-ckpt').value,
+        loras:      formattedLoras,
+        size:       document.getElementById('val-size').value
+    };
+    
+    try {
+        const fh = await currentHandle.getFileHandle(sidecarName, { create: true });
+        const writable = await fh.createWritable(); await writable.write(JSON.stringify(dataObj, null, 2)); await writable.close();
+        showAlert(`✅ JSON File saved: ${sidecarName}`, 'success');
+        tagsPerFile.set(fname, savedTag);
+        if (savedTag) allTags.add(savedTag);
+        updateTagsDatalist();
+    } catch (e) { console.error(e); showAlert('❌ Error saving. Check directory permissions.', 'error'); }
+}
+
+async function batchUpdateJSONs() {
+    if (!currentHandle) { alert('No directory loaded.'); return; }
+    if (!confirm('This will create or update .json files for ALL images in this folder. Continue?')) return;
+    
+    let counter = 0; showAlert('Processing batch update... Please wait.', 'info');
+    for await (const entry of currentHandle.values()) {
+        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+            const file = await entry.getFile();
+            const baseName = entry.name.substring(0, entry.name.lastIndexOf('.')) || entry.name; const sidecarName = baseName + '.json';
+            let oldData = {};
+            let hasOldJson = false;
+            try { const existingFh = await currentHandle.getFileHandle(sidecarName); const existingFile = await existingFh.getFile(); oldData = JSON.parse(await existingFile.text()); hasOldJson = true; } catch (e) {}
+
+            const meta = await extractPNGMetadata(file);
+            if (meta || hasOldJson) {
+                const existingTag = oldData.tag ?? '';
+                const dataObj = { 
+                    file_name: entry.name, 
+                    positive: meta?.pos ?? oldData.positive ?? '', 
+                    negative: meta?.neg ?? oldData.negative ?? '', 
+                    tag: existingTag, 
+                    notes: oldData.notes ?? (oldData.note ? [oldData.note] : []), 
+                    cfg: meta?.cfg ?? oldData.cfg ?? '', 
+                    steps: meta?.steps ?? oldData.steps ?? '', 
+                    seed: meta?.seed ?? oldData.seed ?? '', 
+                    sampler: meta?.sampler ?? meta?.scheduler ?? oldData.sampler ?? '', 
+                    checkpoint: meta?.ckpt ?? meta?.checkpoint ?? oldData.checkpoint ?? '', 
+                    loras: meta?.loras ?? oldData.loras ?? '', 
+                    size: meta?.size ?? oldData.size ?? '' 
+                };
+                try { const fh = await currentHandle.getFileHandle(sidecarName, { create: true }); const writable = await fh.createWritable(); await writable.write(JSON.stringify(dataObj, null, 2)); await writable.close(); counter++; if (existingTag) { tagsPerFile.set(entry.name, existingTag); allTags.add(existingTag); } } catch (e) {}
+            }
+        }
+    }
+    updateTagsDatalist();
+    showAlert(`✅ Batch process complete! ${counter} JSON files updated.`, 'success');
+}
+
+/* ================================================================
+   BLOCK 6 — DIRECTORY LOGIC & SORTING & GRID MODE
+   ================================================================ */
+const dbName    = 'GalleryDB';
+const storeName = 'directories';
+let currentHandle   = null;
+let currentFiles  = [];
+let sortMode = 0;
+
+function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
+async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
+async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => r(keysReq.result.map((name, i) => ({ name, handle: valsReq.result[i] }))); }); }
+async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.oncomplete = r; }); }
+
+window.onload = async () => {
+    try {
+        await updateSelect();
+        const handles = await getHandles();
+        if (handles.length > 0) {
+            const h = handles[0].handle;
+            if ((await h.queryPermission({ mode: 'readwrite' })) === 'granted') {
+                document.getElementById('dir-list').value = handles[0].name;
+                loadGallery(h);
+            }
+        }
+    } catch (e) {}
+};
+
+async function updateSelect() {
+    const list = document.getElementById('dir-list'); list.innerHTML = '<option value="">Select a directory...</option>';
+    const handles = await getHandles(); handles.forEach(h => { const opt = document.createElement('option'); opt.value = h.name; opt.textContent = h.name; list.appendChild(opt); });
+}
+
+async function addDirectory() { try { const dh = await window.showDirectoryPicker({ mode: 'readwrite' }); await saveHandle(dh.name, dh); await updateSelect(); document.getElementById('dir-list').value = dh.name; loadGallery(dh); } catch (e) { if (e.name !== 'AbortError') alert('Permission error.'); } }
+async function removeDirectory() { if (!currentHandle) return; await deleteHandle(currentHandle.name); currentHandle = null; document.getElementById('btn-remove').style.display = 'none'; document.getElementById('btn-batch-json').style.display = 'none'; document.getElementById('btn-batch-tag').style.display = 'none'; document.getElementById('btn-rename-top').style.display = 'none'; document.getElementById('filter-tag').style.display = 'none'; document.getElementById('btn-refresh').style.display = 'none'; document.getElementById('grid-view').innerHTML = ''; backToGrid(); await updateSelect(); }
+
+async function loadSelectedDirectory() {
+    const name = document.getElementById('dir-list').value; if (!name) return; const handles = await getHandles();
+    const h = handles.find(x => x.name === name)?.handle;
+    if (h) { if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') await h.requestPermission({ mode: 'readwrite' }); loadGallery(h); }
+}
+
+function toggleSort() {
+    sortMode = (sortMode + 1) % 3; const btn = document.getElementById('btn-sort');
+    if (sortMode === 0) btn.innerHTML = '🔀 Normal'; else if (sortMode === 1) btn.innerHTML = '⬇️ A-Z';
+    else if (sortMode === 2) btn.innerHTML = '⬆️ Z-A';
+    renderGrid();
+}
+
+function renderGrid() {
+    const grid = document.getElementById('grid-view');
+    grid.innerHTML = '';
+    let arrRender = [...currentFiles];
+    if (sortMode === 1) arrRender.sort((a,b) => a.name.localeCompare(b.name));
+    else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
+
+    arrRender.forEach(fileItem => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'grid-item-wrapper';
+
+        const img = document.createElement('img');
+        img.src = fileItem.url; img.className = 'grid-item'; img.dataset.filename = fileItem.name; 
+        
+        const label = document.createElement('div');
+        label.className = 'grid-item-label';
+        label.textContent = fileItem.name;
+        label.title = fileItem.name; 
+        
+        if (typeof isTagMode !== 'undefined' && isTagMode || typeof isRenameMode !== 'undefined' && isRenameMode) {
+            img.onclick = () => { const cb = wrapper.querySelector('input[type="checkbox"]'); cb.checked = !cb.checked; };
+            const cb = document.createElement('input'); 
+            cb.type = 'checkbox'; 
+            cb.className = isRenameMode ? 'rename-checkbox' : 'tag-checkbox'; 
+            cb.dataset.filename = fileItem.name;
+            wrapper.appendChild(img); wrapper.appendChild(cb);
+        } else {
+            img.onclick = () => openDetailView(fileItem.url, fileItem.name);
+            wrapper.appendChild(img);
+        }
+        
+        wrapper.appendChild(label);
+        grid.appendChild(wrapper);
+    });
+    filterGallery(); 
+}
+
+async function loadGallery(dirHandle) {
+    currentHandle = dirHandle; currentFiles = [];
+    document.getElementById('btn-remove').style.display = 'inline-block';
+    document.getElementById('btn-batch-json').style.display = 'inline-block';
+    document.getElementById('btn-batch-tag').style.display = 'inline-block';
+    document.getElementById('btn-rename-top').style.display = 'inline-block';
+    document.getElementById('btn-refresh').style.display = 'inline-block';
+    document.getElementById('filter-tag').style.display = 'inline-block'; document.getElementById('filter-tag').value = ''; 
+    
+    for await (const entry of dirHandle.values()) {
+        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+            const file = await entry.getFile();
+            const url  = URL.createObjectURL(file);
+            currentFiles.push({ name: entry.name, url, file });
+        }
+    }
+    await loadTagsIndex(dirHandle);
+    renderGrid(); backToGrid();
+}
+
+/* ================================================================
+   BLOCK 7 — IMAGE OPEN
+   ================================================================ */
+let detailSessionId = 0; 
+
+async function openDetailView(url, fileName) {
+    const currentSession = ++detailSessionId;
+
+    if (isEditing) toggleManualEdit();
+    if (isTagMode) cancelBatchTags();
+
+    document.getElementById('grid-view').style.display = 'none';
+    document.getElementById('detail-view').style.display = 'flex';
+    document.getElementById('right-col').style.display = 'flex';
+    document.getElementById('resizer-right').style.display = 'flex'; 
+    document.getElementById('main-image').src = url;
+    document.getElementById('file-name').value = fileName;
+    showAlert(null);
+
+    const strip = document.getElementById('thumbnail-strip');
+    if (strip.children.length === 0 || strip.children.length !== currentFiles.length) {
+        strip.innerHTML = '';
+        let arrThumb = [...currentFiles];
+        if (sortMode === 1) arrThumb.sort((a,b) => a.name.localeCompare(b.name));
+        else if (sortMode === 2) arrThumb.sort((a,b) => b.name.localeCompare(a.name));
+        
+        arrThumb.forEach(fileItem => {
+            const imageTag = (tagsPerFile.get(fileItem.name) || '').toLowerCase();
+            const term = document.getElementById('filter-tag').value.toLowerCase().trim();
+            if (term !== '' && !imageTag.includes(term)) return;
+            
+            const img = document.createElement('img'); 
+            img.src = fileItem.url; img.className = 'thumb'; 
+            if (fileItem.url === url) img.classList.add('active'); 
+            img.onclick = () => openDetailView(fileItem.url, fileItem.name); 
+            strip.appendChild(img);
+        });
+    } else {
+        Array.from(strip.children).forEach(img => {
+            if (img.src === url) {
+                img.classList.add('active');
+                img.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            } else {
+                img.classList.remove('active');
+            }
+        });
+    }
+
+    fillFields(null);
+
+    try {
+        const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+        const jh = await currentHandle.getFileHandle(baseName + '.json'); const jf = await jh.getFile(); const jd = JSON.parse(await jf.text());
+        if (currentSession !== detailSessionId) return; 
+        
+        fillFields({ pos: jd.positive ?? '', neg: jd.negative ?? '', tag: jd.tag ?? '', notes: jd.notes ?? (jd.note ? [jd.note] : []), cfg: jd.cfg ?? '', steps: jd.steps ?? '', seed: jd.seed ?? '', sampler: jd.sampler ?? '', ckpt: jd.checkpoint ?? '', loras: jd.loras ?? '', size: jd.size ?? '', source: 'json' });
+        showAlert('✔ Metadata loaded from sidecar JSON.', 'success'); return; 
+    } catch {}
+
+    const fileItem = currentFiles.find(a => a.url === url);
+    if (fileItem?.file) {
+        try {
+            const meta = await extractPNGMetadata(fileItem.file);
+            if (currentSession !== detailSessionId) return; 
+
+            if (meta) { 
+                fillFields({ pos: meta.pos ?? '', neg: meta.neg ?? '', tag: '', notes: meta.notes ?? [], cfg: meta.cfg ?? '', steps: meta.steps ?? '', seed: meta.seed ?? '', sampler: meta.sampler ?? meta.scheduler ?? '', ckpt: meta.ckpt ?? meta.checkpoint ?? '', loras: meta.loras ?? '', size: meta.size ?? '', source: meta.source });
+                showAlert(`✔ Metadata extracted from PNG.`, 'info'); return; 
+            }
+        } catch (e) { console.warn('PNG parser error:', e); }
+    }
+
+    if (currentSession !== detailSessionId) return;
+    showAlert('⚠️ Metadata not found. Fill manually or generate a JSON sidecar.', 'error');
+}
+
+function backToGrid() {
+    if (isEditing) toggleManualEdit();
+    if (isTagMode) cancelBatchTags();
+    document.getElementById('detail-view').style.display = 'none';
+    document.getElementById('right-col').style.display = 'none';
+    document.getElementById('resizer-right').style.display = 'none'; 
+    document.getElementById('grid-view').style.display = 'grid'; 
+    filterGallery(); 
+}
+</script>
+</body>
+</html>

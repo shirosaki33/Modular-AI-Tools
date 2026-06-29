@@ -51,9 +51,6 @@
         
         /* Estilo para link desabilitado (quando estiver online) */
         .ql-link-disabled { background: #111; color: #555; border: 1px solid #222; cursor: not-allowed; text-decoration: line-through; }
-        
-        /* Estilo especial para o Gallery Holder não ficar com texto riscado */
-        .ql-link-local-only { background: #111; color: #886600; border: 1px solid #332200; cursor: not-allowed; text-decoration: none; }
 
         .ql-no-url { font-size: 10px; color: #333; padding: 3px 6px; }
         .ql-current-badge {
@@ -83,7 +80,7 @@
             icon: '🖼️',
             label: 'Gallery Holder',
             localFile: 'gallery holder.html',
-            onlineUrl: ''
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/gallery%20holder.html'
         },
     ];
 
@@ -164,11 +161,7 @@
                 let localBtnHtml = '';
 
                 if (isRunningOnline) {
-                    if (app.key === 'gallery') {
-                        localBtnHtml = `<span class="ql-link ql-link-local-only" title="App exclusivo local">🔒 Available only local</span>`;
-                    } else {
-                        localBtnHtml = `<span class="ql-link ql-link-disabled" title="Indisponível na versão Web">Local ↗</span>`;
-                    }
+                    localBtnHtml = `<span class="ql-link ql-link-disabled" title="Indisponível na versão Web">Local ↗</span>`;
                 } else {
                     localBtnHtml = `<a class="ql-link ql-link-local" href="${app.localFile}" target="_blank">Local ↗</a>`;
                 }
@@ -187,7 +180,7 @@
         }
     }
 
-    // Execução à prova de falhas (funciona mesmo se o DOM já tiver carregado ou houver atraso)
+    // Execução à prova de falhas
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initQuickLinks);
     } else {
