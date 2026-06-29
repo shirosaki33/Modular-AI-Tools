@@ -10,34 +10,23 @@
 		* { margin: 0; padding: 0; box-sizing: border-box; }
 		body { background: #111; color: #e0e0e0; font-family: 'Inter', Arial, sans-serif; line-height: 1.4; }
 		
-	#topbar {
-			background: #1b1b1b;
-			border-bottom: 1px solid #3a3a3a; /* Borda mais fina e refinada */
-			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); /* Sombra leve para destacar do fundo */
-    
-				/* Regras originais mantidas (não mexem no tamanho ou conteúdo) */
+		/* === TOPBAR STANDARDIZED === */
+		#topbar {
+			background: #0d0d0d;
+			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
 			padding: 12px 20px;
 			display: flex; 
 			justify-content: space-between; 
 			align-items: center;
 			z-index: 20;
+			min-height: 54px;
 		}
 		.topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+		.topbar-section.left { justify-content: flex-start; }
+		.topbar-section.center { justify-content: center; text-align: center; }
+		.topbar-section.right { justify-content: flex-end; position: relative; }
 		
-		/* Quick Links Button & Balloon */
-		#ql-btn {
-			background: none; font-size: 18px; padding: 5px 11px; color: #888;
-			border: 1px solid #333; border-radius: 6px; cursor: pointer; transition: 0.15s;
-			line-height: 1; font-weight: bold;
-		}
-		#ql-btn:hover { color: #00ff99; border-color: #00ff99; }
-		#ql-balloon {
-			display: none; position: absolute; top: 52px; right: 0;
-			background: #111827; border: 1px solid #263b5a; border-radius: 10px;
-			padding: 14px; z-index: 1100; box-shadow: 0 8px 24px rgba(0,0,0,0.85);
-			width: 340px; text-align: left;
-		}
-		#ql-balloon.open { display: block; }
+		#app-title { font-size: 18px; font-weight: bold; color: #fff; letter-spacing: 0.5px; white-space: nowrap; }
 
 		.container { max-width: 1280px; margin: 24px auto; padding: 0 20px; }
 
@@ -115,11 +104,11 @@
 		.lora-data-title  { font-size: 18px; font-weight: 600; }
 		
 		/* CARDS */
-		.summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+		.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }
 		.card, .training-card { background: #1b1b1b; border-radius: 12px; padding: 18px; height: 100%; }
 		.cardprompt { background: #1b1b1b; border-radius: 12px; padding: 15px; grid-column: 1 / -1; width: 100%; }
 		.card-title, .training-card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
-		.training-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+		.training-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 		.system-container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: -10px 0 20px; }
 		.system-card { background: #1b1b1b; border-radius: 12px; padding: 18px; min-height: 82px; }
 		.system-card-title { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
@@ -221,52 +210,27 @@
 		.civitai-model-desc li { margin-bottom: 2px; }
 		.civitai-model-desc .img-placeholder { display: inline-block; background: #1a2a1e; border: 1px solid #2a4a30; color: #00cc88; font-size: 11px; padding: 1px 6px; border-radius: 4px; font-family: monospace; }
 
-/* --- CARDS ITEMS (Restaurando o tamanho das letras) --- */
-.card-item { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; border-bottom: 1px solid #222; }
-.card-item:last-child { border-bottom: none; }
-.card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-.card-value { font-size: 13px; color: #e0e0e0; word-break: break-all; }
-.card-value.empty { color: #333; }
+		.card-item { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; border-bottom: 1px solid #222; }
+		.card-item:last-child { border-bottom: none; }
+		.card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+		.card-value { font-size: 13px; color: #e0e0e0; word-break: break-all; }
+		.card-value.empty { color: #333; }
 
 		/* FOOTER */
-		.footer-wrap {
-    margin-top: 10px;
-    padding: 20px 0 30px 0;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px; /* Controla o espaçamento exato entre o link e o copyright */
-}
-.footer-wrap a.toolLink {
-    color: #00ff99;
-    font-weight: 600;
-    font-size: 13px;
-    text-decoration: none;
-    letter-spacing: 0.5px;
-    transition: all 0.2s ease;
-}
-.footer-wrap a.toolLink:hover {
-    color: #ffffff;
-    text-shadow: 0 0 8px rgba(0, 255, 153, 0.6);
-}
-.footer-wrap .copyright {
-    font-size: 12px;
-    color: #555; /* Cor mais suave e discreta igual à foto */
-    margin: 0;
-}
+		.footer-wrap { margin-top: 10px; padding: 20px 0 30px 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+		.footer-wrap a.toolLink { color: #00ff99; font-weight: 600; font-size: 13px; text-decoration: none; letter-spacing: 0.5px; transition: all 0.2s ease; }
+		.footer-wrap a.toolLink:hover { color: #ffffff; text-shadow: 0 0 8px rgba(0, 255, 153, 0.6); }
+		.footer-wrap .copyright { font-size: 12px; color: #555; margin: 0; }
 	</style>
 </head>
 <body>
 
-<div id="topbar" style="background: #0d0d0d; border-bottom: none; padding: 12px 20px; display: flex; align-items: center; position: relative; min-height: 54px; z-index: 20;">
-    
-    <div style="position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center;">
-        <span id="app-title" style="font-size: 18px; font-weight: bold; color: #fff; letter-spacing: 0.5px; white-space: nowrap;">📋‍ LoRa Metadata Reader 📋️‍</span>
+<div id="topbar">
+    <div class="topbar-section left" id="topbar-left"></div>
+    <div class="topbar-section center">
+        <span id="app-title">📋 LoRa Metadata Reader 📋</span>
     </div>
-    
-    <div id="topbar-right" style="margin-left: auto; display: flex; align-items: center; position: relative;">
-        </div>
+    <div class="topbar-section right" id="topbar-right"></div>
 </div>
 
 <div class="container">
@@ -470,11 +434,9 @@
 	</div>
 
 	<div class="footer-wrap" style="margin-top:-30px;">
-		<a href="https://github.com/shirosaki33/Lora-Metadata-Reader" class="toolLink" target="_blank">GitHub Repository</a>
-		<div class="copyright">© 2026 shirosaki33 · MIT License</div>
+		<a href="https://github.com/shirosaki33/Modular-AI-Tools" class="toolLink" target="_blank">GitHub Repository</a>
+		<div class="copyright">© 2026 shirosaki33</div>
 	</div>
-
-</div>
 
 </div>
 
@@ -1079,7 +1041,7 @@ function knownTrainingToolRepo(label, rawRepo = '') {
 	if (key === 'onetrainer') return 'https://github.com/Nerogar/OneTrainer';
 	if (key === 'simpletuner') return 'https://github.com/bghira/SimpleTuner';
 	if (key === 'musubi tuner') return 'https://github.com/kohya-ss/musubi-tuner';
-	if (key === 'fluxgym') return 'https://github.com/cocktailpeanut/fluxgym';
+	if (key === 'fluxgym') return 'https://github.com/fluxgym/fluxgym';
 	if (key === 'everydream') return 'https://github.com/victorchall/EveryDream2trainer';
 	return '';
 }
@@ -1711,7 +1673,14 @@ window.renderDetectPopout = function(tags, filterCat) {
 window.closeDetectPopout = function(e) { if (e && e.target !== document.getElementById('detectOverlay')) return; document.getElementById('detectOverlay').classList.remove('open'); };
 </script>
 
-<!-- OS MÓDULOS DE FERRAMENTAS AGORA CARREGAM COM SUCESSO AQUI: -->
+<script src="parsers/png-chunks.js"></script>
+<script src="parsers/stable-diffusion.js"></script>
+<script src="parsers/novelai.js"></script>
+<script src="parsers/comfy.js"></script>
+<script src="parsers/swarmui.js"></script>
+<script src="parsers/invokeai.js"></script>
+<script src="parsers/fooocus.js"></script>
+
 <script src="tools/quick_links.js?v=5"></script>
 <script src="tools/lora_tag_freq.js?v=5"></script>
 <script src="tools/lora_raw_meta.js?v=5"></script>

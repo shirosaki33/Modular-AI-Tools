@@ -18,7 +18,7 @@
             display: none; position: absolute; top: 52px; right: 0;
             background: #111827; border: 1px solid #263b5a; border-radius: 10px;
             padding: 14px; z-index: 1100; box-shadow: 0 8px 24px rgba(0,0,0,0.85);
-            width: 340px;
+            width: 340px; text-align: left;
         }
         #ql-balloon.open { display: block; }
         #ql-balloon::before {
@@ -69,14 +69,14 @@
             icon: '🕵️',
             label: 'PNG Metadata Reader',
             localFile: 'png metadata reader.html',
-            onlineUrl: 'https://shirosaki33.github.io/PNG-Metadata-Reader/png%20metadata%20reader.html'
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/png%20metadata%20reader.html'
         },
         {
             key: 'lora_reader',
             icon: '📋',
             label: 'LoRA Metadata Reader',
-            localFile: 'lora metadata reader.html',
-            onlineUrl: 'https://shirosaki33.github.io/Lora-Metadata-Reader/Lora%20Metadata%20Reader.html'
+            localFile: 'Lora Metadata Reader.html',
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Metadata%20Reader.html'
         },
         {
             key: 'gallery',
@@ -96,12 +96,10 @@
         const uiTitle = document.getElementById('app-title') ? document.getElementById('app-title').textContent : '';
         const filename = decodeURIComponent(window.location.pathname.split('/').pop() || '');
         
-        // Prioriza o título da UI ou do Documento HTML (Evita bugs se você duplicar o arquivo HTML de outro projeto para iniciar o novo)
         if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
         if (/lora/i.test(uiTitle) || /lora/i.test(title)) return 'lora_reader';
         if (/png/i.test(uiTitle) || /png/i.test(title)) return 'png_reader';
 
-        // Se falhar (ex: a página não tem título definido), tenta pelo nome do arquivo físico
         if (/gallery|interface/i.test(filename)) return 'gallery';
         if (/lora/i.test(filename)) return 'lora_reader';
         if (/png/i.test(filename)) return 'png_reader';
@@ -109,9 +107,12 @@
         return null;
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    function initQuickLinks() {
         const topbarRight = document.querySelector('.topbar-section.right, #topbar-right');
         if (!topbarRight) return;
+        
+        // Evita duplicar se o script rodar duas vezes
+        if (document.getElementById('ql-btn')) return; 
 
         const currentAppKey = detectCurrentApp();
 
@@ -184,5 +185,12 @@
                 balloon.appendChild(row);
             });
         }
-    });
+    }
+
+    // Execução à prova de falhas (funciona mesmo se o DOM já tiver carregado ou houver atraso)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initQuickLinks);
+    } else {
+        initQuickLinks();
+    }
 })();
