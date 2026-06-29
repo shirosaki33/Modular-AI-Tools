@@ -21,20 +21,30 @@
         .card { 
             background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 12px; 
             padding: 24px; display: flex; flex-direction: column; 
-            transition: transform 0.2s, border-color 0.2s; text-decoration: none; color: inherit; 
+            transition: transform 0.2s, border-color 0.2s; 
         }
-        .card:hover { transform: translateY(-3px); border-color: #00ff99; }
+        .card:hover { transform: translateY(-3px); border-color: #444; }
         
         .icon { font-size: 32px; margin-bottom: 12px; }
         .title { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 8px; }
         .desc { font-size: 13px; color: #888; flex: 1; margin-bottom: 20px; }
         
+        /* Estilo dos Botões Duplos */
+        .btn-group { display: flex; gap: 10px; margin-top: auto; }
         .btn { 
-            display: inline-block; background: #0d2a18; color: #00ff99; 
-            border: 1px solid #00aa66; padding: 8px 16px; border-radius: 6px; 
-            font-size: 13px; font-weight: 600; text-align: center; transition: 0.15s; 
+            flex: 1; display: inline-block; padding: 8px 12px; border-radius: 6px; 
+            font-size: 13px; font-weight: 600; text-align: center; text-decoration: none; 
+            transition: 0.15s; white-space: nowrap; box-sizing: border-box;
         }
-        .card:hover .btn { background: #00aa66; color: #000; }
+        
+        .btn-local { background: #0f2a1a; color: #00cc88; border: 1px solid #1a4a2a; }
+        .btn-local:hover { background: #143520; color: #00ff99; border-color: #00aa66; }
+        
+        .btn-online { background: #0f1e3a; color: #4db8ff; border: 1px solid #1e3a6a; }
+        .btn-online:hover { background: #142a55; color: #9ecfff; border-color: #4db8ff; }
+        
+        .btn.disabled { background: #111; color: #555; border: 1px solid #222; cursor: not-allowed; text-decoration: line-through; }
+        .btn.disabled:hover { background: #111; color: #555; border-color: #222; }
         
         .footerbar { margin-top: 60px; text-align: center; font-size: 13px; padding-bottom: 30px;}
         .footerbar a { color: #00ff99; text-decoration: none; font-weight: 600; transition: all 0.2s ease; }
@@ -53,29 +63,35 @@
         </div>
         
         <div class="grid">
-            <!-- PNG Reader -->
-            <a href="png%20metadata%20reader.html" class="card">
+            <div class="card">
                 <div class="icon">🕵️</div>
                 <div class="title">PNG Metadata Reader</div>
                 <div class="desc">Extract and read generation data, prompts, and settings embedded in AI generated images.</div>
-                <div class="btn">Open App ↗</div>
-            </a>
+                <div class="btn-group">
+                    <a href="png%20metadata%20reader.html" class="btn btn-local" title="Run local file">Local ↗</a>
+                    <a href="https://shirosaki33.github.io/Modular-AI-Tools/png%20metadata%20reader.html" class="btn btn-online" target="_blank" title="Run online version">Online ↗</a>
+                </div>
+            </div>
 
-            <!-- LoRA Reader -->
-            <a href="Lora%20Metadata%20Reader.html" class="card">
+            <div class="card">
                 <div class="icon">📋</div>
                 <div class="title">LoRA Metadata Reader</div>
                 <div class="desc">Inspect .safetensors LoRA files for training parameters, base models, and dataset information.</div>
-                <div class="btn">Open App ↗</div>
-            </a>
+                <div class="btn-group">
+                    <a href="Lora%20Metadata%20Reader.html" class="btn btn-local" title="Run local file">Local ↗</a>
+                    <a href="https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Metadata%20Reader.html" class="btn btn-online" target="_blank" title="Run online version">Online ↗</a>
+                </div>
+            </div>
 
-            <!-- Gallery Holder -->
-            <a href="gallery%20holder.html" class="card">
+            <div class="card">
                 <div class="icon">🖼️</div>
                 <div class="title">Gallery Holder</div>
                 <div class="desc">Gallery manager to view your images alongside JSON sidecars, batch-edit tags, and organize datasets.</div>
-                <div class="btn">Open App ↗</div>
-            </a>
+                <div class="btn-group">
+                    <a href="gallery%20holder.html" class="btn btn-local" title="Run local file">Local ↗</a>
+                    <a href="https://shirosaki33.github.io/Modular-AI-Tools/gallery%20holder.html" class="btn btn-online" target="_blank" title="Run online version">Online ↗</a>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -83,5 +99,19 @@
         <a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a>
         <div class="footer-copy">© 2026 shirosaki33 · MIT License</div>
     </div>
+
+    <script>
+        // Desabilita os botões "Local" se a pessoa estiver acessando pelo GitHub Pages
+        document.addEventListener('DOMContentLoaded', () => {
+            const isRunningOnline = window.location.protocol !== 'file:' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+            if (isRunningOnline) {
+                document.querySelectorAll('.btn-local').forEach(btn => {
+                    btn.classList.add('disabled');
+                    btn.title = 'Indisponível na versão Web';
+                    btn.removeAttribute('href');
+                });
+            }
+        });
+    </script>
 </body>
 </html>
