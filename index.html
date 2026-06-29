@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modular AI Tools</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: 'Inter', Arial, sans-serif; line-height: 1.5; }
+        
+        #topbar { background: #1b1b1b; padding: 16px 20px; text-align: center; border-bottom: 1px solid #222; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #topbar h1 { margin: 0; font-size: 20px; color: #fff; letter-spacing: 0.5px; }
+        
+        .container { max-width: 960px; margin: 40px auto; padding: 0 20px; }
+        .description { text-align: center; color: #aaa; margin-bottom: 40px; font-size: 15px; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+        
+        .card { 
+            background: #1b1b1b; border: 1px solid #2a2a2a; border-radius: 12px; 
+            padding: 24px; display: flex; flex-direction: column; 
+            transition: transform 0.2s, border-color 0.2s; text-decoration: none; color: inherit; 
+        }
+        .card:hover { transform: translateY(-3px); border-color: #00ff99; }
+        .card.disabled:hover { transform: none; border-color: #2a2a2a; }
+        
+        .icon { font-size: 32px; margin-bottom: 12px; }
+        .title { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+        .desc { font-size: 13px; color: #888; flex: 1; margin-bottom: 20px; }
+        
+        .btn { 
+            display: inline-block; background: #0d2a18; color: #00ff99; 
+            border: 1px solid #00aa66; padding: 8px 16px; border-radius: 6px; 
+            font-size: 13px; font-weight: 600; text-align: center; transition: 0.15s; 
+        }
+        .card:not(.disabled):hover .btn { background: #00aa66; color: #000; }
+        
+        /* Estilo para a placa local */
+        .card.disabled { opacity: 0.75; cursor: default; }
+        .card.disabled .btn { background: #111; color: #886600; border-color: #332200; pointer-events: none;}
+        
+        .footerbar { margin-top: 60px; text-align: center; font-size: 13px; padding-bottom: 30px;}
+        .footerbar a { color: #00ff99; text-decoration: none; font-weight: 600; transition: all 0.2s ease; }
+        .footerbar a:hover { color: #fff; text-shadow: 0 0 8px rgba(0, 255, 153, 0.6); }
+        .footer-copy { margin-top: 8px; font-size: 12px; color: #555; }
+    </style>
+</head>
+<body>
+    <div id="topbar">
+        <h1>🧰 Modular AI Tools</h1>
+    </div>
+    
+    <div class="container">
+        <div class="description">
+            A collection of web-based and local utilities for AI image generation workflows.
+        </div>
+        
+        <div class="grid">
+            <a href="png%20metadata%20reader.html" class="card">
+                <div class="icon">🕵️</div>
+                <div class="title">PNG Metadata Reader</div>
+                <div class="desc">Extract and read generation data, prompts, and settings embedded in AI generated images.</div>
+                <div class="btn">Open App ↗</div>
+            </a>
+
+            <a href="Lora%20Metadata%20Reader.html" class="card">
+                <div class="icon">📋</div>
+                <div class="title">LoRA Metadata Reader</div>
+                <div class="desc">Inspect .safetensors LoRA files for training parameters, base models, and dataset information.</div>
+                <div class="btn">Open App ↗</div>
+            </a>
+
+            <div class="card disabled">
+                <div class="icon">🖼️</div>
+                <div class="title">Gallery Holder</div>
+                <div class="desc">Local gallery manager to read sidecar JSONs, batch edit tags, and organize your images.<br><br><span style="color: #665522;"><i>Requires cloning the repository and running locally due to File System Access API security limits.</i></span></div>
+                <div class="btn">🔒 Local Only</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footerbar">
+        <a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a>
+        <div class="footer-copy">© 2026 shirosaki33 · MIT License</div>
+    </div>
+</body>
+</html>

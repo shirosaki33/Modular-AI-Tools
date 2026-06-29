@@ -1,0 +1,1724 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LoRa Metadata Reader</title>
+	<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+	<style>
+		@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		body { background: #111; color: #e0e0e0; font-family: 'Inter', Arial, sans-serif; line-height: 1.4; }
+		
+	#topbar {
+			background: #1b1b1b;
+			border-bottom: 1px solid #3a3a3a; /* Borda mais fina e refinada */
+			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); /* Sombra leve para destacar do fundo */
+    
+				/* Regras originais mantidas (não mexem no tamanho ou conteúdo) */
+			padding: 12px 20px;
+			display: flex; 
+			justify-content: space-between; 
+			align-items: center;
+			z-index: 20;
+		}
+		.topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+		
+		/* Quick Links Button & Balloon */
+		#ql-btn {
+			background: none; font-size: 18px; padding: 5px 11px; color: #888;
+			border: 1px solid #333; border-radius: 6px; cursor: pointer; transition: 0.15s;
+			line-height: 1; font-weight: bold;
+		}
+		#ql-btn:hover { color: #00ff99; border-color: #00ff99; }
+		#ql-balloon {
+			display: none; position: absolute; top: 52px; right: 0;
+			background: #111827; border: 1px solid #263b5a; border-radius: 10px;
+			padding: 14px; z-index: 1100; box-shadow: 0 8px 24px rgba(0,0,0,0.85);
+			width: 340px; text-align: left;
+		}
+		#ql-balloon.open { display: block; }
+
+		.container { max-width: 1280px; margin: 24px auto; padding: 0 20px; }
+
+		/* DROPZONE */
+		.dropzone { border: 2px dashed #444; background: #161616; border-radius: 16px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.3s ease; margin-bottom: 16px; }
+		.dropzone:hover, .dropzone.dragover { background: #1f1f1f; border-color: #00ff99; }
+		.dropzone input[type="file"] { display: none; }
+
+		.main-grid { display: grid; grid-template-columns: 380px 1fr; gap: 24px; align-items: stretch; }
+		.panel-left { display: flex; flex-direction: column; }
+		.lora-data-box { display: flex; flex-direction: column; }
+
+		.cardprompt-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; margin-bottom: 0; padding-bottom: 10px; }
+		.cardprompt-header:hover .cardprompt-toggle-btn { color: #00cc88; }
+		.cardprompt-title { font-size: 18px; font-weight: 600; }
+		.cardprompt-toggle-btn { background: none; border: 1px solid #1e2a22; border-radius: 6px; color: #3a7a5a; font-size: 12px; padding: 3px 10px; cursor: pointer; transition: color .15s, border-color .15s; }
+		.cardprompt-body { overflow: hidden; transition: max-height 0.35s ease; max-height: 9999px; }
+		.cardprompt-body.collapsed { max-height: 0 !important; }
+
+		.conn-alert { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 16px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 14px; border: 1.5px solid #5a1010; background: #1a0606; color: #ff6666; }
+		.conn-alert.visible { display: flex; }
+		.conn-alert-dismiss { background: none; border: none; color: #ff6666; cursor: pointer; font-size: 18px; line-height: 1; padding: 2px 4px; opacity: 0.7; transition: opacity .15s; flex-shrink: 0; }
+		.conn-alert-dismiss:hover { opacity: 1; }
+
+		.panel-left, .lora-data-box { background: #161616; border-radius: 16px; padding: 20px; }
+		.panel-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+
+		.lora-name-display { font-size: 15px; font-weight: 600; color: #ffffff; margin-bottom: 10px; padding: 8px 12px; background: #0d1f18; border-radius: 8px; border-left: 3px solid #00ff99; min-height: 36px; word-break: break-word; }
+		.lora-name-display.empty { color: #444; border-left-color: #333; background: #111; }
+		.lora-name-display a { color: #00ff99; text-decoration: none; }
+		.lora-name-display a:hover { text-decoration: underline; opacity: 0.85; }
+
+		.civitai-status { font-size: 11px; color: #555; margin-bottom: 8px; min-height: 16px; display: flex; align-items: center; gap: 6px; }
+		.civitai-status.loading { color: #00cc88; }
+		.civitai-status.found   { color: #00ff99; }
+		.civitai-status.error   { color: #ff6666; }
+
+		.hash-progress { font-size: 11px; color: #555; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+		.hash-progress-bar { flex: 1; height: 3px; background: #222; border-radius: 999px; overflow: hidden; }
+		.hash-progress-fill { height: 100%; background: #00cc88; border-radius: 999px; transition: width 0.1s; }
+
+		.manual-hash-row { display: flex; gap: 12px; margin-bottom: 24px; width: 100%; }
+		.manual-hash-input { flex: 1; min-width: 0; background: #161616; border: 2px solid #222; border-radius: 12px; color: #eee; padding: 14px 18px; font-size: 15px; outline: none; transition: all .3s ease; }
+		.manual-hash-input:focus { border-color: #00ff99; background: #1a1a1a; }
+		.manual-hash-btn { background: #00aa66; color: #000; border: none; border-radius: 12px; padding: 0 24px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background .2s; }
+		.manual-hash-btn:hover { background: #00cc88; }
+
+		/* GALLERY */
+		.model-image-wrap { position: relative; width: 100%; margin-bottom: 20px; user-select: none; }
+		.model-image { width: 100%; height: 420px; object-fit: cover; border-radius: 12px; background: #111; box-shadow: 0 10px 20px rgba(0,0,0,0.6); display: block; }
+		.model-image-placeholder { width: 100%; height: 420px; border-radius: 12px; background: #111; box-shadow: 0 10px 20px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #333; font-size: 13px; gap: 10px; }
+		.model-image-placeholder .ph-icon { font-size: 40px; }
+		.image-loading { position: absolute; inset: 0; background: #111; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #555; gap: 8px; }
+		.spinner { width: 18px; height: 18px; border: 2px solid #333; border-top-color: #00ff99; border-radius: 50%; animation: spin 0.7s linear infinite; }
+		@keyframes spin { to { transform: rotate(360deg); } }
+		.gallery-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.55); border: none; border-radius: 50%; width: 34px; height: 34px; display: none; align-items: center; justify-content: center; cursor: pointer; color: #fff; font-size: 16px; transition: background .2s; z-index: 5; }
+		.gallery-nav:hover { background: rgba(0,204,136,0.45); }
+		.gallery-prev { left: 8px; }
+		.gallery-next { right: 8px; }
+		.model-image-wrap.has-gallery .gallery-nav { display: flex; }
+		.gallery-dots { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); display: none; gap: 5px; z-index: 5; }
+		.model-image-wrap.has-gallery .gallery-dots { display: flex; }
+		.gallery-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.35); cursor: pointer; transition: background .2s; flex-shrink: 0; }
+		.gallery-dot.active { background: #00ff99; }
+		.gallery-counter { position: absolute; top: 8px; right: 10px; background: rgba(0,0,0,0.6); color: #ccc; font-size: 11px; padding: 2px 7px; border-radius: 999px; display: none; z-index: 5; }
+		.model-image-wrap.has-gallery .gallery-counter { display: block; }
+
+		.info-label { font-size: 13px; color: #aaa; margin-bottom: 6px; }
+		.info-value { background: #111; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 500; min-height: 38px; color: #ffffff; }
+		.info-value a { color: #00ff99; text-decoration: none; }
+		.info-value a:hover { color: #fff; text-decoration: underline; }
+		.info-value.empty { color: #333; }
+
+		.lora-data-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+		.lora-data-title  { font-size: 18px; font-weight: 600; }
+		
+		/* CARDS */
+		.summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+		.card, .training-card { background: #1b1b1b; border-radius: 12px; padding: 18px; height: 100%; }
+		.cardprompt { background: #1b1b1b; border-radius: 12px; padding: 15px; grid-column: 1 / -1; width: 100%; }
+		.card-title, .training-card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+		.training-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+		.system-container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: -10px 0 20px; }
+		.system-card { background: #1b1b1b; border-radius: 12px; padding: 18px; min-height: 82px; }
+		.system-card-title { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+		.system-card-value { font-size: 13px; color: #e0e0e0; word-break: break-word; line-height: 1.4; min-height: 18px; }
+		.system-card-value a { color: #00ff99; text-decoration: none; }
+		.system-card-value a:hover { color: #fff; text-decoration: underline; }
+		.system-card-value.empty { color: #333; }
+		.system-card.hidden { display: none; }
+		.system-container.hidden { display: none; }
+		.system-container.single { grid-template-columns: 1fr; }
+		.system-container.single .system-card:first-child { grid-column: 1 / -1; }
+		@media (max-width: 980px) { .system-container { grid-template-columns: 1fr; gap: 16px; } }
+
+		.dataset-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+		.dataset-tag { background: #0d1f18; border: 1px solid #1a3a2a; color: #00cc88; font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+		.dataset-format-hint { font-size: 10px; color: #444; text-align: center; margin-top: 8px; font-style: italic; letter-spacing: 0.03em; }
+
+		.prompt-block { margin-bottom: 14px; }
+		.prompt-block:last-child { margin-bottom: 0; }
+		.promptBox { color: #aaa; margin-bottom: 6px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+		.prompt-label { font-weight: 500; color: #ccc; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.promptArea { background: #0d0d0d; color: #00ff99; width: 100%; box-sizing: border-box; display: block; border: 1px solid #1e1e1e; border-radius: 6px; padding: 8px 10px; font-family: inherit; font-size: 13px; resize: none; overflow: hidden; }
+		.copy-btn { background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #555; font-size: 15px; line-height: 1; transition: color .15s, background .15s; flex-shrink: 0; }
+		.copy-btn:hover { color: #00cc88; background: #1a2a22; }
+		.copy-btn.copied { color: #00cc88; }
+		.prompt-ta-wrap { overflow: hidden; transition: max-height 0.3s ease; }
+		.prompt-block-toggle { display: none; margin-top: 4px; width: 100%; background: none; border: 1px solid #1e2a22; border-radius: 5px; color: #3a7a5a; font-size: 13px; padding: 2px 0; cursor: pointer; transition: color .15s, border-color .15s; text-align: center; line-height: 1.2; }
+		.prompt-block-toggle:hover { color: #00cc88; border-color: #0e3528; }
+		.prompt-block-toggle.visible { display: block; }
+
+		/* --- TOOLS BAR --- */
+		#tools-bar-wrap { max-width: 1280px; margin: 16px auto 0; padding: 0 0 24px; box-sizing: border-box; width: 100%; }
+		#tools-bar { border-radius: 10px; }
+		#tools-bar-header { display: flex; align-items: center; justify-content: center; padding: 13px 20px; cursor: pointer; user-select: none; background: #141421; border-radius: 10px; border: 1px solid #33335a; transition: background 0.15s; position: relative; }
+		#tools-bar-header:hover { background: #1a1a2e; }
+		#tools-bar-label { font-size: 13px; font-weight: bold; color: #c084fc; display: flex; align-items: center; gap: 10px; letter-spacing: 0.3px; }
+		#tools-bar-arrow { position: absolute; right: 18px; top: 50%; transform: translateY(-50%) rotate(0deg); font-size: 13px; color: #7c8db0; transition: transform 0.18s; }
+		#tools-bar.open #tools-bar-arrow { transform: translateY(-50%) rotate(180deg); }
+		#tools-bar-body { display: none; margin-top: 6px; background: #10101a; border: 1px solid #33335a; border-radius: 8px; padding: 12px; box-sizing: border-box; width: 100%; overflow: hidden; }
+		#tools-bar.open #tools-bar-body { display: block; }
+
+		.tool-module { border-radius: 6px; overflow: hidden; border: 1px solid #1e2d40; margin-bottom: 4px; background: #111827; box-sizing: border-box; width: 100%; }
+		.tool-module:last-child { margin-bottom: 0; }
+		.tool-module-header { display: flex; align-items: center; justify-content: space-between; padding: 11px 15px; cursor: pointer; user-select: none; background: #111827; transition: background 0.15s; font-size: 13px; font-weight: bold; }
+		.tool-module-header:hover { background: #161f30; }
+		.tool-module-arrow { font-size: 11px; color: #3a5070; transition: transform 0.18s; transform: rotate(-90deg); }
+		.tool-module.open .tool-module-arrow { transform: rotate(0deg); }
+		.tool-module-body { display: none; border-top: 1px solid #1e2d40; background: #0d1118; padding: 16px; box-sizing: border-box; width: 100%; }
+		.tool-module.open .tool-module-body { display: block; }
+		
+		/* DETECT POPOUT */
+		.detect-popout-overlay { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.55); }
+		.detect-popout-overlay.open { display: block; }
+		.detect-popout { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #111d16; border: 1px solid #1e4a30; border-radius: 12px; width: min(540px,95vw); max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,.7); z-index: 1001; }
+		.detect-popout-head { display: flex; align-items: center; padding: 12px 16px; background: #0f1c13; border-bottom: 1px solid #1e3d28; gap: 10px; }
+		.detect-popout-head h3 { margin: 0; font-size: 14px; color: #00cc88; flex: 1; }
+		.detect-popout-close { background: none; border: none; color: #555; font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1; }
+		.detect-popout-close:hover { color: #eee; }
+		.detect-popout-body { overflow-y: auto; padding: 12px 16px; flex: 1; }
+		.detect-tag-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1e2a20; cursor: pointer; transition: background .1s; border-radius: 4px; }
+		.detect-tag-item:last-child { border-bottom: none; }
+		.detect-tag-item:hover { background: #1a2a1e; }
+		.detect-tag-item:hover .detect-tag-label { color: #00ff99; }
+		.detect-tag-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: 4px; }
+		.detect-tag-label { font-size: 13px; color: #ccc; flex: 1; }
+		.detect-tag-count { font-size: 11px; color: #555; }
+		.detect-popout-empty { font-size: 13px; color: #555; text-align: center; padding: 20px 0; }
+		.detect-popout-hint { font-size: 11px; color: #444; text-align: center; padding: 8px 0 2px; }
+		.detect-filter-row { display: flex; gap: 6px; padding: 8px 16px; background: #0f1c13; border-bottom: 1px solid #1e3d28; flex-wrap: wrap; }
+		.detect-filter-btn { background: #181818; border: 1px solid #2a3a2e; color: #888; border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer; transition: all .15s; }
+		.detect-filter-btn.active { background: #00aa66; border-color: #00aa66; color: #000; font-weight: 700; }
+
+		/* BANNERS */
+		#otAlertBar { display: none; background: #2a0000; border: 1px solid #aa0000; border-radius: 8px; padding: 8px 16px; margin-bottom: 10px; font-size: 13px; color: #ff6060; text-align: center; margin-top: 14px; }
+		.result-banner { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 10px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 18px; letter-spacing: 0.02em; border: 1.5px solid transparent; }
+		.result-banner.found { display: flex; background: #061a10; border-color: #0d5030; color: #00dd88; }
+		.result-banner.not-found { display: flex; background: #1a0606; border-color: #5a1010; color: #ff6666; }
+		.result-banner.warning { display: flex; background: #1a1400; border-color: #6b5500; color: #ffd84d; }
+		.outdated-banner { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 10px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 18px; letter-spacing: 0.02em; border: 1.5px solid #6b5500; background: #1a1400; color: #ffd84d; }
+		.outdated-banner.visible { display: flex; }
+		.banner-dismiss { background: none; border: none; cursor: pointer; color: inherit; font-size: 18px; line-height: 1; padding: 2px 6px; opacity: 0.6; transition: opacity .15s; flex-shrink: 0; }
+		.banner-dismiss:hover { opacity: 1; }
+
+		/* CREATOR & CIVITAI DESC */
+		.creator-block { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding: 8px 12px; background: #111; border-radius: 8px; }
+		.creator-avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid #1a3a2a; flex-shrink: 0; background: #222; }
+		.creator-avatar-placeholder { width: 38px; height: 38px; border-radius: 50%; background: #222; border: 2px solid #1a3a2a; flex-shrink: 0; align-items: center; justify-content: center; font-size: 18px; }
+		.creator-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+		.creator-name-link { font-size: 13px; font-weight: 600; color: #00ff99; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+		.creator-name-link:hover { color: #fff; text-decoration: underline; }
+		.creator-name-link[href="#"] { color: #ffffff; pointer-events: none; }
+		
+		.civitai-model-desc { font-size: 12px; color: #ddd; line-height: 1.6; word-break: break-word; padding-right: 4px; }
+		.civitai-model-desc a { color: #00ff99; text-decoration: none; }
+		.civitai-model-desc a:hover { color: #fff; text-decoration: underline; }
+		.civitai-model-desc p { margin: 0 0 6px; }
+		.civitai-model-desc h1, .civitai-model-desc h2, .civitai-model-desc h3 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; color: #fff; }
+		.civitai-model-desc ul, .civitai-model-desc ol { padding-left: 18px; margin: 4px 0; }
+		.civitai-model-desc li { margin-bottom: 2px; }
+		.civitai-model-desc .img-placeholder { display: inline-block; background: #1a2a1e; border: 1px solid #2a4a30; color: #00cc88; font-size: 11px; padding: 1px 6px; border-radius: 4px; font-family: monospace; }
+
+/* --- CARDS ITEMS (Restaurando o tamanho das letras) --- */
+.card-item { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; border-bottom: 1px solid #222; }
+.card-item:last-child { border-bottom: none; }
+.card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+.card-value { font-size: 13px; color: #e0e0e0; word-break: break-all; }
+.card-value.empty { color: #333; }
+
+		/* FOOTER */
+		.footer-wrap {
+    margin-top: 10px;
+    padding: 20px 0 30px 0;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px; /* Controla o espaçamento exato entre o link e o copyright */
+}
+.footer-wrap a.toolLink {
+    color: #00ff99;
+    font-weight: 600;
+    font-size: 13px;
+    text-decoration: none;
+    letter-spacing: 0.5px;
+    transition: all 0.2s ease;
+}
+.footer-wrap a.toolLink:hover {
+    color: #ffffff;
+    text-shadow: 0 0 8px rgba(0, 255, 153, 0.6);
+}
+.footer-wrap .copyright {
+    font-size: 12px;
+    color: #555; /* Cor mais suave e discreta igual à foto */
+    margin: 0;
+}
+	</style>
+</head>
+<body>
+
+<div id="topbar" style="background: #0d0d0d; border-bottom: none; padding: 12px 20px; display: flex; align-items: center; position: relative; min-height: 54px; z-index: 20;">
+    
+    <div style="position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center;">
+        <span id="app-title" style="font-size: 18px; font-weight: bold; color: #fff; letter-spacing: 0.5px; white-space: nowrap;">📋‍ LoRa Metadata Reader 📋️‍</span>
+    </div>
+    
+    <div id="topbar-right" style="margin-left: auto; display: flex; align-items: center; position: relative;">
+        </div>
+</div>
+
+<div class="container">
+
+	<div class="dropzone" id="dropzone">
+		<div id="dropzoneLabel" style="font-size:17px;font-weight:500;">Choose a safetensors file or drag it here</div>
+		<div style="font-size:12px;color:#666;margin-top:8px;">.safetensors only</div>
+		<input type="file" id="fileInput" accept=".safetensors">
+	</div>
+
+	<div class="conn-alert" id="connAlert">
+		<span>⚠ Could not reach Civitai — online features skipped.</span>
+		<div style="display:flex;align-items:center;gap:8px;">
+			<button style="background:#3a0a0a;border:1px solid #7a2020;border-radius:6px;color:#ff9999;font-size:12px;font-weight:600;padding:3px 10px;cursor:pointer;" onclick="retryConnection()">Retry</button>
+			<button class="conn-alert-dismiss" onclick="hideConnError()" title="Dismiss">×</button>
+		</div>
+	</div>
+	
+	<div class="outdated-banner" id="outdatedBanner">
+		<span>⚠️ Outdated LoRA version detected — a newer version is available on CivitAI</span>
+		<button class="banner-dismiss" onclick="hideOutdatedBanner()" title="Dismiss">×</button>
+	</div>
+
+	<div class="result-banner" id="resultBanner">
+		<span id="resultBannerText"></span>
+		<button class="banner-dismiss" onclick="hideBanner()" title="Dismiss">×</button>
+	</div>			
+
+	<div class="manual-hash-row">
+		<input type="text" id="manualHashInput" class="manual-hash-input" placeholder="Manual hash search (e.g. from Civitai)..." onkeydown="if(event.key==='Enter') manualHashSearch()">
+		<button class="manual-hash-btn" onclick="manualHashSearch()">Search</button>
+	</div>
+
+	<div class="main-grid">
+		<div class="panel-left">
+			<div class="panel-title">Model</div>
+
+			<div class="lora-name-display empty" id="loraNameDisplay">—</div>
+			<div class="civitai-status" id="civitaiStatus"></div>
+			<div class="hash-progress" id="hashProgress" style="display:none;">
+				<span id="hashProgressLabel">Hashing…</span>
+				<div class="hash-progress-bar"><div class="hash-progress-fill" id="hashProgressFill" style="width:0%"></div></div>
+			</div>
+
+			<div class="model-image-wrap" id="imageWrap">
+				<div class="model-image-placeholder" id="imagePlaceholder">
+					<span class="ph-icon">🖼️</span>
+					<span>Load a model to fetch preview</span>
+				</div>
+				<img class="model-image" id="modelImage" src="" alt="Model Preview" style="display:none;">
+				<button class="gallery-nav gallery-prev" id="galleryPrev" onclick="galleryStep(-1)" title="Previous">‹</button>
+				<button class="gallery-nav gallery-next" id="galleryNext" onclick="galleryStep(1)" title="Next">›</button>
+				<div class="gallery-dots" id="galleryDots"></div>
+				<span class="gallery-counter" id="galleryCounter"></span>
+			</div>
+
+			<div class="info-label">Base Model (Checkpoint)</div>
+			<div class="info-value empty" id="baseModelValue">—</div>
+
+			<div id="vaeRow" style="display:none;">
+				<div class="info-label">VAE</div>
+				<div class="info-value empty" id="vaeValue">—</div>
+			</div>
+
+			<div id="creatorLabelRow" style="display:none;">
+				<div class="info-label">Creator</div>
+				<div class="creator-block visible" id="creatorBlock" style="display:flex;margin-bottom:16px;">
+					<img class="creator-avatar" id="creatorAvatar" src="" alt="" onerror="this.style.display='none';document.getElementById('creatorAvatarFallback').style.display='flex'">
+					<div class="creator-avatar-placeholder" id="creatorAvatarFallback" style="display:none;">👤</div>
+					<div class="creator-info">
+						<a class="creator-name-link" id="creatorNameLink" href="#" target="_blank">—</a>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="lora-data-box">
+			<div class="lora-data-header">
+				<div class="lora-data-title">Model Data</div>
+			</div>
+
+			<div class="summary-grid">
+				<div class="card">
+					<div class="card-title">General</div>
+					<div class="card-item"><span class="card-label">Prediction Type</span><span class="card-value empty" id="v-prediction_type">—</span></div>
+					<div class="card-item"><span class="card-label">Batch</span><span class="card-value empty" id="v-batch_size">—</span></div>
+					<div class="card-item"><span class="card-label">Gradient Acc.</span><span class="card-value empty" id="v-gradient_accumulation_steps">—</span></div>
+					<div class="card-item"><span class="card-label">Resolution</span><span class="card-value empty" id="v-resolution">—</span></div>
+					<div class="card-item"><span class="card-label">Clip Skip</span><span class="card-value empty" id="v-clip_skip">—</span></div>
+					<div class="card-item"><span class="card-label">Epoch</span><span class="card-value empty" id="v-epoch">—</span></div>
+					<div class="card-item"><span class="card-label">Steps</span><span class="card-value empty" id="v-steps">—</span></div>
+				</div>
+				<div class="card">
+					<div class="card-title">Network</div>
+					<div class="card-item"><span class="card-label">Module</span><span class="card-value empty" id="v-network_module">—</span></div>
+					<div class="card-item"><span class="card-label">Algorithm</span><span class="card-value empty" id="v-network_args_algo">—</span></div>
+					<div class="card-item"><span class="card-label">Dim / Alpha</span><span class="card-value empty" id="v-dim_alpha">—</span></div>
+					<div class="card-item"><span class="card-label">Conv Dim / Alpha</span><span class="card-value empty" id="v-conv_dim_alpha">—</span></div>
+					<div class="card-item"><span class="card-label">Network Dropout</span><span class="card-value empty" id="v-network_dropout">—</span></div>
+					<div class="card-item"><span class="card-label">IP Noise Gamma</span><span class="card-value empty" id="v-ip_noise_gamma">—</span></div>
+				</div>
+				<div class="card">
+					<div class="card-title">Optimizer</div>
+					<div class="card-item"><span class="card-label">Type</span><span class="card-value empty" id="v-optimizer_type">—</span></div>
+					<div class="card-item"><span class="card-label">Scheduler</span><span class="card-value empty" id="v-lr_scheduler">—</span></div>
+					<div class="card-item"><span class="card-label">Learning Rate</span><span class="card-value empty" id="v-learning_rate">—</span></div>
+					<div class="card-item"><span class="card-label">TE LR</span><span class="card-value empty" id="v-text_encoder_lr">—</span></div>
+					<div class="card-item"><span class="card-label">UNET LR</span><span class="card-value empty" id="v-unet_lr">—</span></div>
+					<div class="card-item"><span class="card-label">Optional Args</span><span class="card-value empty" id="v-optimizer_args">—</span></div>
+					<div class="card-item"><span class="card-label">SNR Gamma</span><span class="card-value empty" id="v-min_snr_gamma">—</span></div>
+					<div class="card-item"><span class="card-label">Warmup Steps</span><span class="card-value empty" id="v-lr_warmup_steps">—</span></div>
+				</div>
+				<div class="card">
+					<div class="card-title">Noise Offset</div>
+					<div class="card-item"><span class="card-label">Noise Offset</span><span class="card-value empty" id="v-noise_offset">—</span></div>
+					<div class="card-item"><span class="card-label">Pyramid Iterations</span><span class="card-value empty" id="v-pyramid_noise_iterations">—</span></div>
+					<div class="card-item"><span class="card-label">Discount</span><span class="card-value empty" id="v-pyramid_noise_discount">—</span></div>
+				</div>
+			</div>
+
+			<div class="system-container hidden">
+				<div class="system-card">
+					<div class="system-card-title">Training Tool</div>
+					<div class="system-card-value empty" id="v-system_tool">—</div>
+				</div>
+				<div class="system-card">
+					<div class="system-card-title">Source</div>
+					<div class="system-card-value empty" id="v-system_source">—</div>
+				</div>
+			</div>
+
+			<div class="training-container">
+				<div class="training-card">
+					<div class="training-card-title">Training Info</div>
+					<div class="card-item"><span class="card-label">Train Date</span><span class="card-value empty" id="v-train_date">—</span></div>
+					<div class="card-item"><span class="card-label">Train Time</span><span class="card-value empty" id="v-train_time">—</span></div>
+					<div class="card-item"><span class="card-label">Total Images</span><span class="card-value empty" id="v-total_images">—</span></div>
+				</div>
+				<div class="training-card">
+					<div class="training-card-title">Dataset</div>
+					<div id="datasetContent" style="margin-top:6px;"></div>
+					<div class="dataset-format-hint" id="datasetFormatHint" style="display:none;">(repeats)_dataset • (images)</div>
+				</div>
+				<div class="training-card">
+					<div class="training-card-title">Training Comment</div>
+					<div id="v-training_comment" style="margin-top:6px;font-size:12px;color:#888;"></div>
+				</div>
+			</div>
+		</div>
+
+		<div class="cardprompt">
+			<div class="cardprompt-header" onclick="toggleCardPrompt()" id="cardPromptHeader">
+				<div class="cardprompt-title">Model Prompts</div>
+				<button class="cardprompt-toggle-btn" id="cardPromptToggleBtn">▲</button>
+			</div>
+			<div class="cardprompt-body" id="cardPromptBody">
+			<div id="promptSection">
+				<div class="prompt-block">
+					<div class="promptBox">
+						<span class="prompt-label">Prompt</span>
+						<button class="copy-btn" onclick="copyFromArea('positiveText',this)" title="Copy">⧉</button>
+					</div>
+					<div class="prompt-ta-wrap" data-state="full">
+						<textarea class="promptArea" id="positiveText" rows="3" placeholder="Tags from training data will appear here after loading a model…"></textarea>
+					</div>
+				</div>
+			</div>
+			</div>
+		</div>
+
+	</div>
+	
+	<div id="tools-bar-wrap">
+		<div id="tools-bar">
+			<div id="tools-bar-header" onclick="toggleToolsBar()">
+				<span id="tools-bar-label">🧰 Tools 🧰</span>
+				<span id="tools-bar-arrow">▲</span>
+			</div>
+			<div id="tools-bar-body">
+				<div id="modulesPlaceholder">
+					<div style="font-size:12px;color:#555;text-align:center;padding:12px;">
+						No tools loaded.
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div id="otAlertBar">⛔ No internet access — Online Tools require a connection ⛔</div>
+
+	<div class="detect-popout-overlay" id="detectOverlay" onclick="closeDetectPopout(event)">
+		<div class="detect-popout" onclick="event.stopPropagation()">
+			<div class="detect-popout-head">
+				<h3>🔍 Tags detected in LoRA training data</h3>
+				<button class="detect-popout-close" onclick="closeDetectPopout()">✕</button>
+			</div>
+			<div class="detect-filter-row" id="detectFilterRow"></div>
+			<div class="detect-popout-body" id="detectPopoutBody"></div>
+			<div class="detect-popout-hint">Click a tag to search it in the Danbooru box</div>
+		</div>
+	</div>
+
+	<div class="footer-wrap" style="margin-top:-30px;">
+		<a href="https://github.com/shirosaki33/Lora-Metadata-Reader" class="toolLink" target="_blank">GitHub Repository</a>
+		<div class="copyright">© 2026 shirosaki33 · MIT License</div>
+	</div>
+
+</div>
+
+</div>
+
+<script>
+'use strict';
+
+/* --- Gerenciador Global de Módulos --- */
+window.registerToolModule = function(title, accentColor, contentEl) {
+    const placeholder = document.getElementById('modulesPlaceholder');
+    if (!placeholder) return;
+    if (placeholder.dataset.hasModules !== 'true') {
+        placeholder.innerHTML = '';
+        placeholder.dataset.hasModules = 'true';
+    }
+    const color = accentColor || '#00cc88';
+    const mod = document.createElement('div');
+    mod.className = 'tool-module';
+    const header = document.createElement('div');
+    header.className = 'tool-module-header';
+    header.innerHTML = `<span style="color:${color};">${title}</span><span class="tool-module-arrow" style="color:${color};">▾</span>`;
+    const body = document.createElement('div');
+    body.className = 'tool-module-body';
+    body.appendChild(contentEl);
+
+    header.onclick = () => {
+        const wasOpen = mod.classList.contains('open');
+        mod.classList.toggle('open');
+        if (!wasOpen && typeof contentEl._onExpand === 'function') {
+            contentEl._onExpand();
+        }
+    };
+    mod.appendChild(header);
+    mod.appendChild(body);
+    placeholder.appendChild(mod);
+};
+
+function toggleToolsBar() {
+    document.getElementById('tools-bar').classList.toggle('open');
+}
+
+// ── MANUAL HASH SEARCH ───────────────────────────────────────────────────────
+async function manualHashSearch() {
+	const hash = document.getElementById('manualHashInput').value.trim();
+	if (!hash) return;
+	const loadId = currentLoadId;
+	setStatus('loading', '🌐 Checking connection…');
+	const hasNet = await checkInternet();
+	if (isStaleLoad(loadId)) return;
+	if (!hasNet) {
+		showOtAlert('⛔ No internet access — Online Tools require a connection');
+		setStatus('error', '⚠ No internet — online lookup skipped.');
+		return;
+	}
+	setStatus('loading', '🌐 Querying Civitai (manual hash)…');
+	try {
+		const ver = await tryHashOnCivitai(hash);
+		if (isStaleLoad(loadId)) return;
+		if (ver) {
+			applyVersion(ver, loadId, hash);
+		} else {
+			setStatus('error', '✗ No matching results found for this hash');
+			showBanner('not-found', '❌  No matching results found');
+		}
+	} catch(e) {
+		if (isStaleLoad(loadId)) return;
+		showConnError();
+		setStatus('error', '⚠ Connection failed — Civitai unreachable.');
+	}
+}
+
+let _cardPromptOpen = true;
+function toggleCardPrompt() {
+	_cardPromptOpen = !_cardPromptOpen;
+	const body = document.getElementById('cardPromptBody');
+	const btn  = document.getElementById('cardPromptToggleBtn');
+	if (_cardPromptOpen) {
+		body.classList.remove('collapsed');
+		body.style.maxHeight = body.scrollHeight + 'px';
+		btn.textContent = '▲';
+	} else {
+		body.style.maxHeight = body.scrollHeight + 'px';
+		requestAnimationFrame(() => {
+			body.classList.add('collapsed');
+			body.style.maxHeight = '0px';
+		});
+		btn.textContent = '▼';
+	}
+}
+
+window.copyFromArea = function(id, btn) {
+	const el = document.getElementById(id);
+	if (!el) return;
+	navigator.clipboard.writeText(el.value).then(() => {
+		const was = btn.textContent;
+		btn.classList.add('copied'); btn.textContent = '✓';
+		setTimeout(() => { btn.classList.remove('copied'); btn.textContent = was; }, 1400);
+	});
+};
+
+const dropzone  = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+	e.preventDefault(); dropzone.classList.remove('dragover');
+	const f = e.dataTransfer.files[0];
+	if (f && f.name.toLowerCase().endsWith('.safetensors')) processFile(f);
+	else alert('Please drop a .safetensors file.');
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) processFile(fileInput.files[0]); });
+
+let currentLoraName = '';
+let currentMeta     = {};
+let currentFile     = null;
+let currentLoadId   = 0;
+let connErrorShown  = false;
+
+const API = 'https://civitai.com/api/v1/';
+
+function showConnError() {
+	if (connErrorShown) return;
+	connErrorShown = true;
+	document.getElementById('connAlert').classList.add('visible');
+}
+
+function hideConnError() {
+	connErrorShown = false;
+	document.getElementById('connAlert').classList.remove('visible');
+}
+
+async function retryConnection() {
+	hideConnError();
+	setStatus('loading', '⏳ Retrying connection…');
+	if (currentFile) { doHashAndLookup(currentFile, currentLoadId);
+	} else { setStatus('', ''); }
+}
+
+async function processFile(file) {
+	const loadId = ++currentLoadId;
+	resetUI();
+	currentLoadId = loadId;
+	currentFile = file;
+	document.getElementById('dropzoneLabel').textContent = '📂 ' + file.name;
+	currentLoraName = file.name.replace(/\.safetensors$/i, '');
+	const nameEl = document.getElementById('loraNameDisplay');
+	nameEl.textContent = currentLoraName;
+	nameEl.classList.remove('empty');
+
+	let meta = {};
+	try { meta = await readHeader(file); }
+	catch (e) {
+		if (isStaleLoad(loadId, file)) return;
+		setStatus('error', '⚠ Could not parse file header.');
+	}
+	if (isStaleLoad(loadId, file)) return;
+
+	currentMeta = meta;
+	populateUI(meta);
+	
+	if(window.renderTagFrequency) window.renderTagFrequency(meta);
+	if(window.renderMetaRaw) window.renderMetaRaw(meta);
+	if(window.renderMetaEditor) window.renderMetaEditor(meta);
+	
+	doHashAndLookup(file, loadId);
+}
+
+function isStaleLoad(loadId, file) {
+	return loadId !== currentLoadId || (file && file !== currentFile);
+}
+
+async function readHeader(file) {
+	const lenBuf    = await file.slice(0, 8).arrayBuffer();
+	const headerLen = Number(new DataView(lenBuf).getBigUint64(0, true));
+	if (headerLen <= 0 || headerLen > 200_000_000) throw new Error('Bad header len');
+	const hdrBuf = await file.slice(8, 8 + headerLen).arrayBuffer();
+	const parsed = JSON.parse(new TextDecoder().decode(hdrBuf));
+	return parsed.__metadata__ || {};
+}
+
+async function computeSHA256(file, onProgress) {
+	const reader = file.stream().getReader();
+	const chunks = []; let loaded = 0;
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		chunks.push(value); loaded += value.byteLength;
+		if (onProgress) onProgress(loaded / file.size);
+	}
+	const full = new Uint8Array(loaded); let pos = 0;
+	for (const c of chunks) { full.set(c, pos); pos += c.byteLength; }
+	const digest = await crypto.subtle.digest('SHA-256', full);
+	return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+const META_HASH_KEYS = ['sshs_model_hash', 'sha256_autov2', 'sha256_autov3', 'sha256', 'blake3', 'hash', 'model hash'];
+async function tryHashOnCivitai(hashValue) {
+	if (!hashValue || hashValue.length < 8) return null;
+	try {
+		const r = await fetch(API + 'model-versions/by-hash/' + hashValue.trim(), { signal: AbortSignal.timeout(10000) });
+		if (r.ok) return await r.json();
+		if (r.status === 404) return null;
+		throw new Error('HTTP ' + r.status);
+	} catch (e) { return null; }
+}
+
+async function doHashAndLookup(file, loadId = currentLoadId) {
+	const prog  = document.getElementById('hashProgress');
+	const fill  = document.getElementById('hashProgressFill');
+	const label = document.getElementById('hashProgressLabel');
+	prog.style.display = 'flex';
+	setStatus('loading', '🔐 Computing SHA-256…');
+
+	let computedSHA256 = '';
+	try {
+		computedSHA256 = await computeSHA256(file, pct => {
+			if (isStaleLoad(loadId, file)) return;
+			fill.style.width = (pct * 100).toFixed(0) + '%';
+			label.textContent = 'Hashing… ' + (pct * 100).toFixed(0) + '%';
+		});
+	} catch(e) {
+		if (isStaleLoad(loadId, file)) return;
+		prog.style.display = 'none';
+		setStatus('error', '⚠ Hash failed.');
+		return;
+	}
+	if (isStaleLoad(loadId, file)) return;
+	prog.style.display = 'none';
+
+	setStatus('loading', '🌐 Checking connection…');
+	const hasNet = await checkInternet();
+	if (isStaleLoad(loadId, file)) return;
+	if (!hasNet) {
+		showOtAlert('⛔ No internet access — Online Tools require a connection');
+		setStatus('error', '⚠ No internet — online lookup skipped.');
+		return;
+	}
+
+	setStatus('loading', '🌐 Querying Civitai (multi-hash)…');
+	let ver = null;
+	let matchedHash = null;
+
+	const meta = currentMeta || {};
+	const hashCandidates = [];
+	for (const key of META_HASH_KEYS) {
+		const val = meta[key];
+		if (val && typeof val === 'string' && val.trim().length >= 8) {
+			hashCandidates.push({ label: key, value: val.trim() });
+		}
+	}
+
+	hashCandidates.push({ label: 'computed SHA256', value: computedSHA256 });
+	const seenHashes = new Set();
+	const uniqueCandidates = hashCandidates.filter(c => {
+		const k = c.value.toLowerCase();
+		if (seenHashes.has(k)) return false;
+		seenHashes.add(k);
+		return true;
+	});
+	for (const candidate of uniqueCandidates) {
+		try {
+			if (isStaleLoad(loadId, file)) return;
+			setStatus('loading', '🌐 Trying ' + candidate.label + '…');
+			ver = await tryHashOnCivitai(candidate.value);
+			if (isStaleLoad(loadId, file)) return;
+			if (ver) {
+				matchedHash = candidate.value;
+				break;
+			}
+		} catch(e) {
+			showConnError();
+			setStatus('error', '⚠ Connection failed — Civitai unreachable.');
+			return;
+		}
+	}
+
+	if (!ver) {
+		if (isStaleLoad(loadId, file)) return;
+		setStatus('loading', '🌐 Trying exact name search…');
+		try {
+			ver = await strictNameSearch(currentLoraName);
+			if (isStaleLoad(loadId, file)) return;
+		} catch(e) {
+			showConnError();
+			setStatus('error', '⚠ Connection failed during name search.');
+			return;
+		}
+	}
+
+	if (ver) {
+		applyVersion(ver, loadId, matchedHash);
+		return;
+	}
+
+	if (isStaleLoad(loadId, file)) return;
+	resetMediaPreview();
+	setStatus('error', '✗ No matching results found');
+	showBanner('not-found', '❌  No matching results found');
+}
+
+async function strictNameSearch(name) {
+	const types = ['LORA'];
+	for (const type of types) {
+		try {
+			const r = await fetch(API + 'models?query=' + encodeURIComponent(name) + '&types=' + type + '&limit=8', { signal: AbortSignal.timeout(8000) });
+			if (!r.ok) continue;
+			const d = await r.json();
+			const items = d.items || [];
+			if (!items.length) continue;
+			const exactModel = items.find(m => m.name.toLowerCase() === name.toLowerCase());
+			if (!exactModel) continue;
+			const firstVer = exactModel.modelVersions?.[0];
+			if (!firstVer) continue;
+			const vr = await fetch(API + 'model-versions/' + firstVer.id, { signal: AbortSignal.timeout(8000) });
+			if (vr.ok) return await vr.json();
+		} catch { }
+	}
+	return null;
+}
+
+async function applyVersion(ver, loadId = currentLoadId, matchedHash = null) {
+	if (isStaleLoad(loadId)) return;
+	const modelName = ver.model?.name || ver.name || currentLoraName;
+	const civUrl    = 'https://civitai.com/models/' + ver.modelId + '?modelVersionId=' + ver.id;
+	setStatus('found', '✓ ' + modelName + ' — ' + ver.name);
+	showBanner('found', '✅  Found on CivitAI — ' + modelName);
+	
+	(async () => {
+		try {
+			if (isStaleLoad(loadId)) return;
+			if (ver.modelId) {
+				const mr = await fetch(API + 'models/' + ver.modelId, { signal: AbortSignal.timeout(8000) });
+				if (isStaleLoad(loadId)) return;
+				if (mr.ok) {
+					const md = await mr.json();
+					if (isStaleLoad(loadId)) return;
+					const versions = md.modelVersions || [];
+					if (versions.length > 0 && versions[0].id !== ver.id) {
+						showOutdatedBanner();
+					}
+				}
+			}
+		} catch { }
+	})();
+	
+	const nameEl = document.getElementById('loraNameDisplay');
+	nameEl.innerHTML = '<a href="' + civUrl + '" target="_blank">' + escHtml(modelName) + '</a>';
+	const images = (ver.images || []).map(i => i.url).filter(Boolean);
+	if (images.length > 0) setGallery(images);
+
+	applyBaseModel(ver, currentMeta, loadId);
+	let creatorName = ver.model?.creator?.username || '';
+	let creatorImg  = ver.model?.creator?.image    || '';
+	
+	if (ver.modelId && (!creatorName || !ver._modelDescription)) {
+		try {
+			const mr = await fetch(API + 'models/' + ver.modelId, { signal: AbortSignal.timeout(8000) });
+			if (isStaleLoad(loadId)) return;
+			if (mr.ok) {
+				const md = await mr.json();
+				if (!creatorName) {
+					creatorName = md.creator?.username || '';
+					creatorImg  = md.creator?.image    || '';
+				}
+				if (!ver._modelDescription && md.description) {
+					ver._modelDescription = md.description;
+				}
+			}
+		} catch { }
+	}
+	
+	if (!ver._modelDescription && ver.model?.description) ver._modelDescription = ver.model.description;
+	if (!creatorName) creatorName = findVal(currentMeta || {}, ['ss_creator','creator','author','ss_author','model_author']) || '';
+	
+	const creatorUrl = creatorName ? 'https://civitai.com/user/' + encodeURIComponent(creatorName) : '#';
+	const creatorLabelRow = document.getElementById('creatorLabelRow');
+	const creatorAvatar   = document.getElementById('creatorAvatar');
+	const creatorFallbk   = document.getElementById('creatorAvatarFallback');
+	const creatorLink     = document.getElementById('creatorNameLink');
+	if (creatorName) {
+		creatorLink.textContent = creatorName;
+		creatorLink.href        = creatorUrl;
+		if (creatorImg) { creatorAvatar.src = creatorImg; creatorAvatar.style.display = 'block'; creatorFallbk.style.display = 'none'; }
+		else            { creatorAvatar.style.display = 'none'; creatorFallbk.style.display = 'flex'; }
+		if (creatorLabelRow) creatorLabelRow.style.display = 'block';
+	} else {
+		creatorLink.textContent = 'Unknown';
+		creatorLink.href = civUrl;
+		creatorAvatar.style.display = 'none';
+		creatorFallbk.style.display = 'flex';
+		if (creatorLabelRow) creatorLabelRow.style.display = 'block';
+	}
+
+	if (isStaleLoad(loadId)) return;
+	
+	if(window.populateOnline) window.populateOnline(ver, civUrl, modelName, creatorName, creatorUrl, matchedHash);
+	if(window.renderOnlinePrompts) await window.renderOnlinePrompts(ver, loadId);
+	
+	if (isStaleLoad(loadId)) return;
+}
+
+async function applyBaseModel(ver, meta, loadId = currentLoadId) {
+	if (isStaleLoad(loadId)) return;
+	const bm = document.getElementById('baseModelValue');
+	const baseModelStr = ver.baseModel || ver.baseModelType || null;
+	if (baseModelStr) {
+		bm.textContent = baseModelStr;
+		bm.style.color = '#ffffff'; 
+		bm.classList.remove('empty');
+	}
+
+	if (meta) {
+		const modelHash = findVal(meta, ['ss_sd_model_hash','sd_model_hash','sshs_model_hash']);
+		if (modelHash) {
+			try {
+				const r = await fetch(API + 'model-versions/by-hash/' + modelHash, { signal: AbortSignal.timeout(8000) });
+				if (isStaleLoad(loadId)) return;
+				if (r.ok) {
+					const d = await r.json();
+					if (isStaleLoad(loadId)) return;
+					const checkName = d.model?.name || d.name || null;
+					const checkUrl  = d.modelId ? 'https://civitai.com/models/' + d.modelId + '?modelVersionId=' + d.id : null;
+					if (checkName && checkUrl) {
+						bm.innerHTML = '<a href="' + checkUrl + '" target="_blank">' + escHtml(checkName) + '</a>';
+						bm.style.color = '';
+						bm.classList.remove('empty');
+						return;
+					}
+				}
+			} catch { }
+		}
+	}
+	if (!baseModelStr) return;
+	try {
+		const r = await fetch(API + 'models?query=' + encodeURIComponent(baseModelStr) + '&types=Checkpoint&limit=3&sort=Highest%20Rated', { signal: AbortSignal.timeout(8000) });
+		if (isStaleLoad(loadId)) return;
+		if (!r.ok) return;
+		const d = await r.json();
+		if (isStaleLoad(loadId)) return;
+		const match = (d.items || []).find(m => m.name.toLowerCase().includes(baseModelStr.toLowerCase()) || baseModelStr.toLowerCase().includes(m.name.toLowerCase()) );
+		if (match) {
+			bm.innerHTML = '<a href="https://civitai.com/models/' + match.id + '" target="_blank">' + escHtml(match.name) + '</a>';
+			bm.style.color = '';
+			bm.classList.remove('empty');
+		}
+	} catch { }
+}
+
+async function collectAllTrainedWords(ver) {
+	const seen = new Set();
+	const all  = [];
+	const addWords = (arr) => {
+		if (!Array.isArray(arr)) return;
+		arr.forEach(w => {
+			const t = String(w).trim();
+			if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); all.push(t); }
+		});
+	};
+
+	addWords(ver.trainedWords);
+	if (!Array.isArray(ver.trainedWords)) {
+		if (Array.isArray(ver.modelVersions)) ver.modelVersions.forEach(mv => addWords(mv.trainedWords));
+		if (ver.model && Array.isArray(ver.model.modelVersions)) ver.model.modelVersions.forEach(mv => addWords(mv.trainedWords));
+		if (ver.modelId && all.length === 0) {
+			try {
+				const r = await fetch(API + 'models/' + ver.modelId, { signal: AbortSignal.timeout(8000) });
+				if (r.ok) {
+					const fullModel = await r.json();
+					(fullModel.modelVersions || []).forEach(mv => addWords(mv.trainedWords));
+				}
+			} catch { }
+		}
+	}
+	return all;
+}
+
+const FIELDS = {
+	'v-prediction_type':            ['modelspec.prediction_type','ss_v_pred_model','ss_prediction_type','prediction_type','v_parameterization'],
+	'v-batch_size':                 ['ss_batch_size_per_device','ss_total_batch_size','train_batch_size','batch_size'],
+	'v-gradient_accumulation_steps':['ss_gradient_accumulation_steps','gradient_accumulation_steps'],
+	'v-resolution':                 ['ss_resolution','resolution'],
+	'v-clip_skip':                  ['ss_clip_skip','clip_skip'],
+	'v-epoch':                      ['ss_epoch','ss_num_train_epochs','num_train_epochs'],
+	'v-steps':                      ['ss_steps','ss_max_train_steps','max_train_steps'],
+	'v-network_module':             ['ss_network_module','network_module'],
+	'v-network_args_algo':          ['ss_network_args','network_args'],
+	'v-network_dropout':            ['ss_network_dropout','network_dropout'],
+	'v-ip_noise_gamma':             ['ss_ip_noise_gamma','ip_noise_gamma'],
+	'v-optimizer_type':             ['ss_optimizer','ss_optimizer_type','optimizer_type'],
+	'v-lr_scheduler':               ['ss_lr_scheduler','lr_scheduler'],
+	'v-learning_rate':              ['ss_learning_rate','learning_rate'],
+	'v-text_encoder_lr':            ['ss_text_encoder_lr','text_encoder_lr'],
+	'v-unet_lr':                    ['ss_unet_lr','unet_lr'],
+	'v-optimizer_args':             ['ss_optimizer_args','optimizer_args'],
+	'v-min_snr_gamma':              ['ss_min_snr_gamma','min_snr_gamma'],
+	'v-lr_warmup_steps':            ['ss_lr_warmup_steps','lr_warmup_steps'],
+	'v-noise_offset':               ['ss_noise_offset','noise_offset'],
+	'v-pyramid_noise_iterations':   ['ss_multires_noise_iterations','ss_pyramid_noise_iterations','pyramid_noise_iterations'],
+	'v-pyramid_noise_discount':     ['ss_multires_noise_discount','ss_pyramid_noise_discount','pyramid_noise_discount'],
+};
+const JOIN_FIELDS = {
+	'v-dim_alpha':     [['ss_network_dim','network_dim'],   ['ss_network_alpha','network_alpha']],
+	'v-conv_dim_alpha':[['ss_conv_dim','conv_dim'],         ['ss_conv_alpha','conv_alpha']],
+};
+function findVal(meta, keys) {
+	for (const k of keys) {
+		if (meta[k] !== undefined && meta[k] !== null && meta[k] !== '') return String(meta[k]);
+	}
+	return null;
+}
+window.escHtml = function(s) {
+	return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+};
+
+function parseJsonMeta(raw) {
+	if (!raw || raw === 'None' || raw === 'null') return null;
+	try { return JSON.parse(raw); } catch { try { return JSON.parse(String(raw).replace(/'/g, '"')); } catch { return null; } }
+}
+
+function parseMetaDate(raw) {
+	if (!raw || raw === 'None' || raw === 'null') return null;
+	const s = String(raw).trim();
+	if (!s) return null;
+	if (/^\d{10}(?:\.\d+)?$/.test(s)) { const d = new Date(parseFloat(s) * 1000); return isNaN(d.getTime()) ? null : d; }
+	if (/^\d{13}$/.test(s)) { const d = new Date(parseInt(s, 10)); return isNaN(d.getTime()) ? null : d; }
+	const d = new Date(s);
+	return isNaN(d.getTime()) ? null : d;
+}
+
+function parseTrainingStartFromOutputName(meta) {
+	const raw = findVal(meta, ['ss_output_name','output_name','modelspec.title','name']);
+	if (!raw) return null;
+	const m = String(raw).match(/(20\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{0,3})/);
+	if (!m) return null;
+	const [, y, mo, d, h, mi, se, msRaw] = m;
+	const ms = msRaw ? parseInt(msRaw.padEnd(3, '0').slice(0, 3), 10) : 0;
+	const dt = new Date(parseInt(y,10), parseInt(mo,10) - 1, parseInt(d,10), parseInt(h,10), parseInt(mi,10), parseInt(se,10), ms);
+	return isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatTrainingDateTime(d) {
+	return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDurationFromSeconds(seconds, estimated = false) {
+	const secs = Math.max(0, Math.round(seconds));
+	const h = Math.floor(secs / 3600);
+	const m = Math.floor((secs % 3600) / 60);
+	const s = secs % 60;
+	let dur = '';
+	if (h > 0) dur += h + 'h ';
+	if (m > 0 || h > 0) dur += m + 'm ';
+	dur += s + 's';
+	return (estimated ? '≈ ' : '') + dur.trim();
+}
+
+function detectTrainingTiming(meta) {
+	const endRaw = findVal(meta, ['ss_training_finished_at', 'training_finished_at', 'training_date', 'modelspec.date', 'date', 'created_at', 'createdAt']);
+	const startRaw = findVal(meta, ['ss_training_started_at', 'training_started_at', 'started_at', 'startedAt']);
+
+	const end = parseMetaDate(endRaw);
+	const explicitStart = parseMetaDate(startRaw);
+	const estimatedStart = explicitStart ? null : parseTrainingStartFromOutputName(meta);
+	const start = explicitStart || estimatedStart;
+
+	let dateText = null;
+	let timeText = null;
+	if (end) {
+		dateText = formatTrainingDateTime(end);
+		if (start && end.getTime() > start.getTime()) {
+			timeText = formatDurationFromSeconds((end.getTime() - start.getTime()) / 1000, !!estimatedStart);
+		} else {
+			timeText = end.toLocaleTimeString('en-GB', { hour12: false });
+		}
+	} else if (endRaw) { dateText = endRaw; }
+	return { dateText, timeText };
+}
+
+function normalizeSoftwareName(name) {
+	const n = String(name || '').trim();
+	const low = n.toLowerCase();
+	if (/ai[-_\s]?toolkit/.test(low)) return 'ai-toolkit';
+	if (/lora[-_\s]?easy|lora_easy_training_scripts|easy[-_\s]?lora|loraeasy/.test(low)) return 'EasyLoRA';
+	if (/sd[-_\s]?scripts|kohya/.test(low)) return 'kohya / sd-scripts';
+	if (/one[-_\s]?trainer/.test(low)) return 'OneTrainer';
+	if (/simple[-_\s]?tuner/.test(low)) return 'SimpleTuner';
+	if (/musubi/.test(low)) return 'Musubi Tuner';
+	if (/flux\s*gym|fluxgym/.test(low)) return 'FluxGym';
+	if (/everydream/.test(low)) return 'EveryDream';
+	if (/diffusers/.test(low)) return 'Diffusers';
+	if (/sd[-_\s]?scripts[-_\s]?compatible/.test(low)) return 'sd-scripts compatible metadata';
+	return n;
+}
+
+function knownTrainingToolRepo(label, rawRepo = '') {
+	const repo = String(rawRepo || '').trim();
+	if (/^https?:\/\/github\.com\//i.test(repo)) return repo;
+	const key = String(label || '').toLowerCase();
+	if (key === 'ai-toolkit') return 'https://github.com/ostris/ai-toolkit';
+	if (key === 'easylora') return 'https://github.com/derrian-distro/LoRA_Easy_Training_Scripts';
+	if (key === 'kohya / sd-scripts') return 'https://github.com/kohya-ss/sd-scripts';
+	if (key === 'onetrainer') return 'https://github.com/Nerogar/OneTrainer';
+	if (key === 'simpletuner') return 'https://github.com/bghira/SimpleTuner';
+	if (key === 'musubi tuner') return 'https://github.com/kohya-ss/musubi-tuner';
+	if (key === 'fluxgym') return 'https://github.com/cocktailpeanut/fluxgym';
+	if (key === 'everydream') return 'https://github.com/victorchall/EveryDream2trainer';
+	return '';
+}
+
+function normalizeTrainingSource(source) {
+	const s = String(source || '').trim();
+	if (!s || s === 'None' || s === 'null') return '';
+	const low = s.toLowerCase();
+	if (/civitai\s+spine\s+controller/.test(low)) return 'Civitai Spine Controller';
+	if (/civitai/.test(low)) return 'Civitai';
+	if (/hugging\s*face|huggingface/.test(low)) return 'Hugging Face';
+	if (/local/.test(low)) return 'Local';
+	return s;
+}
+
+function detectTrainingSource(meta, searchable = '') {
+	const direct = findVal(meta, ['training_source', 'source', 'platform', 'training_platform', 'ss_training_source', 'modelspec.source', 'modelspec.source_platform']);
+	const notes = findVal(meta, ['notes','ss_training_comment','training_comment','comment']) || '';
+	const haystack = (String(notes) + '\n' + String(direct || '') + '\n' + String(searchable || '')).toLowerCase();
+	if (/civitai\s+spine\s+controller/.test(haystack)) return 'Civitai Spine Controller';
+	if (/civitai/.test(haystack) && /(training|trainer|spine|job|via)/.test(haystack)) return 'Civitai';
+	return normalizeTrainingSource(direct);
+}
+
+function makeTrainingToolInfo(label, version = '', repo = '', source = '') {
+	label = normalizeSoftwareName(label);
+	version = String(version || '').trim();
+	return { label, version, repo: knownTrainingToolRepo(label, repo), source: normalizeTrainingSource(source) };
+}
+
+function detectSystemInfo(meta) {
+	const searchable = Object.entries(meta || {}).map(([k, v]) => k + ': ' + v).join('\n');
+	const source = detectTrainingSource(meta, searchable);
+	const low = searchable.toLowerCase();
+
+	const softwareRaw = findVal(meta, ['software','ss_software','training_software','trainer','tool']);
+	const software = parseJsonMeta(softwareRaw);
+	if (software && typeof software === 'object') {
+		const name = software.name || software.tool || software.software || software.package;
+		const version = software.version || software.ver || software.release;
+		const repo = software.repo || software.repository || software.url || '';
+		let label = name ? normalizeSoftwareName(name) : null;
+		if (!label && repo) label = normalizeSoftwareName(repo.split('/').filter(Boolean).pop() || repo);
+		if (label) return makeTrainingToolInfo(label, version, repo, source);
+	} else if (softwareRaw) {
+		const label = normalizeSoftwareName(softwareRaw);
+		if (label) return makeTrainingToolInfo(label, '', '', source);
+	}
+
+	const opt = String(findVal(meta, ['ss_optimizer','ss_optimizer_type','optimizer_type']) || '');
+	const easySignals = [ /LoraEasyCustomOptimizer/i, /LoRA[_\s-]?Easy[_\s-]?Training[_\s-]?Scripts/i, /\bEasyLoRA\b/i, /\bLoraEasy\b/i ];
+	if (easySignals.some(rx => rx.test(opt) || rx.test(searchable))) return makeTrainingToolInfo('EasyLoRA', '', '', source);
+
+	if (/ai[-_\s]?toolkit|ostris\/ai-toolkit|github\.com\/ostris\/ai-toolkit/.test(low)) return makeTrainingToolInfo('ai-toolkit', '', '', source);
+	if (/one[-_\s]?trainer/.test(low)) return makeTrainingToolInfo('OneTrainer', '', '', source);
+	if (/simple[-_\s]?tuner|simpletuner/.test(low)) return makeTrainingToolInfo('SimpleTuner', '', '', source);
+	if (/musubi[-_\s]?tuner|musubi/.test(low)) return makeTrainingToolInfo('Musubi Tuner', '', '', source);
+	if (/flux\s*gym|fluxgym/.test(low)) return makeTrainingToolInfo('FluxGym', '', '', source);
+	if (/everydream/.test(low)) return makeTrainingToolInfo('EveryDream', '', '', source);
+	if (meta['ss_sd_scripts_commit_hash'] || /sd[-_\s]?scripts|kohya[-_\s]?ss|github\.com\/kohya-ss\/sd-scripts|\bkohya\b/.test(low)) return makeTrainingToolInfo('kohya / sd-scripts', '', '', source);
+
+	const ssKeyCount = Object.keys(meta || {}).filter(k => /^ss_/.test(k)).length;
+	if (ssKeyCount >= 8 && (meta['ss_network_module'] || meta['ss_tag_frequency'] || meta['ss_datasets'])) {
+		return makeTrainingToolInfo('sd-scripts compatible metadata', '', '', source);
+	}
+	if (/diffusers/i.test(findVal(meta, ['modelspec.implementation','implementation','pipeline','library']) || '')) return makeTrainingToolInfo('Diffusers', '', '', source);
+
+	if (source) return makeTrainingToolInfo(source, '', '', '');
+	return null;
+}
+
+function setSystemCardsVisibility(showTool, showSource) {
+	const container = document.querySelector('.system-container');
+	const toolCard = document.getElementById('v-system_tool')?.closest('.system-card');
+	const sourceCard = document.getElementById('v-system_source')?.closest('.system-card');
+	if (!container || !toolCard || !sourceCard) return;
+
+	toolCard.classList.toggle('hidden', !showTool);
+	sourceCard.classList.toggle('hidden', !showSource);
+	container.classList.toggle('hidden', !showTool && !showSource);
+	container.classList.toggle('single', (showTool && !showSource) || (!showTool && showSource));
+}
+
+function setSystemInfo(info) {
+	const toolEl = document.getElementById('v-system_tool');
+	const sourceEl = document.getElementById('v-system_source');
+	if (!toolEl || !sourceEl) return;
+
+	const setEmpty = (el) => { el.textContent = '—'; el.classList.add('empty'); };
+	setEmpty(toolEl); setEmpty(sourceEl); setSystemCardsVisibility(false, false);
+	if (!info) return;
+
+	const hasTool = !!(info.label && String(info.label).trim());
+	const hasSource = !!(info.source && String(info.source).trim() && (!hasTool || info.source.toLowerCase() !== info.label.toLowerCase()));
+	if (hasTool) {
+		toolEl.textContent = '';
+		toolEl.classList.remove('empty');
+		const text = info.label + (info.version ? ' ' + info.version : '');
+		if (info.repo) {
+			const a = document.createElement('a'); a.href = info.repo; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = text + ' ↗'; toolEl.appendChild(a);
+		} else {
+			const nameSpan = document.createElement('span'); nameSpan.textContent = text; toolEl.appendChild(nameSpan);
+		}
+	}
+	if (hasSource) { sourceEl.textContent = info.source; sourceEl.classList.remove('empty'); }
+	setSystemCardsVisibility(hasTool, hasSource);
+}
+
+function resolvePredictionType(meta) {
+	const direct = findVal(meta, ['modelspec.prediction_type','ss_prediction_type','prediction_type']);
+	if (direct) return direct;
+	const vpred = findVal(meta, ['ss_v_pred_model','v_parameterization','v_pred']);
+	if (vpred && (vpred === '1' || vpred === 'true' || vpred === 'True')) return 'v_prediction';
+	return 'epsilon';
+}
+
+function resolveBatch(meta) {
+	const direct = ['ss_batch_size_per_device', 'ss_total_batch_size', 'train_batch_size', 'batch_size', 'per_device_train_batch_size'];
+	for (const k of direct) {
+		const v = meta[k];
+		if (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'None') return String(v);
+	}
+	if (meta.ss_datasets && Array.isArray(meta.ss_datasets)) {
+		const ds = meta.ss_datasets[0];
+		if (ds?.batch_size_per_device) return String(ds.batch_size_per_device);
+	}
+	const numBatches = meta['ss_num_batches_per_epoch'];
+	if (numBatches) {
+		let imgCount = 0;
+		const ni = meta['ss_num_train_images'];
+		if (ni) imgCount = parseInt(ni);
+		const nb = parseInt(numBatches);
+		if (imgCount > 0 && nb > 0) return String(Math.round(imgCount / nb));
+	}
+	return null;
+}
+
+function resolveResolution(meta) {
+	const keys = ['modelspec.resolution', 'ss_resolution', 'resolution', 'image_size', 'train_resolution'];
+	let raw = null;
+	for (const k of keys) {
+		const v = meta[k];
+		if (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'None') { raw = String(v); break; }
+	}
+	if (!raw && meta.ss_datasets && Array.isArray(meta.ss_datasets) && meta.ss_datasets[0]?.resolution) {
+		const r = meta.ss_datasets[0].resolution;
+		raw = Array.isArray(r) ? r.join('x') : String(r);
+	}
+	if (!raw) return null;
+	const mX = raw.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
+	if (mX) return mX[1] + 'x' + mX[2];
+	const mT = raw.match(/(\d+)\D+(\d+)/);
+	if (mT) return mT[1] + 'x' + mT[2];
+	const mS = raw.match(/^(\d+)$/);
+	if (mS) return mS[1] + 'x' + mS[1];
+	return raw;
+}
+
+function parseDatasetDirs(raw) {
+	try {
+		const obj = JSON.parse(raw);
+		let totalImgs = 0;
+		const entries = Object.entries(obj).map(([name, info]) => {
+			const repeats  = info.n_repeats || info.repeats || extractRepeatsFromName(name) || null;
+			const imgCount = info.img_count || info.num_images || extractImgCountFromName(name) || 0;
+			totalImgs += imgCount;
+			const label = formatDatasetLabel(name, repeats, imgCount);
+			return { label, imgCount };
+		});
+		return { entries, totalImgs };
+	} catch {
+		return { entries: [{ label: raw, imgCount: 0 }], totalImgs: 0 };
+	}
+}
+
+function extractRepeatsFromName(name) { const m = name.match(/^(\d+)_/); return m ? parseInt(m[1]) : null; }
+function extractImgCountFromName(name) { const m = name.match(/\((\d+)\)\s*$/); return m ? parseInt(m[1]) : 0; }
+function formatDatasetLabel(name, repeats, imgCount) {
+	const cleanName = name.replace(/^\d+_/, '');
+	let label = '';
+	if (repeats !== null) label += repeats + '_';
+	label += cleanName;
+	if (imgCount > 0) label += ' • (' + imgCount + ')';
+	return label;
+}
+
+function populateUI(meta) {
+	const bm = findVal(meta, ['ss_sd_model_name','ss_base_model_version','base_model','checkpoint','sd_model_name']);
+	if (bm) {
+		let cleanName = String(bm).trim().replace(/\.(safetensors|ckpt|pt|pth|bin|ckpt\.safetensors)$/i, '').replace(/^.*[\/\\]/, '');
+		setField('baseModelValue', cleanName, false);
+		document.getElementById('baseModelValue').style.color = '#ffffff';
+	}
+
+	const vae    = findVal(meta, ['ss_vae_name','vae','vae_name']);
+	const vaeRow = document.getElementById('vaeRow');
+	if (vae) { setField('vaeValue', vae, false); document.getElementById('vaeValue').style.color = '#ffffff'; vaeRow.style.display = 'block'; }
+	else     { vaeRow.style.display = 'none'; }
+
+	for (const [id, keys] of Object.entries(FIELDS)) {
+		let val = findVal(meta, keys);
+		if (['v-prediction_type','v-batch_size','v-resolution','v-epoch','v-steps'].includes(id)) continue;
+		if (id === 'v-network_args_algo' && val) {
+			try {
+				const obj = JSON.parse(val);
+				val = obj.algo || obj.algorithm || obj.network_args_algo || null;
+				if (!val) {
+					const dora = obj.use_dora || obj.dora || obj.dora_linear_layer || null;
+					val = (dora === true || dora === 'True' || dora === '1' || dora === 1) ? 'DoRA' : null;
+				}
+				if (!val) val = Object.entries(obj).filter(([k]) => k !== 'use_dora' && k !== 'dora').map(([k,v]) => k + ':' + v).join(', ') || null;
+			} catch {
+				const m = val.match(/algo["'\s:=]+([^\s"',}]+)/i);
+				val = m ? m[1] : val;
+			}
+		}
+
+		if (id === 'v-network_args_algo' && (!val || val === '—')) {
+			const doraKey = findVal(meta, ['ss_use_dora','use_dora','ss_dora','dora']);
+			if (doraKey && (doraKey === '1' || doraKey.toLowerCase() === 'true')) val = 'DoRA';
+		}
+
+		if (id === 'v-optimizer_type' && val) {
+			let clean = String(val).trim().split(',')[0].trim().replace(/\s*\([^)]*\)?/g, '').trim();
+			const dotParts = clean.split('.');
+			clean = dotParts[dotParts.length - 1].split('_')[0].split('-')[0].trim();
+			val = clean || val;
+		}
+		setField(id, val);
+	}
+
+	setField('v-prediction_type', resolvePredictionType(meta));
+	setField('v-batch_size', resolveBatch(meta));
+	setField('v-resolution', resolveResolution(meta));
+	
+	const epochCur   = findVal(meta, ['ss_epoch']);
+	const epochTotal = findVal(meta, ['ss_num_train_epochs','num_train_epochs']);
+	if (epochCur && epochTotal && epochCur !== epochTotal) setField('v-epoch', epochCur + ' of ' + epochTotal);
+	else if (epochCur || epochTotal) { const e = epochCur || epochTotal; setField('v-epoch', e + ' of ' + e); }
+
+	const stepsCur   = findVal(meta, ['ss_steps']);
+	const stepsTotal = findVal(meta, ['ss_max_train_steps','max_train_steps']);
+	if (stepsCur && stepsTotal && stepsCur !== stepsTotal) setField('v-steps', stepsCur + ' of ' + stepsTotal);
+	else if (stepsCur || stepsTotal) { const s = stepsCur || stepsTotal; setField('v-steps', s + ' of ' + s); }
+
+	const rawOptArgs = findVal(meta, ['ss_optimizer_args','optimizer_args']);
+	if (rawOptArgs) {
+		try { setField('v-optimizer_args', JSON.stringify(JSON.parse(rawOptArgs), null, 2)); }
+		catch { setField('v-optimizer_args', rawOptArgs); }
+	} else {
+		const rawOpt = findVal(meta, ['ss_optimizer','ss_optimizer_type','optimizer_type']);
+		if (rawOpt) {
+			const m = rawOpt.match(/\(([^)]+)\)/);
+			if (m) {
+				const obj = {};
+				m[1].split(',').forEach(p => { const [k, v] = p.split('=').map(s => s.trim()); if (k) obj[k] = v || ''; });
+				setField('v-optimizer_args', JSON.stringify(obj, null, 2));
+			}
+		}
+	}
+
+	for (const [id, [k1arr, k2arr]] of Object.entries(JOIN_FIELDS)) {
+		const v1 = findVal(meta, k1arr), v2 = findVal(meta, k2arr);
+		setField(id, (v1 || v2) ? (v1||'?') + ' / ' + (v2||'?') : null);
+	}
+
+	const trainTiming = detectTrainingTiming(meta);
+	setField('v-train_date', trainTiming.dateText);
+	setField('v-train_time', trainTiming.timeText);
+	setSystemInfo(detectSystemInfo(meta));
+	
+	const dsRaw = findVal(meta, ['ss_dataset_dirs','dataset_dirs']);
+	const dsEl  = document.getElementById('datasetContent');
+	const hintEl = document.getElementById('datasetFormatHint');
+	let datasetImgCount = 0;
+	if (dsRaw) {
+		const { entries, totalImgs } = parseDatasetDirs(dsRaw);
+		datasetImgCount = totalImgs;
+		if (entries.length > 0) {
+			const allTagsHTML = entries.map(e => '<span class="dataset-tag">' + window.escHtml(e.label) + '</span>').join('');
+			let html = `<div style="font-size:11px;color:#888;margin-bottom:10px;font-style:italic;text-align:center;">(repeats)_dataset • (images)</div>`;
+			if (entries.length > 6) {
+				html += `
+					<div class="dataset-tags" id="datasetTagsVisible">${entries.slice(0, 6).map(e => '<span class="dataset-tag">' + window.escHtml(e.label) + '</span>').join('')}</div>
+					<div class="dataset-tags" id="datasetTagsFull" style="display:none;margin-top:8px;">${allTagsHTML}</div>
+					<button class="prompt-block-toggle visible" id="datasetToggleBtn" style="margin-top:12px;width:100%;font-size:13px;">▼ (${entries.length})</button>
+				`;
+			} else { html += `<div class="dataset-tags">${allTagsHTML}</div>`; }
+			dsEl.innerHTML = html;
+			if (hintEl) hintEl.style.display = 'none';
+			if (entries.length > 6) {
+				const btn = document.getElementById('datasetToggleBtn'), visible = document.getElementById('datasetTagsVisible'), full = document.getElementById('datasetTagsFull');
+				if (btn && visible && full) {
+					let expanded = false;
+					btn.onclick = () => {
+						expanded = !expanded;
+						if (expanded) { visible.style.display = 'none'; full.style.display = 'flex'; btn.innerHTML = '▲ '; } 
+						else { visible.style.display = 'flex'; full.style.display = 'none'; btn.innerHTML = `▼ (${entries.length})`; }
+					};
+				}
+			}
+		}
+	}
+		
+	const ni = findVal(meta, ['ss_num_train_images','num_train_images']);
+	if (datasetImgCount > 0) setField('v-total_images', String(datasetImgCount));
+	else if (ni && !ni.startsWith('{')) setField('v-total_images', ni);
+	
+	const cmt = findVal(meta, ['ss_training_comment','training_comment','comment','notes']);
+	document.getElementById('v-training_comment').textContent = cmt || '';
+
+	renderPrompts(meta);
+	
+	const metaCreator = findVal(meta, ['modelspec.author','ss_creator','creator','author','ss_author','model_author']);
+	if (metaCreator) {
+		const creatorLabelRow = document.getElementById('creatorLabelRow');
+		const creatorLink     = document.getElementById('creatorNameLink');
+		const creatorFallbk   = document.getElementById('creatorAvatarFallback');
+		const creatorAvatar   = document.getElementById('creatorAvatar');
+		if (creatorLabelRow && creatorLabelRow.style.display === 'none' || !creatorLabelRow?.style.display) {
+			creatorLink.textContent = metaCreator;
+			creatorLink.href = '#';
+			creatorLink.removeAttribute('target');
+			creatorAvatar.style.display = 'none';
+			creatorFallbk.style.display = 'flex';
+			if (creatorLabelRow) creatorLabelRow.style.display = 'block';
+		}
+	}
+}
+
+function setField(id, val, isCardValue = true) {
+	const el = document.getElementById(id);
+	if (!el) return;
+	if (val !== null && val !== undefined && val !== '') {
+		el.textContent = val; el.classList.remove('empty');
+		if (!el.querySelector('a')) el.style.color = '#ffffff';
+	} else { el.textContent = '—'; el.classList.add('empty'); el.style.color = ''; }
+}
+
+const HALF_LINES = 4;
+function getHalfH(textarea) {
+	const cs = window.getComputedStyle(textarea);
+	const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+	return Math.round(HALF_LINES * lh + (parseFloat(cs.paddingTop) || 8) + (parseFloat(cs.paddingBottom) || 8) + 2);
+}
+
+window.autoResizeTextarea = function(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+window.cycleBlockState = function(wrap, btn) { applyBlockState(wrap, btn, wrap.getAttribute('data-state') === 'half' ? 'full' : 'half', null); };
+
+function applyBlockState(wrap, btn, state, halfH) {
+	wrap.setAttribute('data-state', state);
+	const ta = wrap.querySelector('textarea');
+	if (state === 'full') { wrap.style.maxHeight = (ta ? ta.scrollHeight + 2 : 9999) + 'px'; btn.textContent = '▲'; } 
+	else { wrap.style.maxHeight = (halfH || (ta ? getHalfH(ta) : 98)) + 'px'; btn.textContent = '▼'; }
+}
+
+window.initBlockCollapse = function(wrap, btn, fullHeight) {
+	const ta = wrap.querySelector('textarea');
+	const halfH = ta ? getHalfH(ta) : 98;
+	wrap.style.setProperty('--half-h', halfH + 'px');
+	if (fullHeight > halfH) { btn.classList.add('visible'); applyBlockState(wrap, btn, 'half', halfH); } 
+	else { btn.classList.remove('visible'); wrap.style.maxHeight = fullHeight + 'px'; wrap.setAttribute('data-state', 'full'); }
+};
+
+function renderPrompts(meta) {
+	const section = document.getElementById('promptSection');
+	const tfRaw   = findVal(meta, ['ss_tag_frequency','tag_frequency']);
+	let hasContent = false;
+	if (tfRaw) {
+		try {
+			const obj = JSON.parse(tfRaw);
+			const folders = Object.entries(obj);
+			if (folders.length > 0) {
+				section.innerHTML = '';
+				folders.forEach(([folder, tagMap], idx) => {
+					const sorted = Object.entries(tagMap).sort((a, b) => b[1] - a[1]).map(([t]) => t);
+					const areaId = 'promptArea_' + idx, wrapId = 'promptWrap_' + idx, btnId = 'promptBtn_' + idx;
+					const block = document.createElement('div');
+					block.className = 'prompt-block';
+					block.innerHTML =
+						'<div class="promptBox"><span class="prompt-label">📁 ' + window.escHtml(folder) + '</span><button class="copy-btn" title="Copy" onclick="copyFromArea(\'' + areaId + '\',this)">⧉</button></div>' +
+						'<div class="prompt-ta-wrap" id="' + wrapId + '" data-state="full"><textarea class="promptArea" id="' + areaId + '">' + window.escHtml(sorted.join(', ')) + '</textarea></div>' +
+						'<button class="prompt-block-toggle" id="' + btnId + '" onclick="cycleBlockState(document.getElementById(\'' + wrapId + '\'),this)">▼</button>';
+					section.appendChild(block);
+					requestAnimationFrame(() => {
+						const ta = document.getElementById(areaId), wrap = document.getElementById(wrapId), btn = document.getElementById(btnId);
+						if (ta && wrap && btn) { window.autoResizeTextarea(ta); requestAnimationFrame(() => window.initBlockCollapse(wrap, btn, ta.scrollHeight + 18)); }
+					});
+				});
+				hasContent = true;
+			}
+		} catch { }
+	}
+
+	if (!hasContent) {
+		const prompt = findVal(meta, ['activation_text','activation_tag','instance_prompt_text','trigger_word','trigger_phrase','training_prompt','prompt']);
+		const areaId = 'positiveText', wrapId = 'promptWrap_0', btnId  = 'promptBtn_0';
+		section.innerHTML =
+			'<div class="prompt-block"><div class="promptBox"><span class="prompt-label">Prompt</span><button class="copy-btn" onclick="copyFromArea(\'' + areaId + '\',this)" title="Copy">⧉</button></div>' +
+			'<div class="prompt-ta-wrap" id="' + wrapId + '" data-state="full"><textarea class="promptArea" id="' + areaId + '" placeholder="No prompt data found in metadata…">' + window.escHtml(prompt || '') + '</textarea></div>' +
+			'<button class="prompt-block-toggle" id="' + btnId + '" onclick="cycleBlockState(document.getElementById(\'' + wrapId + '\'),this)">▼</button></div>';
+		requestAnimationFrame(() => {
+			const ta = document.getElementById(areaId), wrap = document.getElementById(wrapId), btn = document.getElementById(btnId);
+			if (ta && wrap && btn) { window.autoResizeTextarea(ta); requestAnimationFrame(() => window.initBlockCollapse(wrap, btn, ta.scrollHeight + 18)); }
+		});
+	}
+}
+
+let galleryImages = []; let galleryIndex  = 0; let galleryRenderId = 0;
+function resetMediaPreview() {
+	galleryRenderId++; galleryImages = []; galleryIndex  = 0;
+	const wrap = document.getElementById('imageWrap'), img = document.getElementById('modelImage'), ph = document.getElementById('imagePlaceholder');
+	wrap.classList.remove('has-gallery');
+	wrap.querySelectorAll('.image-loading, video').forEach(e => e.remove());
+	img.onload = null; img.onerror = null; img.style.display = 'none'; img.removeAttribute('src');
+	ph.style.display = 'flex';
+	document.getElementById('galleryDots').innerHTML = ''; document.getElementById('galleryCounter').textContent = '';
+}
+
+function setGallery(urls) {
+	if (!Array.isArray(urls) || urls.length === 0) { resetMediaPreview(); return; }
+	galleryImages = urls; galleryIndex  = 0; const renderId = ++galleryRenderId;
+	const wrap = document.getElementById('imageWrap');
+	if (urls.length > 1) wrap.classList.add('has-gallery'); else wrap.classList.remove('has-gallery');
+	document.getElementById('galleryDots').innerHTML = urls.map((_, i) => '<span class="gallery-dot' + (i === 0 ? ' active' : '') + '" onclick="galleryGoTo(' + i + ')"></span>').join('');
+	renderGalleryFrame(0, renderId);
+}
+
+function renderGalleryFrame(idx, renderId = ++galleryRenderId) {
+	if (!galleryImages.length || !galleryImages[idx]) { resetMediaPreview(); return; }
+	galleryIndex = idx;
+	const img = document.getElementById('modelImage'), ph = document.getElementById('imagePlaceholder'), counter = document.getElementById('galleryCounter'), dotsEl = document.getElementById('galleryDots'), wrap = document.getElementById('imageWrap');
+	const item = galleryImages[idx], url = typeof item === 'string' ? item : item.url || '';
+	if (!url) { resetMediaPreview(); return; }
+
+	ph.style.display = 'none'; img.style.display = 'none'; img.onload = null; img.onerror = null; img.removeAttribute('src');
+	wrap.querySelectorAll('.image-loading, video').forEach(e => e.remove());
+	const loader = document.createElement('div'); loader.className = 'image-loading'; loader.innerHTML = '<div class="spinner"></div> Loading…'; wrap.appendChild(loader);
+
+	const isVideo = (item.type || '').toLowerCase() === 'video' || (item.mimeType || item.mime || '').toLowerCase().startsWith('video/') || url.toLowerCase().match(/\.(mp4|webm|mov)$/);
+	if (isVideo) {
+		const vid = document.createElement('video');
+		vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true; vid.controls = true;
+		vid.style.width = '100%'; vid.style.height = '100%'; vid.style.objectFit = 'contain'; vid.style.borderRadius = '8px';
+		vid.onloadeddata = () => { if (renderId !== galleryRenderId) return; loader.remove(); };
+		vid.onerror = () => { if (renderId !== galleryRenderId) return; loader.remove(); ph.style.display = 'flex'; };
+		vid.src = url; wrap.appendChild(vid);
+	} else {
+		img.onload = () => { if (renderId !== galleryRenderId) return; img.style.display = 'block'; loader.remove(); };
+		img.onerror = () => { if (renderId !== galleryRenderId) return; loader.remove(); ph.style.display = 'flex'; };
+		img.src = url;
+	}
+	counter.textContent = (idx + 1) + ' / ' + galleryImages.length;
+	dotsEl.querySelectorAll('.gallery-dot').forEach((d, i) => d.classList.toggle('active', i === idx));
+}
+
+window.galleryStep = function(delta) {
+	if (!galleryImages.length) return;
+	const next = (galleryIndex + delta + galleryImages.length) % galleryImages.length;
+	renderGalleryFrame(next);
+};
+window.galleryGoTo = function(idx) { renderGalleryFrame(idx); };
+
+let _bannerTimer = null; let _outdatedTimer = null;
+window.showBanner = function(type, msg) {
+	const el = document.getElementById('resultBanner'), text = document.getElementById('resultBannerText');
+	if (type === true) type = 'found'; if (type === false) type = 'not-found';
+	el.className = 'result-banner ' + type; text.textContent = msg;
+	if (_bannerTimer) clearTimeout(_bannerTimer); _bannerTimer = setTimeout(() => hideBanner(), 15000);
+};
+window.hideBanner = function() {
+	if (_bannerTimer) { clearTimeout(_bannerTimer); _bannerTimer = null; }
+	document.getElementById('resultBanner').className = 'result-banner'; document.getElementById('resultBannerText').textContent = '';
+};
+window.showOutdatedBanner = function() {
+	document.getElementById('outdatedBanner').classList.add('visible');
+	if (_outdatedTimer) clearTimeout(_outdatedTimer); _outdatedTimer = setTimeout(() => hideOutdatedBanner(), 15000);
+};
+window.hideOutdatedBanner = function() {
+	if (_outdatedTimer) { clearTimeout(_outdatedTimer); _outdatedTimer = null; }
+	document.getElementById('outdatedBanner').classList.remove('visible');
+};
+
+function setStatus(type, msg) {
+	const el = document.getElementById('civitaiStatus');
+	el.className = 'civitai-status ' + (type || ''); el.textContent = msg;
+}
+
+function resetUI() {
+	currentLoraName = ''; currentMeta = {}; currentFile = null; resetMediaPreview();
+	hideBanner(); hideOutdatedBanner(); hideConnError();
+	
+	const toolsBar = document.getElementById('tools-bar');
+	if (toolsBar) toolsBar.classList.remove('open');
+	document.querySelectorAll('.tool-module').forEach(m => m.classList.remove('open'));
+
+	const nameEl = document.getElementById('loraNameDisplay');
+	nameEl.textContent = '—'; nameEl.classList.add('empty');
+	const creatorLabelRow = document.getElementById('creatorLabelRow');
+	if (creatorLabelRow) creatorLabelRow.style.display = 'none';
+	document.getElementById('creatorAvatar').src = ''; document.getElementById('creatorAvatar').style.display = 'block';
+	document.getElementById('creatorAvatarFallback').style.display = 'none';
+	document.getElementById('creatorNameLink').textContent = '—'; document.getElementById('creatorNameLink').href = '#';
+
+	const bmEl = document.getElementById('baseModelValue'); bmEl.innerHTML = '—'; bmEl.classList.add('empty');
+	document.getElementById('vaeRow').style.display = 'none';
+	const vaeEl = document.getElementById('vaeValue'); vaeEl.innerHTML = '—'; vaeEl.classList.add('empty');
+	document.querySelectorAll('.card-value').forEach(el => { el.textContent = '—'; el.classList.add('empty'); });
+	document.getElementById('v-training_comment').textContent = '';
+	document.getElementById('datasetContent').innerHTML = ''; document.getElementById('datasetFormatHint').style.display = 'none';
+	setSystemInfo(null);
+	
+	_cardPromptOpen = true;
+	const cardPromptBody = document.getElementById('cardPromptBody'), cardPromptBtn = document.getElementById('cardPromptToggleBtn');
+	if (cardPromptBody) { cardPromptBody.classList.remove('collapsed'); cardPromptBody.style.maxHeight = ''; }
+	if (cardPromptBtn) cardPromptBtn.textContent = '▲';
+	
+	document.getElementById('promptSection').innerHTML = '<div class="prompt-block"><div class="promptBox"><span class="prompt-label">Prompt</span><button class="copy-btn" onclick="copyFromArea(\'positiveText\',this)">⧉</button></div><div class="prompt-ta-wrap" id="promptWrap_0" data-state="full" style="max-height:9999px;"><textarea class="promptArea" id="positiveText" placeholder="Tags from training data will appear here after loading a model…"></textarea></div></div>';
+	
+	document.getElementById('hashProgress').style.display = 'none';
+	document.getElementById('otAlertBar').style.display = 'none';
+	setStatus('','');
+}
+
+function sanitizeCivitaiDesc(raw) {
+	if (!raw) return '';
+	const allowed = { A: ['href', 'target'], P: [], BR: [], STRONG: [], B: [], EM: [], I: [], U: [], S: [], H1: [], H2: [], H3: [], H4: [], UL: [], OL: [], LI: [], SPAN: [], DIV: [], BLOCKQUOTE: [] };
+	const tmp = document.createElement('div'); tmp.innerHTML = raw;
+	tmp.querySelectorAll('img').forEach(img => { const badge = document.createElement('span'); badge.className = 'img-placeholder'; badge.textContent = '[img]'; img.replaceWith(badge); });
+	function sanitizeNode(node) {
+		if (node.nodeType === Node.TEXT_NODE) return node.cloneNode();
+		if (node.nodeType !== Node.ELEMENT_NODE) return null;
+		const tag = node.tagName.toUpperCase();
+		if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'IFRAME' || tag === 'OBJECT') return null;
+		const frag = document.createDocumentFragment();
+		node.childNodes.forEach(child => { const cleaned = sanitizeNode(child); if (cleaned) frag.appendChild(cleaned); });
+		if (!(tag in allowed)) return frag;
+		const el = document.createElement(tag === 'A' ? 'a' : tag.toLowerCase());
+		(allowed[tag] || []).forEach(attr => {
+			const val = node.getAttribute(attr);
+			if (val) {
+				if (attr === 'href') { if (/^(https?:|\/|#)/i.test(val)) el.setAttribute('href', val); el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+				else { el.setAttribute(attr, val); }
+			}
+		});
+		el.appendChild(frag);
+		return el;
+	}
+	const out = document.createElement('div');
+	tmp.childNodes.forEach(child => { const cleaned = sanitizeNode(child); if (cleaned) out.appendChild(cleaned); });
+	return out.innerHTML;
+}
+
+window.checkInternet = async function() {
+	try {
+		const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 4000);
+		const r = await fetch('https://danbooru.donmai.us/tags.json?search[name]=1girl&limit=1', { signal: ctrl.signal, cache: 'no-store' });
+		clearTimeout(t); return r.ok;
+	} catch(e) { return false; }
+};
+
+window.showOtAlert = function(msg) {
+	const bar = document.getElementById('otAlertBar'); bar.textContent = msg; bar.style.display = 'block';
+	setTimeout(() => { bar.style.display = 'none'; }, 6000);
+};
+
+window.sanitizeCivitaiDescLocal = sanitizeCivitaiDesc;
+window.collectAllTrainedWordsLocal = collectAllTrainedWords;
+window.isStaleLoadLocal = isStaleLoad;
+window.currentLoraNameLocal = () => currentLoraName;
+window.currentFileLocal = () => currentFile;
+window.currentMetaLocal = () => currentMeta;
+
+const DANBOORU_CAT = { 0: { label: 'General', color: '#aaa' }, 1: { label: 'Artist', color: '#f9a825' }, 3: { label: 'Copyright', color: '#ae80ff' }, 4: { label: 'Character', color: '#5bc0de' }, 5: { label: 'Meta', color: '#888' } };
+window.DANBOORU_CAT = DANBOORU_CAT;
+
+let _detectedTagsCache = null;
+window.openDetectPopout = async function() {
+	const overlay = document.getElementById('detectOverlay'), body = document.getElementById('detectPopoutBody'), filterRow = document.getElementById('detectFilterRow');
+	overlay.classList.add('open');
+	body.innerHTML = '<div class="detect-popout-empty">🔎 Scanning LoRA training tags…</div>'; filterRow.innerHTML = '';
+	const rawTags = extractTagsFromMeta();
+	if (rawTags.length === 0) { body.innerHTML = '<div class="detect-popout-empty">No training tags found. Load a LoRA first.</div>'; return; }
+	const unique = [...new Set(rawTags.map(t => t.toLowerCase().replace(/ /g,'_')))].slice(0, 200);
+	let found = [];
+	try {
+		const chunkSize = 30;
+		for (let i = 0; i < unique.length; i += chunkSize) {
+			const chunk = unique.slice(i, i + chunkSize);
+			const query = chunk.map(t => 'search[name_array][]=' + encodeURIComponent(t)).join('&');
+			const res = await fetch('https://danbooru.donmai.us/tags.json?' + query + '&limit=' + chunkSize);
+			if (res.ok) found = found.concat(await res.json());
+		}
+	} catch(e) { body.innerHTML = '<div class="detect-popout-empty" style="color:#f66">Network error. Check your connection.</div>'; return; }
+	found.sort((a,b) => b.post_count - a.post_count);
+	_detectedTagsCache = found;
+	renderDetectPopout(found, null);
+};
+
+function extractTagsFromMeta() {
+	const tfRaw = findVal(currentMeta || {}, ['ss_tag_frequency','tag_frequency']);
+	if (!tfRaw) return [];
+	try { const obj = JSON.parse(tfRaw); const tags = []; for (const sub of Object.values(obj)) { if (sub && typeof sub === 'object') { for (const tag of Object.keys(sub)) tags.push(tag); } } return tags; } catch { return []; }
+}
+
+window.renderDetectPopout = function(tags, filterCat) {
+	const body = document.getElementById('detectPopoutBody'), filterRow = document.getElementById('detectFilterRow');
+	const cats = {}; tags.forEach(t => { cats[t.category] = (cats[t.category]||0)+1; });
+	filterRow.innerHTML = '';
+	const allBtn = document.createElement('button'); allBtn.className = 'detect-filter-btn' + (filterCat===null?' active':''); allBtn.textContent = 'All'; allBtn.onclick = () => window.renderDetectPopout(tags, null);
+	filterRow.appendChild(allBtn);
+	Object.entries(cats).sort((a,b)=>a[0]-b[0]).forEach(([cat, count]) => {
+		const info = DANBOORU_CAT[cat] || { label: 'Other', color: '#888' };
+		const btn = document.createElement('button'); btn.className = 'detect-filter-btn' + (filterCat==cat?' active':''); btn.style.color = info.color; btn.textContent = info.label + ' (' + count + ')'; btn.onclick = () => window.renderDetectPopout(tags, parseInt(cat));
+		filterRow.appendChild(btn);
+	});
+	const filtered = filterCat === null ? tags : tags.filter(t => t.category == filterCat);
+	if (filtered.length === 0) { body.innerHTML = '<div class="detect-popout-empty">No Danbooru tags found in LoRA training data.</div>'; return; }
+	body.innerHTML = '';
+	filtered.forEach(t => {
+		const info = DANBOORU_CAT[t.category] || { label: '', color: '#888' };
+		const item = document.createElement('div'); item.className = 'detect-tag-item';
+		item.innerHTML = '<span class="detect-tag-dot" style="background:' + info.color + '"></span><span class="detect-tag-label">' + t.name.replace(/_/g,' ') + '</span><span class="detect-tag-count">' + Number(t.post_count).toLocaleString() + ' posts</span>';
+		item.onclick = () => { if(document.getElementById('danbooruInput')) document.getElementById('danbooruInput').value = t.name; window.closeDetectPopout(); if(window.danbooruSearch) window.danbooruSearch(t.name); };
+		body.appendChild(item);
+	});
+};
+
+window.closeDetectPopout = function(e) { if (e && e.target !== document.getElementById('detectOverlay')) return; document.getElementById('detectOverlay').classList.remove('open'); };
+</script>
+
+<!-- OS MÓDULOS DE FERRAMENTAS AGORA CARREGAM COM SUCESSO AQUI: -->
+<script src="tools/quick_links.js?v=5"></script>
+<script src="tools/lora_tag_freq.js?v=5"></script>
+<script src="tools/lora_raw_meta.js?v=5"></script>
+<script src="tools/lora_meta_editor.js?v=5"></script>
+<script src="tools/danbooru.js?v=5"></script>
+<script src="tools/lora_civitai_result.js?v=5"></script>
+<script src="tools/lora_civitai_prompts.js?v=5"></script>
+
+</body>
+</html>
