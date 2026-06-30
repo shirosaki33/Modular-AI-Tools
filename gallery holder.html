@@ -41,12 +41,12 @@
             text-overflow: ellipsis; white-space: nowrap; overflow: hidden; 
         }
         
-        #filter-tag, #batch-tag-input, #rename-input {
+        #filter-tag, #batch-tag-input, #rename-input, #path-label-input {
             background: #111; color: #00ff99; border: 1px solid #444; 
             padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none;
         }
         #filter-tag { width: 140px; }
-        #filter-tag:focus, #batch-tag-input:focus, #rename-input:focus { border-color: #00aa66; }
+        #filter-tag:focus, #batch-tag-input:focus, #rename-input:focus, #path-label-input:focus { border-color: #00aa66; }
 
         #btn-remove { background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; padding: 8px 12px; }
         #btn-remove:hover { background: #6a1822; color: #fff; }
@@ -54,6 +54,8 @@
         #btn-batch-json:hover { background: #1e4a78; color: #fff; }
         #btn-refresh { background: #263b5a; color: #9ecfff; border: 1px solid #1a3a5c; padding: 8px 12px; }
         #btn-refresh:hover { background: #4db8ff; color: #000; }
+        #btn-path-label { background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; padding: 8px 12px; }
+        #btn-path-label:hover { background: #b890ff; color: #000; }
         
         #workspace { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 0px; } 
         
@@ -261,25 +263,27 @@
 <div id="topbar">
     <div class="topbar-section left">
         <button onclick="addDirectory()">+ Add Directory</button>
-        <!-- Level 1: Root -->
         <select id="dir-list" onchange="loadSelectedDirectory()">
             <option value="">Select a directory...</option>
         </select>
-        <!-- Level 2: Immediate Subfolders -->
         <select id="sub-dir-1" onchange="loadSubDir1()" style="display:none;" title="Subfolders">
             <option value="">-- Root --</option>
         </select>
-        <!-- Level 3: Recursive Subfolders -->
         <select id="sub-dir-2" onchange="loadSubDir2()" style="display:none;" title="Inner Folders">
             <option value="">-- Current Folder --</option>
         </select>
         
         <button id="btn-refresh" onclick="refreshCurrentFolder()" style="display:none;" title="Refresh Current Folder">↻</button>
+        <button id="btn-path-label" onclick="togglePathMode()" style="display:none;" title="Definir Rota Manual">📍 Path</button>
         <button id="btn-remove" onclick="removeDirectory()" style="display:none;" title="Remove Root Path">Remove Path</button>
         <button id="btn-batch-json" onclick="batchUpdateJSONs()" style="display:none;" title="Create or Update all JSONs in this folder">Batch Update JSONs</button>
         <input type="text" id="filter-tag" placeholder="Filter by tag..." list="all-tags-list" oninput="filterGallery()" style="display:none;" title="Type a tag to filter the gallery">
     </div>
-    <div class="topbar-section center"><span id="app-title">🖼️️‍ Gallery Holder 🖼️️‍</span></div>
+    
+    <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
+        <span id="app-title">🖼️️‍ Gallery Holder 🖼️️‍</span>
+        <span id="path-display" style="color: #555; font-size: 11px; font-weight: bold; margin-top: 2px; min-height: 13px; display: block;"></span>
+    </div>
     
     <div class="topbar-section right" id="topbar-right">
         <button id="btn-rename-top" onclick="toggleRenameBalloon()" title="Rename Current Image" style="display:none; font-size: 15px;">✏️</button>
@@ -299,6 +303,15 @@
     </div>
 </div>
 
+<div id="path-dropdown" class="settings-dropdown" style="left: 200px; width: 320px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Set Visual Path:</span>
+    <input type="text" id="path-label-input" placeholder="Ex: C:\Minha\Pasta\Fotos" onkeydown="if(event.key === 'Enter') applyPathLabel()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px; margin-top: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="applyPathLabel()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1; font-family: inherit;">Confirm</button>
+        <button onclick="document.getElementById('path-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1; font-family: inherit;">Cancel</button>
+    </div>
+</div>
+
 <div id="rename-dropdown" class="settings-dropdown" style="right: 170px; width: 230px;">
     <span style="color:#aaa; font-weight:bold; font-size: 13px;">Rename Image:</span>
     <input type="text" id="rename-input" placeholder="New name..." onkeydown="if(event.key === 'Enter') renameCurrentImage()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
@@ -312,6 +325,7 @@
     <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields()"> Show Extra Gen Data</label>
     <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField()"> Show Image Tag</label>
     <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()"> Show File Names</label>
+    <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()"> Show Visual Path</label>
 </div>
 
 <div id="workspace">
@@ -415,6 +429,7 @@
 
 <script src="tools/quick_links.js"></script>
 <script src="tools/gallery_tag_system.js"></script>
+<script src="tools/gallery_path_saver.js"></script>
 <script src="tools/gallery_file_manager.js"></script>
 
 <script>
@@ -529,6 +544,17 @@ function toggleFilenameField() {
     localStorage.setItem('gh_show_filenames', isChecked); 
 }
 
+function togglePathDisplay() {
+    const isChecked = document.getElementById('toggle-path-field').checked;
+    const displayElement = document.getElementById('path-display');
+    if (isChecked) {
+        displayElement.style.display = 'block';
+    } else {
+        displayElement.style.display = 'none';
+    }
+    localStorage.setItem('gh_show_path_field', isChecked);
+}
+
 function toggleThumbPosition() {
     const detailView = document.getElementById('detail-view');
     const btn = document.getElementById('btn-layout');
@@ -559,6 +585,12 @@ document.addEventListener('click', (e) => {
     if (dropdownTag && dropdownTag.classList.contains('open') && !dropdownTag.contains(e.target) && !btnTag.contains(e.target)) {
         dropdownTag.classList.remove('open');
     }
+    
+    const dropdownPath = document.getElementById('path-dropdown'); 
+    const btnPath = document.getElementById('btn-path-label'); 
+    if (dropdownPath && dropdownPath.classList.contains('open') && !dropdownPath.contains(e.target) && !btnPath.contains(e.target)) {
+        dropdownPath.classList.remove('open');
+    }
 });
 
 let isDraggingRight = false;
@@ -566,6 +598,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const showExtras = localStorage.getItem('gh_show_extra_fields') === 'true'; document.getElementById('toggle-extra-fields').checked = showExtras; toggleExtraFields();
     const showTag = localStorage.getItem('gh_show_tag_field') === 'true'; document.getElementById('toggle-tag-field').checked = showTag; toggleTagField();
     const showFilenames = localStorage.getItem('gh_show_filenames') !== 'false'; document.getElementById('toggle-filename-field').checked = showFilenames; toggleFilenameField();
+    const showPath = localStorage.getItem('gh_show_path_field') !== 'false'; document.getElementById('toggle-path-field').checked = showPath; togglePathDisplay();
 
     const resizerRight = document.getElementById('resizer-right');
     const rightCol = document.getElementById('right-col');
@@ -1302,6 +1335,8 @@ async function removeDirectory() {
     
     // Oculta os elementos da Topbar
     document.getElementById('btn-remove').style.display = 'none'; 
+    document.getElementById('btn-path-label').style.display = 'none'; 
+    document.getElementById('path-display').textContent = '';
     document.getElementById('btn-batch-json').style.display = 'none'; 
     document.getElementById('btn-batch-tag').style.display = 'none'; 
     document.getElementById('btn-rename-top').style.display = 'none'; 
@@ -1331,6 +1366,8 @@ async function loadGallery(dirHandle) {
     currentFiles = [];
     
     document.getElementById('btn-remove').style.display = 'inline-block';
+    document.getElementById('btn-path-label').style.display = 'inline-block';
+    if (typeof loadSavedPathDisplay === 'function') loadSavedPathDisplay(dirHandle);
     document.getElementById('btn-batch-json').style.display = 'inline-block';
     document.getElementById('btn-batch-tag').style.display = 'inline-block';
     document.getElementById('btn-rename-top').style.display = 'inline-block';
