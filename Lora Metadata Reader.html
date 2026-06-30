@@ -54,8 +54,9 @@
 		.panel-left, .lora-data-box { background: #161616; border-radius: 16px; padding: 20px; }
 		.panel-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
 
-		.lora-name-display { font-size: 15px; font-weight: 600; color: #ffffff; margin-bottom: 10px; padding: 8px 12px; background: #0d1f18; border-radius: 8px; border-left: 3px solid #00ff99; min-height: 36px; word-break: break-word; }
-		.lora-name-display.empty { color: #444; border-left-color: #333; background: #111; }
+		/* ADJUSTED LORA NAME DISPLAY TO MATCH IMAGE */
+		.lora-name-display { font-size: 15px; font-weight: 600; color: #ffffff; margin-bottom: 10px; padding: 10px 12px; background: #111; border-radius: 8px; min-height: 38px; word-break: break-word; display: flex; align-items: center; }
+		.lora-name-display.empty { color: #444; background: #111; }
 		.lora-name-display a { color: #00ff99; text-decoration: none; }
 		.lora-name-display a:hover { text-decoration: underline; opacity: 0.85; }
 
@@ -95,7 +96,7 @@
 		.model-image-wrap.has-gallery .gallery-counter { display: block; }
 
 		.info-label { font-size: 13px; color: #aaa; margin-bottom: 6px; }
-		.info-value { background: #111; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 500; min-height: 38px; color: #ffffff; }
+		.info-value { background: #111; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 500; min-height: 38px; color: #ffffff; display: flex; align-items: center; }
 		.info-value a { color: #00ff99; text-decoration: none; }
 		.info-value a:hover { color: #fff; text-decoration: underline; }
 		.info-value.empty { color: #333; }
@@ -104,11 +105,14 @@
 		.lora-data-title  { font-size: 18px; font-weight: 600; }
 		
 		/* CARDS */
-		.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }
-		.card, .training-card { background: #1b1b1b; border-radius: 12px; padding: 18px; height: 100%; }
+		.summary-grid { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
+		/* ADJUSTED FLEX BASIS TO FIT 4 IN A ROW */
+		.card { background: #1b1b1b; border-radius: 12px; padding: 18px; flex: 1 1 170px; }
+		.training-card { background: #1b1b1b; border-radius: 12px; padding: 18px; flex: 1 1 200px; }
 		.cardprompt { background: #1b1b1b; border-radius: 12px; padding: 15px; grid-column: 1 / -1; width: 100%; }
 		.card-title, .training-card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
-		.training-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+		.training-container { display: flex; flex-wrap: wrap; gap: 16px; }
+        
 		.system-container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: -10px 0 20px; }
 		.system-card { background: #1b1b1b; border-radius: 12px; padding: 18px; min-height: 82px; }
 		.system-card-title { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
@@ -186,7 +190,6 @@
 		.result-banner { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 10px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 18px; letter-spacing: 0.02em; border: 1.5px solid transparent; }
 		.result-banner.found { display: flex; background: #061a10; border-color: #0d5030; color: #00dd88; }
 		.result-banner.not-found { display: flex; background: #1a0606; border-color: #5a1010; color: #ff6666; }
-		.result-banner.warning { display: flex; background: #1a1400; border-color: #6b5500; color: #ffd84d; }
 		.outdated-banner { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 10px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 18px; letter-spacing: 0.02em; border: 1.5px solid #6b5500; background: #1a1400; color: #ffd84d; }
 		.outdated-banner.visible { display: flex; }
 		.banner-dismiss { background: none; border: none; cursor: pointer; color: inherit; font-size: 18px; line-height: 1; padding: 2px 6px; opacity: 0.6; transition: opacity .15s; flex-shrink: 0; }
@@ -210,10 +213,11 @@
 		.civitai-model-desc li { margin-bottom: 2px; }
 		.civitai-model-desc .img-placeholder { display: inline-block; background: #1a2a1e; border: 1px solid #2a4a30; color: #00cc88; font-size: 11px; padding: 1px 6px; border-radius: 4px; font-family: monospace; }
 
-		.card-item { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; border-bottom: 1px solid #222; }
-		.card-item:last-child { border-bottom: none; }
-		.card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-		.card-value { font-size: 13px; color: #e0e0e0; word-break: break-all; }
+		/* ADJUSTED CARD ITEMS TO MATCH IMAGE */
+		.card-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
+		.card-item:last-child { padding-bottom: 0; }
+		.card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+		.card-value { font-size: 13px; color: #e0e0e0; word-break: break-all; margin-top: 2px; }
 		.card-value.empty { color: #333; }
 
 		/* FOOTER */
@@ -1618,7 +1622,6 @@ window.currentMetaLocal = () => currentMeta;
 const DANBOORU_CAT = { 0: { label: 'General', color: '#aaa' }, 1: { label: 'Artist', color: '#f9a825' }, 3: { label: 'Copyright', color: '#ae80ff' }, 4: { label: 'Character', color: '#5bc0de' }, 5: { label: 'Meta', color: '#888' } };
 window.DANBOORU_CAT = DANBOORU_CAT;
 
-let _detectedTagsCache = null;
 window.openDetectPopout = async function() {
 	const overlay = document.getElementById('detectOverlay'), body = document.getElementById('detectPopoutBody'), filterRow = document.getElementById('detectFilterRow');
 	overlay.classList.add('open');
@@ -1637,7 +1640,6 @@ window.openDetectPopout = async function() {
 		}
 	} catch(e) { body.innerHTML = '<div class="detect-popout-empty" style="color:#f66">Network error. Check your connection.</div>'; return; }
 	found.sort((a,b) => b.post_count - a.post_count);
-	_detectedTagsCache = found;
 	renderDetectPopout(found, null);
 };
 
