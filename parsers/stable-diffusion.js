@@ -29,7 +29,6 @@
             .split('/')
             .pop()
             .replace(/\.(safetensors|ckpt|pt|pth|bin|gguf|onnx)$/i, '')
-            .replace(/[_]+/g, ' ')
             .trim();
     }
 

@@ -337,22 +337,35 @@ function exportRawText() {
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-function cleanLoraName(x) { return String(x || "").replace(/\\/g, "/").split("/").pop().replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, "").trim(); }
+function cleanLoraName(x) { return String(x || "").replace(/["']/g, "").replace(/\\/g, "/").split("/").pop().replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, "").trim(); }
 
 function extractHashesFromRaw(rawText) {
     const map = new Map();
     if (!rawText) return map;
-    const reLine = /\bLora hashes\s*:\s*("[^"]*"|'[^']*'|[^\n\r]+)/gi;
+    
+    // 1. O TRATOR: Vasculha o texto inteiro ignorando regras de linha.
+    // Procura qualquer coisa no formato "nome_do_arquivo: hash" direto ao ponto.
+    const reBruteForce = /([^"',\s:]+)\s*:\s*([a-fA-F0-9]{8,64})\b/g;
     let m;
-    while ((m = reLine.exec(rawText)) !== null) {
-        let chunk = String(m[1] || "").trim().replace(/^['"]|['"]$/g, "");
-        chunk.split(/\s*,\s*/).forEach(part => {
-            const mm = part.match(/^(.+?)\s*:\s*([a-fA-F0-9]{8,64})\s*$/i);
-            if (mm) map.set(cleanLoraName(mm[1]).toLowerCase(), mm[2].toLowerCase());
-        });
+    while ((m = reBruteForce.exec(rawText)) !== null) {
+        const name = cleanLoraName(m[1]).toLowerCase();
+        const hash = m[2].toLowerCase();
+        
+        // Evita que palavras comuns do sistema (como "Model hash") sejam tratadas como LoRA
+        if (!['hash', 'model', 'seed', 'steps', 'sampler', 'version', 'ti'].includes(name)) {
+            map.set(name, hash);
+        }
     }
+    
+    // 2. Mantém a leitura de JSONs (ComfyUI, Fooocus, etc) intacta
     const reJson = /"(?:lora_name|name|model_name)"\s*:\s*"([^"]+)"[\s\S]{0,240}?"(?:hash|sha256|autov2|sshs_model_hash)"\s*:\s*"?([a-fA-F0-9]{8,64})"?/gi;
-    while ((m = reJson.exec(rawText)) !== null) { map.set(cleanLoraName(m[1]).toLowerCase(), m[2].toLowerCase()); }
+    while ((m = reJson.exec(rawText)) !== null) { 
+        map.set(cleanLoraName(m[1]).toLowerCase(), m[2].toLowerCase()); 
+    }
+    
+    // Mostra no console o que o sistema encontrou para podermos investigar se der erro
+    console.log("🕵️ Hashes extraídos pelo Trator:", Object.fromEntries(map));
+    
     return map;
 }
 

@@ -74,11 +74,10 @@
         return a;
     }
 
+    // A MÁGICA FOI FEITA AQUI
     function makeExactLink(url, label, weightStr) {
         const wrap = document.createElement('span');
-        wrap.style.display = 'inline-flex';
-        wrap.style.alignItems = 'center';
-        wrap.style.gap = '6px';
+        wrap.style.display = 'inline';
 
         const a = document.createElement('a');
         a.href        = url;
@@ -87,13 +86,18 @@
         a.textContent = label;
         a.style.color          = '#4db8ff';
         a.style.textDecoration = 'none';
+        a.style.wordBreak      = 'normal';
+        a.style.whiteSpace     = 'normal';
         a.onmouseover = () => { a.style.textDecoration = 'underline'; };
         a.onmouseout  = () => { a.style.textDecoration = 'none'; };
-        
+
         wrap.appendChild(a);
+
         if (weightStr) {
             const w = document.createElement('span');
-            w.textContent = weightStr;
+            // Espaço normal antes do peso, mas o peso em si não quebra ("| Weight: 1" fica inteiro)
+            w.textContent = '\u00A0' + weightStr.trim();
+            w.style.whiteSpace = 'nowrap';
             wrap.appendChild(w);
         }
         return wrap;
@@ -118,25 +122,20 @@
     function fixContainerLayouts() {
         const loraList = document.getElementById('loraList');
         if (loraList) {
-            loraList.style.display = 'grid';
-            loraList.style.gridTemplateColumns = 'repeat(auto-fill, minmax(260px, 1fr))';
+            loraList.style.display = 'flex';
+            loraList.style.flexDirection = 'column';
             loraList.style.gap = '10px';
-            loraList.style.alignItems = 'stretch'; 
             
             const items = loraList.querySelectorAll('.lora-item');
             items.forEach(item => {
-                item.style.height = '100%'; 
                 item.style.boxSizing = 'border-box';
-                item.style.display = 'flex';
-                item.style.alignItems = 'center';
-                item.style.justifyContent = 'space-between';
+                item.style.display = 'block';
                 
                 const textSpan = item.querySelector('span');
                 if (textSpan) {
-                    textSpan.style.display = 'inline-flex';
-                    textSpan.style.alignItems = 'center';
-                    textSpan.style.flexWrap = 'wrap';
+                    textSpan.style.display = 'block';
                     textSpan.style.width = '100%';
+                    textSpan.style.whiteSpace = 'normal';
                 }
             });
         }
@@ -151,14 +150,12 @@
         if (!alertBox) {
             alertBox = document.createElement('div');
             alertBox.id = 'civitai-dynamic-alert';
-            // Ajustado margin para 0 para aproveitar o gap natural da coluna principal
             alertBox.style.cssText = 'margin: 0; padding: 10px 14px; border-left: 3px solid #ffd040; border-right: 3px solid #ffd040; background: #101723; color: #f5f5f5; border-radius: 7px; font-size: 13.5px; line-height: 1.45; text-align: center; display: block; width: 100%; box-sizing: border-box; clear: both;';
             
             const panelLeft = document.querySelector('.panel-left');
             const loraList = document.getElementById('loraList');
             
             if (panelLeft) {
-                // Insere logo APÓS a caixa preta toda (.panel-left), fora do seu fundo
                 panelLeft.parentNode.insertBefore(alertBox, panelLeft.nextSibling);
             } else if (loraList) {
                 loraList.parentNode.insertBefore(alertBox, loraList.nextSibling);
