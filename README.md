@@ -11,4 +11,3 @@ Fast navigation: There's a built-in "Quick Links" menu so you can bounce between
 Basically, it's a single hub to figure out how an image was made, check how a LoRA was trained, and actually keep your local files organized.
 
 🌐 Try it online: https://shirosaki33.github.io/Modular-AI-Tools/
-(Note: Gallery Holder is local-only due to browser file system limits, but the readers work straight from the web).
