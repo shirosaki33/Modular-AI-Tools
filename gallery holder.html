@@ -30,7 +30,7 @@
         
         button, select {
             background: #333; color: #fff; border: none; 
-            padding: 8px 15px; border-radius: 8px; cursor: pointer; transition: 0.15s; 
+            padding: 8px 15px; border-radius: 8px; cursor: transition: 0.15s; 
             font-family: inherit; font-size: 13px; font-weight: bold;
         }
         button:hover, select:hover { background: #00aa66; color: #000; }
@@ -224,8 +224,9 @@
         }
         .btn-action:hover { background: #1e4a78; }
         #btn-manual.edit-mode { background: #00aa66; color: #000; border-color: #00cc88; }
+        
         #btn-save { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
-        #btn-save:hover { background: #40247a; }
+        #btn-save:hover { filter: brightness(1.2); }
         
         #btn-delete-img { flex: 0.2; background: #4a1118; color: #ffb6c0; border-color: #7a222c; font-size: 16px; display: flex; justify-content: center; align-items: center; }
         #btn-delete-img:hover { background: #6a1822; color: #fff; }
@@ -327,6 +328,8 @@
     <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()" checked> Show File Names</label>
     <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()" checked> Show Visual Path</label>
     <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon()"> Show Path Button</label>
+    <label><input type="checkbox" id="toggle-count-field" onchange="updateGridCounters()" checked> Show Image Count</label>
+    <label><input type="checkbox" id="toggle-json-count-field" onchange="updateGridCounters()"> Show JSON Count</label>
 </div>
 
 <div id="workspace">
@@ -339,6 +342,11 @@
                  <img id="main-image" src="">
             </div>
             <div id="thumbnail-strip"></div>
+        </div>
+        
+        <div id="grid-counters" style="position: absolute; bottom: 15px; right: 25px; display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 12px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
+            <span id="image-count-display" style="color: #9ecfff; font-size: 13px; font-weight: bold; display: none;"></span>
+            <span id="json-count-display" style="color: #00ff99; font-size: 13px; font-weight: bold; display: none;"></span>
         </div>
     </div>
     
@@ -562,6 +570,48 @@ function togglePathIcon() {
     }
 }
 
+// --- FUNÇÃO GLOBAL DOS CONTADORES DO GRID ---
+function updateGridCounters() {
+    const container = document.getElementById('grid-counters');
+    const imgDisplay = document.getElementById('image-count-display');
+    const jsonDisplay = document.getElementById('json-count-display');
+    
+    // Esconde se estiver fora do modo grid ou se não tiver pasta
+    if (!currentHandle || document.getElementById('grid-view').style.display === 'none') {
+        if (container) container.style.display = 'none';
+        return;
+    }
+
+    const showImg = document.getElementById('toggle-count-field').checked;
+    const showJson = document.getElementById('toggle-json-count-field').checked;
+
+    if (!showImg && !showJson) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'flex';
+    
+    if (showImg) {
+        imgDisplay.textContent = `🖼️ ${currentFiles.length} imgs`;
+        imgDisplay.style.display = 'inline-block';
+    } else {
+        imgDisplay.style.display = 'none';
+    }
+
+    if (showJson) {
+        let jCount = 0;
+        currentFiles.forEach(f => {
+            const base = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
+            if (currentJsonFiles.has(base + '.json')) jCount++;
+        });
+        jsonDisplay.textContent = `📄 ${jCount} JSONs`;
+        jsonDisplay.style.display = 'inline-block';
+    } else {
+        jsonDisplay.style.display = 'none';
+    }
+}
+
 function toggleThumbPosition() {
     const detailView = document.getElementById('detail-view');
     const btn = document.getElementById('btn-layout');
@@ -602,18 +652,16 @@ document.addEventListener('click', (e) => {
 
 let isDraggingRight = false;
 window.addEventListener('DOMContentLoaded', () => {
+    // Apenas aplica o estado padrão do HTML, zero localStorage
     toggleExtraFields();
     toggleTagField();
     toggleFilenameField();
     togglePathDisplay();
     togglePathIcon();
+    updateGridCounters();
 
     const resizerRight = document.getElementById('resizer-right');
-// ...
     const rightCol = document.getElementById('right-col');
-	
-	const showPathIconState = localStorage.getItem('gh_show_path_icon') === 'true'; 
-    document.getElementById('toggle-path-icon').checked = showPathIconState;
 
     resizerRight.addEventListener('mousedown', () => {
         isDraggingRight = true;
@@ -870,6 +918,7 @@ async function deleteCurrentImage() {
         
         tagsPerFile.delete(fname);
         currentFiles = currentFiles.filter(f => f.name !== fname);
+        currentJsonFiles.delete(baseName + '.json'); // Limpa do contador
         
         showAlert('🗑️ File successfully deleted.', 'success');
         backToGrid();
@@ -1237,6 +1286,17 @@ async function saveSidecarFile() {
     try {
         const fh = await currentHandle.getFileHandle(sidecarName, { create: true });
         const writable = await fh.createWritable(); await writable.write(JSON.stringify(dataObj, null, 2)); await writable.close();
+        
+        currentJsonFiles.add(sidecarName);
+        
+        const btnSave = document.getElementById('btn-save');
+        btnSave.textContent = 'Update JSON';
+        btnSave.style.background = '#0d2a18';
+        btnSave.style.borderColor = '#00aa66';
+        btnSave.style.color = '#00ff99';
+        
+        updateGridCounters();
+        
         showAlert(`✅ JSON File saved: ${sidecarName}`, 'success');
         if (typeof tagsPerFile !== 'undefined') {
             tagsPerFile.set(fname, savedTag);
@@ -1279,11 +1339,13 @@ async function batchUpdateJSONs() {
                 try { 
                     const fh = await currentHandle.getFileHandle(sidecarName, { create: true }); 
                     const writable = await fh.createWritable(); await writable.write(JSON.stringify(dataObj, null, 2)); await writable.close(); counter++; 
+                    currentJsonFiles.add(sidecarName);
                     if (existingTag && typeof tagsPerFile !== 'undefined') { tagsPerFile.set(entry.name, existingTag); allTags.add(existingTag); } 
                 } catch (e) {}
             }
         }
     }
+    updateGridCounters();
     if (typeof updateTagsDatalist !== 'undefined') updateTagsDatalist();
     showAlert(`✅ Batch process complete! ${counter} JSON files updated.`, 'success');
 }
@@ -1295,12 +1357,13 @@ const dbName    = 'GalleryDB';
 const storeName = 'directories';
 
 // VARIÁVEIS DE CONTROLE DE NÍVEIS
-let rootHandle    = null; // Handle permanente da Raiz escolhida
-let currentHandle = null; // A pasta ATIVA no momento
-let sub1Handles   = new Map(); // Pastas do Nível 2
-let sub2Handles   = new Map(); // Pastas do Nível 3 (Achatadas/Recursivas)
+let rootHandle    = null; 
+let currentHandle = null; 
+let sub1Handles   = new Map(); 
+let sub2Handles   = new Map(); 
 
 let currentFiles  = [];
+let currentJsonFiles = new Set(); // NOVO: Armazena os JSONs lidos no diretório
 let sortMode = 0;
 
 function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
@@ -1337,15 +1400,14 @@ async function addDirectory() {
     } catch (e) { if (e.name !== 'AbortError') alert('Permission error.'); } 
 }
 
-// O Botão Remove Path agora foca apenas no rootHandle, protegendo o Nível 1
 async function removeDirectory() { 
     if (!rootHandle) return; 
     await deleteHandle(rootHandle.name); 
     
     rootHandle = null; 
     currentHandle = null; 
+    currentJsonFiles.clear();
     
-    // Oculta os elementos da Topbar
     document.getElementById('btn-remove').style.display = 'none'; 
     document.getElementById('btn-path-label').style.display = 'none'; 
     document.getElementById('path-display').textContent = '';
@@ -1358,6 +1420,7 @@ async function removeDirectory() {
     document.getElementById('sub-dir-2').style.display = 'none';
     
     document.getElementById('grid-view').innerHTML = ''; 
+    updateGridCounters();
     backToGrid(); 
     await updateSelect(); 
 }
@@ -1376,6 +1439,7 @@ async function loadGallery(dirHandle) {
     rootHandle = dirHandle; 
     currentHandle = dirHandle; 
     currentFiles = [];
+    currentJsonFiles.clear();
     
     document.getElementById('btn-remove').style.display = 'inline-block';
     if (document.getElementById('toggle-path-icon').checked) {
@@ -1389,7 +1453,6 @@ async function loadGallery(dirHandle) {
     document.getElementById('filter-tag').style.display = 'inline-block'; 
     document.getElementById('filter-tag').value = ''; 
     
-    // Reseta dropdowns de Subpastas
     const sel1 = document.getElementById('sub-dir-1');
     const sel2 = document.getElementById('sub-dir-2');
     sel1.style.display = 'none';
@@ -1397,16 +1460,19 @@ async function loadGallery(dirHandle) {
     sub1Handles.clear();
     
     for await (const entry of dirHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            const file = await entry.getFile();
-            const url  = URL.createObjectURL(file);
-            currentFiles.push({ name: entry.name, url, file });
+        if (entry.kind === 'file') {
+            if (entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                const file = await entry.getFile();
+                const url  = URL.createObjectURL(file);
+                currentFiles.push({ name: entry.name, url, file });
+            } else if (entry.name.match(/\.json$/i)) {
+                currentJsonFiles.add(entry.name);
+            }
         } else if (entry.kind === 'directory') {
             sub1Handles.set(entry.name, entry);
         }
     }
     
-    // Mostra o Nível 2 apenas se existirem pastas dentro da raiz
     if (sub1Handles.size > 0) {
         sel1.style.display = 'inline-block';
         sel1.innerHTML = '<option value="">-- Root --</option>';
@@ -1425,7 +1491,6 @@ window.loadSubDir1 = async function() {
     const sel2 = document.getElementById('sub-dir-2');
 
     if (!val) {
-        // Se escolheu a opção padrão "-- Root --", volta a ler do início
         await loadGallery(rootHandle);
         return;
     }
@@ -1437,12 +1502,10 @@ window.loadSubDir1 = async function() {
 
     showAlert('Reading subfolders... please wait.', 'info');
     currentFiles = [];
+    currentJsonFiles.clear();
     
-    // Faz a leitura "Achatada/Recursiva" para montar o Nível 3, 
-    // e simultaneamente puxa as imagens que estiverem nesse Nível 2
     await scanFlattened(currentHandle, "", true, 0);
 
-    // Mostra o Nível 3 se existirem pastas profundas
     if (sub2Handles.size > 0) {
         sel2.style.display = 'inline-block';
         for (let path of Array.from(sub2Handles.keys()).sort((a,b) => a.localeCompare(b))) {
@@ -1452,7 +1515,7 @@ window.loadSubDir1 = async function() {
 
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
     renderGrid(); backToGrid();
-    showAlert(null); // Limpa alerta
+    showAlert(null); 
 };
 
 // --- CARREGA O NÍVEL 3 (RECURSIVIDADE DA PASTA ESCOLHIDA) ---
@@ -1460,7 +1523,6 @@ window.loadSubDir2 = async function() {
     const val = document.getElementById('sub-dir-2').value;
 
     if (!val) {
-        // Se escolheu a opção padrão "-- Current Folder --", recarrega o Nível 2 original
         const val1 = document.getElementById('sub-dir-1').value;
         currentHandle = sub1Handles.get(val1);
     } else {
@@ -1469,12 +1531,17 @@ window.loadSubDir2 = async function() {
 
     showAlert('Loading images...', 'info');
     currentFiles = [];
+    currentJsonFiles.clear();
     
     for await (const entry of currentHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            const file = await entry.getFile();
-            const url  = URL.createObjectURL(file);
-            currentFiles.push({ name: entry.name, url, file });
+        if (entry.kind === 'file') {
+            if (entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                const file = await entry.getFile();
+                const url  = URL.createObjectURL(file);
+                currentFiles.push({ name: entry.name, url, file });
+            } else if (entry.name.match(/\.json$/i)) {
+                currentJsonFiles.add(entry.name);
+            }
         }
     }
 
@@ -1483,8 +1550,6 @@ window.loadSubDir2 = async function() {
     showAlert(null);
 };
 
-// --- FUNÇÃO PARA O BOTÃO REFRESH ↻ ---
-// Garante que o refresh não resete sempre para a Raiz, mas sim para a pasta que você está olhando agora
 window.refreshCurrentFolder = async function() {
     const val2 = document.getElementById('sub-dir-2').value;
     const val1 = document.getElementById('sub-dir-1').value;
@@ -1498,22 +1563,23 @@ window.refreshCurrentFolder = async function() {
     }
 };
 
-// --- LEITOR RECURSIVO (ACHATADO) PARA O NÍVEL 3 ---
 async function scanFlattened(dirHandle, pathPrefix, isFirstLevel, depth = 0) {
-    if (depth > 10) return; // Trava de segurança para não explodir o navegador se houver um loop infinito no seu HD
+    if (depth > 10) return; 
     
     for await (const entry of dirHandle.values()) {
         if (entry.kind === 'directory') {
             const fullPath = pathPrefix ? pathPrefix + '/' + entry.name : entry.name;
             sub2Handles.set(fullPath, entry);
-            // Chama a mesma função para olhar dentro desta pasta (recursividade)
             await scanFlattened(entry, fullPath, false, depth + 1);
             
-        } else if (isFirstLevel && entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            // Pega as imagens APENAS da pasta do Nível 2 que o usuário selecionou, para não misturar com as das subpastas
-            const file = await entry.getFile();
-            const url  = URL.createObjectURL(file);
-            currentFiles.push({ name: entry.name, url, file });
+        } else if (isFirstLevel && entry.kind === 'file') {
+            if (entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                const file = await entry.getFile();
+                const url  = URL.createObjectURL(file);
+                currentFiles.push({ name: entry.name, url, file });
+            } else if (entry.name.match(/\.json$/i)) {
+                currentJsonFiles.add(entry.name);
+            }
         }
     }
 }
@@ -1528,6 +1594,7 @@ function toggleSort() {
 function renderGrid() {
     const grid = document.getElementById('grid-view');
     grid.innerHTML = '';
+    
     let arrRender = [...currentFiles];
     if (sortMode === 1) arrRender.sort((a,b) => a.name.localeCompare(b.name));
     else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
@@ -1559,6 +1626,8 @@ function renderGrid() {
         wrapper.appendChild(label);
         grid.appendChild(wrapper);
     });
+    
+    updateGridCounters();
     if (typeof filterGallery === 'function') filterGallery(); 
 }
 
@@ -1580,6 +1649,23 @@ async function openDetailView(url, fileName) {
     document.getElementById('main-image').src = url;
     document.getElementById('file-name').value = fileName;
     showAlert(null);
+    updateGridCounters(); // Esconde o contador já que saiu da grade
+
+    // === LÓGICA DO BOTÃO DE SAVE/UPDATE ===
+    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+    const btnSave = document.getElementById('btn-save');
+    if (currentJsonFiles.has(baseName + '.json')) {
+        btnSave.textContent = 'Update JSON';
+        btnSave.style.background = '#0d2a18';
+        btnSave.style.borderColor = '#00aa66';
+        btnSave.style.color = '#00ff99';
+    } else {
+        btnSave.textContent = 'Save JSON';
+        btnSave.style.background = '';
+        btnSave.style.borderColor = '';
+        btnSave.style.color = '';
+    }
+    // ======================================
 
     const strip = document.getElementById('thumbnail-strip');
     if (strip.children.length === 0 || strip.children.length !== currentFiles.length) {
@@ -1613,7 +1699,6 @@ async function openDetailView(url, fileName) {
     fillFields(null);
 
     try {
-        const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
         const jh = await currentHandle.getFileHandle(baseName + '.json'); const jf = await jh.getFile(); const jd = JSON.parse(await jf.text());
         if (currentSession !== detailSessionId) return; 
         
@@ -1645,6 +1730,7 @@ function backToGrid() {
     document.getElementById('right-col').style.display = 'none';
     document.getElementById('resizer-right').style.display = 'none'; 
     document.getElementById('grid-view').style.display = 'grid'; 
+    updateGridCounters(); // Reativa o contador ao voltar para a grade
     if (typeof filterGallery === 'function') filterGallery(); 
 }
 </script>
