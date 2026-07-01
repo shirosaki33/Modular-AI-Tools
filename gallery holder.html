@@ -30,7 +30,7 @@
         
         button, select {
             background: #333; color: #fff; border: none; 
-            padding: 8px 15px; border-radius: 8px; cursor: transition: 0.15s; 
+            padding: 8px 15px; border-radius: 8px; cursor: pointer; transition: 0.15s; 
             font-family: inherit; font-size: 13px; font-weight: bold;
         }
         button:hover, select:hover { background: #00aa66; color: #000; }
@@ -220,7 +220,7 @@
         .action-buttons { display: flex; gap: 10px; margin-top: auto; }
         .btn-action {
             background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;
-            padding: 12px; border-radius: 8px; cursor: pointer; transition: 0.15s; font-weight: bold; font-size: 12px;
+            padding: 12px; border-radius: 8px; cursor: transition: 0.15s; font-weight: bold; font-size: 12px;
         }
         .btn-action:hover { background: #1e4a78; }
         #btn-manual.edit-mode { background: #00aa66; color: #000; border-color: #00cc88; }
@@ -347,6 +347,12 @@
         <div id="grid-counters" style="position: absolute; bottom: 15px; right: 25px; display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 12px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
             <span id="image-count-display" style="color: #9ecfff; font-size: 13px; font-weight: bold; display: none;"></span>
             <span id="json-count-display" style="color: #00ff99; font-size: 13px; font-weight: bold; display: none;"></span>
+        </div>
+
+        <div id="pagination-controls" style="position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 14px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
+            <button id="btn-page-prev" onclick="changePage(-1)" style="padding: 5px 12px; font-size: 12px;">◀ Ant</button>
+            <span id="page-info" style="color: #9ecfff; font-size: 13px; font-weight: bold; white-space: nowrap;">Pág 1 de 1</span>
+            <button id="btn-page-next" onclick="changePage(1)" style="padding: 5px 12px; font-size: 12px;">Prox ▶</button>
         </div>
     </div>
     
@@ -1306,50 +1312,6 @@ async function saveSidecarFile() {
     } catch (e) { console.error(e); showAlert('❌ Error saving. Check directory permissions.', 'error'); }
 }
 
-async function batchUpdateJSONs() {
-    if (!currentHandle) { alert('No directory loaded.'); return; }
-    if (!confirm('This will create or update .json files for ALL images in this folder. Continue?')) return;
-    
-    let counter = 0; showAlert('Processing batch update... Please wait.', 'info');
-    for await (const entry of currentHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            const file = await entry.getFile();
-            const baseName = entry.name.substring(0, entry.name.lastIndexOf('.')) || entry.name; const sidecarName = baseName + '.json';
-            let oldData = {};
-            let hasOldJson = false;
-            try { const existingFh = await currentHandle.getFileHandle(sidecarName); const existingFile = await existingFh.getFile(); oldData = JSON.parse(await existingFile.text()); hasOldJson = true; } catch (e) {}
-
-            const meta = await extractPNGMetadata(file);
-            if (meta || hasOldJson) {
-                const existingTag = oldData.tag ?? '';
-                const dataObj = { 
-                    file_name: entry.name, 
-                    positive: meta?.pos ?? oldData.positive ?? '', 
-                    negative: meta?.neg ?? oldData.negative ?? '', 
-                    tag: existingTag, 
-                    notes: oldData.notes ?? (oldData.note ? [oldData.note] : []), 
-                    cfg: meta?.cfg ?? oldData.cfg ?? '', 
-                    steps: meta?.steps ?? oldData.steps ?? '', 
-                    seed: meta?.seed ?? oldData.seed ?? '', 
-                    sampler: meta?.sampler ?? meta?.scheduler ?? oldData.sampler ?? '', 
-                    checkpoint: meta?.ckpt ?? meta?.checkpoint ?? oldData.checkpoint ?? '', 
-                    loras: meta?.loras ?? oldData.loras ?? '', 
-                    size: meta?.size ?? oldData.size ?? '' 
-                };
-                try { 
-                    const fh = await currentHandle.getFileHandle(sidecarName, { create: true }); 
-                    const writable = await fh.createWritable(); await writable.write(JSON.stringify(dataObj, null, 2)); await writable.close(); counter++; 
-                    currentJsonFiles.add(sidecarName);
-                    if (existingTag && typeof tagsPerFile !== 'undefined') { tagsPerFile.set(entry.name, existingTag); allTags.add(existingTag); } 
-                } catch (e) {}
-            }
-        }
-    }
-    updateGridCounters();
-    if (typeof updateTagsDatalist !== 'undefined') updateTagsDatalist();
-    showAlert(`✅ Batch process complete! ${counter} JSON files updated.`, 'success');
-}
-
 /* ================================================================
    BLOCK 6 — DIRECTORY LOGIC & SORTING & GRID MODE (RECURSIVE CASCADING)
    ================================================================ */
@@ -1365,6 +1327,8 @@ let sub2Handles   = new Map();
 let currentFiles  = [];
 let currentJsonFiles = new Set(); // NOVO: Armazena os JSONs lidos no diretório
 let sortMode = 0;
+let currentPage = 1;
+const itemsPerPage = 100;
 
 function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
 async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
@@ -1436,6 +1400,7 @@ async function loadSelectedDirectory() {
 
 // --- CARREGA O NÍVEL 1 (RAIZ) ---
 async function loadGallery(dirHandle) {
+    currentPage = 1;
     rootHandle = dirHandle; 
     currentHandle = dirHandle; 
     currentFiles = [];
@@ -1487,6 +1452,7 @@ async function loadGallery(dirHandle) {
 
 // --- CARREGA O NÍVEL 2 (SUBPASTAS IMEDIATAS) ---
 window.loadSubDir1 = async function() {
+    currentPage = 1;
     const val = document.getElementById('sub-dir-1').value;
     const sel2 = document.getElementById('sub-dir-2');
 
@@ -1520,6 +1486,7 @@ window.loadSubDir1 = async function() {
 
 // --- CARREGA O NÍVEL 3 (RECURSIVIDADE DA PASTA ESCOLHIDA) ---
 window.loadSubDir2 = async function() {
+    currentPage = 1;
     const val = document.getElementById('sub-dir-2').value;
 
     if (!val) {
@@ -1599,6 +1566,20 @@ function renderGrid() {
     if (sortMode === 1) arrRender.sort((a,b) => a.name.localeCompare(b.name));
     else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
 
+    // --- LÓGICA DE PAGINAÇÃO (Apenas se passar de 100 imagens) ---
+    const totalItems = arrRender.length;
+    if (totalItems > itemsPerPage) {
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        if (currentPage > totalPages) currentPage = totalPages;
+        
+        const start = (currentPage - 1) * itemsPerPage;
+        const end = start + itemsPerPage;
+        arrRender = arrRender.slice(start, end);
+    } else {
+        currentPage = 1; // Reseta se a pasta for pequena
+    }
+    // -----------------------------------------------------------------
+
     arrRender.forEach(fileItem => {
         const wrapper = document.createElement('div');
         wrapper.className = 'grid-item-wrapper';
@@ -1628,7 +1609,47 @@ function renderGrid() {
     });
     
     updateGridCounters();
+    updatePaginationControls(); // Atualiza a exibição dos botões de página
     if (typeof filterGallery === 'function') filterGallery(); 
+}
+
+function updatePaginationControls() {
+    const container = document.getElementById('pagination-controls');
+    if (!container) return;
+
+    // Condições: Precisa ter pasta carregada, estar no modo grid e ter MAIS de 100 imagens no total
+    if (!currentHandle || document.getElementById('grid-view').style.display === 'none' || currentFiles.length <= itemsPerPage) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'flex';
+    const totalPages = Math.ceil(currentFiles.length / itemsPerPage);
+    document.getElementById('page-info').textContent = `Pág ${currentPage} de ${totalPages}`;
+    
+    const prevBtn = document.getElementById('btn-page-prev');
+    const nextBtn = document.getElementById('btn-page-next');
+    
+    prevBtn.disabled = (currentPage === 1);
+    nextBtn.disabled = (currentPage === totalPages);
+    
+    prevBtn.style.opacity = (currentPage === 1) ? "0.4" : "1";
+    prevBtn.style.cursor = (currentPage === 1) ? "default" : "pointer";
+    nextBtn.style.opacity = (currentPage === totalPages) ? "0.4" : "1";
+    nextBtn.style.cursor = (currentPage === totalPages) ? "default" : "pointer";
+}
+
+function changePage(direction) {
+    const totalPages = Math.ceil(currentFiles.length / itemsPerPage);
+    currentPage += direction;
+    
+    if (currentPage < 1) currentPage = 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+    
+    // Rola o grid de volta para o topo ao trocar de página
+    document.getElementById('grid-view').scrollTop = 0;
+    
+    renderGrid();
 }
 
 /* ================================================================
@@ -1650,6 +1671,7 @@ async function openDetailView(url, fileName) {
     document.getElementById('file-name').value = fileName;
     showAlert(null);
     updateGridCounters(); // Esconde o contador já que saiu da grade
+    updatePaginationControls(); // Oculta a paginação no modo detalhe
 
     // === LÓGICA DO BOTÃO DE SAVE/UPDATE ===
     const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
@@ -1731,6 +1753,7 @@ function backToGrid() {
     document.getElementById('resizer-right').style.display = 'none'; 
     document.getElementById('grid-view').style.display = 'grid'; 
     updateGridCounters(); // Reativa o contador ao voltar para a grade
+    updatePaginationControls(); // Reativa a paginação ao voltar pro grid
     if (typeof filterGallery === 'function') filterGallery(); 
 }
 </script>
