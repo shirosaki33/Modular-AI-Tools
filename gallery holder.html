@@ -324,8 +324,8 @@
 <div id="settings-dropdown" class="settings-dropdown">
     <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields()"> Show Extra Gen Data</label>
     <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField()"> Show Image Tag</label>
-    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()"> Show File Names</label>
-    <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()"> Show Visual Path</label>
+    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()" checked> Show File Names</label>
+    <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()" checked> Show Visual Path</label>
     <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon()"> Show Path Button</label>
 </div>
 
@@ -528,21 +528,18 @@ function toggleExtraFields() {
     const isChecked = document.getElementById('toggle-extra-fields').checked; 
     const table = document.querySelector('.meta-table'); 
     if (isChecked) table.classList.remove('hide-extras'); else table.classList.add('hide-extras'); 
-    localStorage.setItem('gh_show_extra_fields', isChecked); 
 }
 
 function toggleTagField() { 
     const isChecked = document.getElementById('toggle-tag-field').checked; 
     const block = document.getElementById('tag-block'); 
     if (isChecked) block.classList.remove('hide-tag'); else block.classList.add('hide-tag'); 
-    localStorage.setItem('gh_show_tag_field', isChecked); 
 }
 
 function toggleFilenameField() { 
     const isChecked = document.getElementById('toggle-filename-field').checked; 
     const grid = document.getElementById('grid-view'); 
     if (isChecked) grid.classList.remove('hide-filenames'); else grid.classList.add('hide-filenames'); 
-    localStorage.setItem('gh_show_filenames', isChecked); 
 }
 
 function togglePathDisplay() {
@@ -553,7 +550,6 @@ function togglePathDisplay() {
     } else {
         displayElement.style.display = 'none';
     }
-    localStorage.setItem('gh_show_path_field', isChecked);
 }
 
 function togglePathIcon() {
@@ -564,7 +560,6 @@ function togglePathIcon() {
     } else {
         btn.style.display = 'none';
     }
-    localStorage.setItem('gh_show_path_icon', isChecked);
 }
 
 function toggleThumbPosition() {
@@ -607,12 +602,14 @@ document.addEventListener('click', (e) => {
 
 let isDraggingRight = false;
 window.addEventListener('DOMContentLoaded', () => {
-    const showExtras = localStorage.getItem('gh_show_extra_fields') === 'true'; document.getElementById('toggle-extra-fields').checked = showExtras; toggleExtraFields();
-    const showTag = localStorage.getItem('gh_show_tag_field') === 'true'; document.getElementById('toggle-tag-field').checked = showTag; toggleTagField();
-    const showFilenames = localStorage.getItem('gh_show_filenames') !== 'false'; document.getElementById('toggle-filename-field').checked = showFilenames; toggleFilenameField();
-    const showPath = localStorage.getItem('gh_show_path_field') !== 'false'; document.getElementById('toggle-path-field').checked = showPath; togglePathDisplay();
+    toggleExtraFields();
+    toggleTagField();
+    toggleFilenameField();
+    togglePathDisplay();
+    togglePathIcon();
 
     const resizerRight = document.getElementById('resizer-right');
+// ...
     const rightCol = document.getElementById('right-col');
 	
 	const showPathIconState = localStorage.getItem('gh_show_path_icon') === 'true'; 
