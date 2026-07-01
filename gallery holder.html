@@ -326,6 +326,7 @@
     <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField()"> Show Image Tag</label>
     <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()"> Show File Names</label>
     <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()"> Show Visual Path</label>
+    <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon()"> Show Path Button</label>
 </div>
 
 <div id="workspace">
@@ -555,6 +556,17 @@ function togglePathDisplay() {
     localStorage.setItem('gh_show_path_field', isChecked);
 }
 
+function togglePathIcon() {
+    const isChecked = document.getElementById('toggle-path-icon').checked;
+    const btn = document.getElementById('btn-path-label');
+    if (isChecked && typeof rootHandle !== 'undefined' && rootHandle) {
+        btn.style.display = 'inline-block';
+    } else {
+        btn.style.display = 'none';
+    }
+    localStorage.setItem('gh_show_path_icon', isChecked);
+}
+
 function toggleThumbPosition() {
     const detailView = document.getElementById('detail-view');
     const btn = document.getElementById('btn-layout');
@@ -602,6 +614,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
     const resizerRight = document.getElementById('resizer-right');
     const rightCol = document.getElementById('right-col');
+	
+	const showPathIconState = localStorage.getItem('gh_show_path_icon') === 'true'; 
+    document.getElementById('toggle-path-icon').checked = showPathIconState;
 
     resizerRight.addEventListener('mousedown', () => {
         isDraggingRight = true;
@@ -1293,8 +1308,8 @@ let sortMode = 0;
 
 function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
 async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
-async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => r(keysReq.result.map((name, i) => ({ name, handle: valsReq.result[i] }))); }); }
-async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.oncomplete = r; }); }
+async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
+async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.oncomplete = r; }); }
 
 window.onload = async () => {
     try {
@@ -1366,7 +1381,9 @@ async function loadGallery(dirHandle) {
     currentFiles = [];
     
     document.getElementById('btn-remove').style.display = 'inline-block';
-    document.getElementById('btn-path-label').style.display = 'inline-block';
+    if (document.getElementById('toggle-path-icon').checked) {
+        document.getElementById('btn-path-label').style.display = 'inline-block';
+    }
     if (typeof loadSavedPathDisplay === 'function') loadSavedPathDisplay(dirHandle);
     document.getElementById('btn-batch-json').style.display = 'inline-block';
     document.getElementById('btn-batch-tag').style.display = 'inline-block';
