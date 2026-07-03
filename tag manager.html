@@ -132,9 +132,15 @@
         .progress-fill { width: 0%; height: 100%; background: #00ff99; transition: 0.2s; }
         .progress-text { font-size: 11px; text-align: center; margin-top: 5px; color: #aaa; display: none; font-weight: bold;}
 
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; backdrop-filter: blur(5px); }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; backdrop-filter: blur(5px); overflow: hidden; }
         .modal-overlay.active { display: flex; }
-        #image-popout { max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
+        #image-zoom-wrapper { max-width: 90%; max-height: 90%; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: default; }
+        #image-zoom-wrapper.zoomed { cursor: grab; }
+        #image-zoom-wrapper.dragging { cursor: grabbing; }
+        #image-popout { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); user-select: none; -webkit-user-drag: none; transform-origin: center center; }
+        #image-zoom-controls { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; background: rgba(17,24,39,0.9); padding: 8px 14px; border-radius: 30px; border: 1px solid #263b5a; z-index: 101; }
+        #image-zoom-controls button { padding: 6px 14px; border-radius: 20px; font-size: 14px; }
+        #zoom-level-display { color: #9ecfff; font-size: 12px; font-weight: bold; min-width: 46px; text-align: center; user-select: none; }
 
         .tool-modal { background: #1b1b1b; padding: 20px; border-radius: 10px; border: 1px solid #333; width: 350px; display: flex; flex-direction: column; gap: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.9); }
         .tool-modal h3 { margin: 0; font-size: 16px; color: #eee; border-bottom: 1px solid #333; padding-bottom: 10px; }
@@ -295,6 +301,7 @@
             </div>
             <div id="master-selection-actions" class="selection-actions">
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('selected')">➕ Add</button>
+                <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('all')">➕ Add to All</button>
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('master')">🔄 Replace</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedMasterTags()">🗑️ Remove</button>
             </div>
@@ -411,7 +418,17 @@
     </div>
 </div>
 
-<div id="modal-image" class="modal-overlay" onclick="window.closeModal('modal-image')"><img id="image-popout" src="" onclick="event.stopPropagation()"></div>
+<div id="modal-image" class="modal-overlay" onclick="window.closeModal('modal-image')">
+    <div id="image-zoom-wrapper" onclick="event.stopPropagation()">
+        <img id="image-popout" src="">
+    </div>
+    <div id="image-zoom-controls" onclick="event.stopPropagation()">
+        <button onclick="window.zoomImagePopout(-0.25)" title="Zoom Out">➖</button>
+        <span id="zoom-level-display">100%</span>
+        <button onclick="window.zoomImagePopout(0.25)" title="Zoom In">➕</button>
+        <button onclick="window.resetImageZoom()" title="Reset Zoom">⟳</button>
+    </div>
+</div>
 
 <div id="modal-help" class="modal-overlay" onclick="window.closeModal('modal-help')">
     <div class="tool-modal" style="width: 550px;" onclick="event.stopPropagation()">

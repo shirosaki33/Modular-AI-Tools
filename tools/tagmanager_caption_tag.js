@@ -414,9 +414,21 @@ function renderMasterTagList() {
     });
 }
 
-// NOTA: setLogic é definida (e usada de fato) em tagmanager_ui_core.js,
-// que carrega depois deste arquivo e sobrescreve window.setLogic. A versão
-// que existia aqui era código morto (nunca executava) e foi removida.
+function setLogic(mode) {
+    const btn = document.getElementById('btn-logic-' + mode);
+    if (btn && btn.classList.contains('active')) {
+        btn.classList.remove('active');
+        window.filterMode = 'NONE';
+    } else {
+        document.querySelectorAll('.logic-btn').forEach(b => b.classList.remove('active'));
+        if(btn) btn.classList.add('active');
+        window.filterMode = mode;
+    }
+
+    if (typeof window.applyFilters === 'function') {
+        window.applyFilters();
+    }
+}
 
 function applyFilters() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
@@ -442,6 +454,8 @@ function applyFilters() {
         if(img.element) img.element.style.display = visible ? 'flex' : 'none';
     });
 }
+
+function clearFilters() { masterSelectedTags.clear(); updateSelectionActions(); renderMasterTagList(); setLogic('AND'); }
 
 function updateSelectionActions() {
     const bar = document.getElementById('master-selection-actions');
@@ -483,7 +497,12 @@ function addSelectedMasterTagsTo(target) {
         }
     });
     
-    renderEditor(); refreshListStatus();
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    renderMasterTagList();
+    renderEditor();
+    refreshListStatus();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
     showAlert(`Added ${tagsToAdd.length} tags to ${targets.length} images.`);
 }
 
