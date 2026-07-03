@@ -263,6 +263,32 @@ function addTagToSelected(newTag, position = 'bottom') {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
 
+// Adiciona uma tag a TODAS as imagens do dataset (usado pela caixa de texto
+// do painel "All Dataset Tags"). Diferente de addTagToSelected, que só
+// aplica às imagens marcadas na lista à esquerda.
+function addTagToAllImages(newTag, position = 'bottom') {
+    const tag = newTag.trim(); if(!tag) return;
+    imageFiles.forEach(img => {
+        if (img.type === 'tags' || !img.hasFile) {
+            let tags = img.content ? img.content.split(',').map(t => t.trim()).filter(t => t) : [];
+            if (!tags.includes(tag)) { position === 'top' ? tags.unshift(tag) : tags.push(tag); }
+            img.content = tags.join(', ');
+            img.hasFile = true;
+            img.type = 'tags';
+            if(!img.ext) img.ext = document.getElementById('topbar-save-format').value;
+        }
+    });
+    masterTagSet.add(tag);
+
+    // Refresh Imediato
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    renderMasterTagList();
+    renderEditor();
+    refreshListStatus();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+}
+
 function reorderTags(fromIndex, toIndex) {
     selectedIndices.forEach(idx => {
         if (imageFiles[idx].type === 'tags') {
@@ -278,7 +304,16 @@ function inlineAdd(source) {
     const input = document.getElementById(`${source}-add-input`);
     const pos = document.getElementById(`${source}-add-pos`).value;
     const tagsToAdd = input.value.split(',').map(t => t.trim()).filter(t => t);
-    if(tagsToAdd.length > 0) { tagsToAdd.forEach(t => addTagToSelected(t, pos)); input.value = ''; }
+    if(tagsToAdd.length === 0) return;
+
+    // A caixa do painel "All Dataset Tags" (master) aplica a todo o dataset.
+    // A caixa do editor da imagem ativa (active) aplica só às imagens selecionadas.
+    if (source === 'master') {
+        tagsToAdd.forEach(t => addTagToAllImages(t, pos));
+    } else {
+        tagsToAdd.forEach(t => addTagToSelected(t, pos));
+    }
+    input.value = '';
 }
 
 /* === COL 3: MASTER LIST & FILTERS === */
@@ -379,21 +414,9 @@ function renderMasterTagList() {
     });
 }
 
-function setLogic(mode) {
-    const btn = document.getElementById('btn-logic-' + mode);
-    if (btn && btn.classList.contains('active')) {
-        btn.classList.remove('active');
-        window.filterMode = 'NONE';
-    } else {
-        document.querySelectorAll('.logic-btn').forEach(b => b.classList.remove('active'));
-        if(btn) btn.classList.add('active');
-        window.filterMode = mode;
-    }
-
-    if (typeof window.applyFilters === 'function') {
-        window.applyFilters();
-    }
-}
+// NOTA: setLogic é definida (e usada de fato) em tagmanager_ui_core.js,
+// que carrega depois deste arquivo e sobrescreve window.setLogic. A versão
+// que existia aqui era código morto (nunca executava) e foi removida.
 
 function applyFilters() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
@@ -419,8 +442,6 @@ function applyFilters() {
         if(img.element) img.element.style.display = visible ? 'flex' : 'none';
     });
 }
-
-function clearFilters() { masterSelectedTags.clear(); updateSelectionActions(); renderMasterTagList(); setLogic('AND'); }
 
 function updateSelectionActions() {
     const bar = document.getElementById('master-selection-actions');
