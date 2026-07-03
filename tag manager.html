@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="coi-serviceworker.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tag Manager</title>
+    
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+    
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.min.js"></script>
+    <script src="tools/tagmanager_batch_tagger.js"></script>
+    <script src="tools/tagmanager_caption_tag.js"></script>
+    <script src="tools/tagmanager_nl_editor.js"></script>
+
+    <style>
+        :root {
+            --thumb-size: 70px;
+            --editor-font-size: 13px;
+        }
+
+        body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: Arial, Helvetica, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* === ANTI-LAG FOR RESIZER === */
+        body.is-resizing * { user-select: none !important; }
+        body.is-resizing .panel { pointer-events: none !important; transition: none !important; }
+        #col-list, #col-tools { will-change: width; }
+
+        #topbar { background: #1b1b1b; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #222; z-index: 20; flex-shrink: 0; }
+        .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+        .topbar-section.left { justify-content: flex-start; }
+        .topbar-section.center { justify-content: center; }
+        .topbar-section.right { justify-content: flex-end; }
+        
+        #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+        
+        button, select, input[type="text"], input[type="password"], input[type="number"], textarea { background: #333; color: #fff; border: 1px solid #444; padding: 8px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; font-weight: bold; outline: none; transition: 0.15s; }
+        button { cursor: pointer; border: none; }
+        button:hover { background: #00aa66; color: #000; }
+        select:focus, input:focus, textarea:focus { border-color: #00aa66; }
+        
+        select.folder-select { max-width: 140px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; background: #111; color: #aaa; border: 1px solid #333;}
+
+        .btn-save-local { background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.1s; }
+        .btn-save-local:hover { background: #00aa66; color: #000; }
+
+        #btn-settings, #btn-mode-switch, #btn-help { background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; margin-left: 5px; }
+        #btn-settings:hover, #btn-mode-switch:hover, #btn-help:hover { color: #00ff99; border-color:#00ff99; }
+        #btn-mode-switch.active-mode { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
+
+        .settings-dropdown { display: none; position: absolute; top: 55px; right: 20px; background: #111827; border: 1px solid #263b5a; border-radius: 8px; padding: 14px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.6); min-width: 220px; flex-direction: column; gap: 10px; }
+        .settings-dropdown.open { display: flex; }
+        .settings-dropdown label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
+        .settings-dropdown input[type="checkbox"] { width: auto; margin: 0; accent-color: #00ff99;}
+
+        #workspace { display: flex; flex: 1; overflow: hidden; position: relative; } 
+        .view-layer { display: none; width: 100%; height: 100%; padding: 15px; gap: 0; box-sizing: border-box; }
+        .view-layer.active { display: flex; }
+
+        .resizer { display: flex; align-items: center; justify-content: center; z-index: 10; flex-shrink: 0; cursor: col-resize; width: 14px; }
+        .resizer::after { content: ''; background: #333; transition: 0.2s; border-radius: 2px; width: 4px; height: 40px; }
+        .resizer:hover::after, .resizer.dragging::after { background: #00ff99; }
+
+        .panel { background: #1b1b1b; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #222; transition: 0.2s ease-in-out;}
+        .panel-header { background: #222; padding: 10px 15px; font-size: 13px; font-weight: bold; color: #aaa; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;}
+        
+        .inline-add-box { display: flex; gap: 8px; padding: 10px 15px; background: #111; border-top: 1px solid #222; align-items: center; flex-shrink: 0;}
+        .inline-add-box input { flex: 1; }
+        .pos-select { width: 60px; padding: 8px; }
+        .btn-inline-add { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; padding: 8px 15px; border-radius: 6px;}
+        .btn-inline-add:hover { background: #1e4a78; color: #fff; }
+
+        .logic-bar { display: flex; gap: 5px; padding: 10px 15px; background: #151515; border-bottom: 1px solid #333; flex-shrink: 0;}
+        .logic-btn { flex: 1; padding: 6px; background: #222; border: 1px solid #444; color: #aaa; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.1s;}
+        .logic-btn:hover { background: #333; color: #eee; }
+        .logic-btn.active { background: #0d2a18; color: #00ff99; border-color: #00aa66; }
+        #btn-filter-fav-tags { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em; }
+        
+        .selection-actions { display: none; gap: 5px; padding: 10px 15px; background: #1a1a1a; border-bottom: 1px solid #333; flex-shrink: 0; }
+        .btn-multi { flex: 1; padding: 8px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: 0.1s; }
+        .btn-add-all { background: #1a3a5c; color: #4db8ff; border-color: #2a5a8c; }
+        .btn-add-all:hover { background: #1e4a78; color: #fff; }
+        .btn-remove { background: #2a0000; color: #ff6060; border-color: #aa0000; }
+        .btn-remove:hover { background: #ff4444; color: #fff; }
+        .btn-replace { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
+        .btn-replace:hover { background: #4a2a8c; color: #fff; }
+
+        #col-list { width: 300px; flex-shrink: 0; }
+        #image-list { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; background: #151515;}
+        .list-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #222; cursor: pointer; user-select: none; transition: 0.1s;}
+        .list-item:hover { background: #222; }
+        .list-item.selected { background: #0a3a5c; border-left: 3px solid #4db8ff; padding-left: 9px; }
+        .list-item img { width: var(--thumb-size); height: var(--thumb-size); object-fit: cover; border-radius: 4px; pointer-events: none; border: 1px solid #333;}
+        .list-item-info { flex: 1; overflow: hidden; pointer-events: none; }
+        .list-item-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .list-item-status { font-size: 10px; color: #888; margin-top: 4px; }
+        .list-item.has-data .list-item-status { color: #00ff99; }
+        .list-item.is-nl .list-item-status { color: #b890ff; }
+
+        #col-editor { flex: 1; min-width: 300px; display: flex; flex-direction: column; }
+        #editor-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        #nl-editor-container { display: none; flex: 1; flex-direction: column; padding: 15px; }
+        #nl-textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none; font-size: var(--editor-font-size); line-height: 1.5; padding: 1em; background: #0d0d0d; border-radius: 8px;}
+        #tags-editor-container { display: flex; flex: 1; flex-direction: column; background: #111; overflow: hidden; }
+        #tag-list-vertical { flex: 1; overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 20px;}
+        
+        .tag-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6em 1.1em; border-bottom: 1px solid #222; background: #151515; font-size: var(--editor-font-size); user-select: none; transition: background 0.1s; cursor: grab; }
+        .tag-row:hover { background: #1f1f1f; }
+        .tag-row:active { cursor: grabbing; }
+        .tag-row.dragging { opacity: 0.4; background: #333; }
+        .tag-row.selected-active { background: #0a3a5c; border-left: 3px solid #4db8ff; padding-left: calc(1.1em - 3px); color: #fff;}
+        .tag-row-left { display: flex; align-items: center; overflow: hidden; flex: 1; }
+        .tag-name { color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;}
+        .tag-remove { color: #ff4444; cursor: pointer; font-weight: bold; font-size: 1.25em; padding: 0 0.4em; flex-shrink: 0;}
+        .tag-remove:hover { color: #ff0000; transform: scale(1.2); }
+
+        #col-tools { width: 350px; flex-shrink: 0; }
+        .tools-content { padding: 0; display: flex; flex-direction: column; flex: 1; overflow: hidden;}
+        #master-tag-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111;}
+        .master-tag-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5em 1em; border-bottom: 1px solid #222; font-size: var(--editor-font-size); cursor: pointer; user-select: none; background: #151515; transition: background 0.1s;}
+        .master-tag-item:hover { background: #222; }
+        .master-tag-item.selected-master { background: #0a3a5c; border-left: 3px solid #4db8ff; color: #fff; padding-left: calc(1em - 3px); }
+
+        .auto-panel { width: 600px; padding: 30px; background: #1b1b1b; border-radius: 12px; border: 1px solid #333; display: flex; flex-direction: column; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.5); max-height: 90vh; overflow-y: auto; }
+        .meta-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 6px; font-weight: bold; display: block; letter-spacing: 0.5px; }
+        
+        .btn-action { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; padding: 14px; border-radius: 8px; font-size: 14px; width: 100%; font-weight: bold; }
+        .btn-action.run { background: #00aa66; color: #000; border-color: #00cc88; margin-top: 15px;}
+        .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .progress-box { width: 100%; background: #111; border: 1px solid #333; border-radius: 6px; overflow: hidden; display: none; height: 12px; margin-top: 15px;}
+        .progress-fill { width: 0%; height: 100%; background: #00ff99; transition: 0.2s; }
+        .progress-text { font-size: 11px; text-align: center; margin-top: 5px; color: #aaa; display: none; font-weight: bold;}
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; backdrop-filter: blur(5px); }
+        .modal-overlay.active { display: flex; }
+        #image-popout { max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
+
+        .tool-modal { background: #1b1b1b; padding: 20px; border-radius: 10px; border: 1px solid #333; width: 350px; display: flex; flex-direction: column; gap: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.9); }
+        .tool-modal h3 { margin: 0; font-size: 16px; color: #eee; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .modal-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+        .btn-cancel { background: transparent; border: 1px solid #555; color: #aaa; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn-cancel:hover { background: #333; color: #fff; }
+
+        #alertBar { display: none; padding: 10px; text-align: center; font-size: 12px; font-weight: bold; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); min-width: 250px;}
+        #alertBar.error { background: #2a0000; border: 1px solid #aa0000; color: #ff6060; display: block; }
+        #alertBar.success { background: #0d2a18; border: 1px solid #00aa66; color: #00ff99; display: block; }
+        #alertBar.warn    { background: #2a1a00; border: 1px solid #aa6600; color: #ffcc66; display: block; }
+        #alertBar.info    { background: #001a2a; border: 1px solid #0066aa; color: #66ccff; display: block; }
+
+        .footerbar { margin-top: 10px; text-align: center; font-size: 13px; }
+        .footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
+        .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
+        .footer-copy { margin-bottom: 10px; text-align: center; font-size: 11px; color: #555; }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00aa66; }
+    </style>
+</head>
+<body onload="initSystem()">
+
+<datalist id="all-tags-list"></datalist>
+
+<div id="topbar">
+    <div class="topbar-section left">
+        <button id="btn-load-dataset" onclick="window.loadImagesDirectory()">📁 Load Dataset</button>
+        <select id="sub-dir-1" class="folder-select" onchange="window.loadSubDir1()" style="display:none;" title="Subfolders">
+            <option value="">-- Root --</option>
+        </select>
+        <select id="sub-dir-2" class="folder-select" onchange="window.loadSubDir2()" style="display:none;" title="Inner Folders">
+            <option value="">-- Current Folder --</option>
+        </select>
+        <button id="btn-refresh" onclick="window.refreshDataset()" style="display:none; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c;" title="Refresh Folder">🔄</button>
+    </div>
+    
+    <div class="topbar-section center" id="app-title">
+        🏷️ Tag Manager 🏷️
+    </div>
+    
+    <div class="topbar-section right" id="topbar-right">
+        <select id="topbar-system-type" style="margin-right: 5px; width: 90px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()">
+            <option value="tags">🏷️ Tags</option>
+            <option value="nl">📝 NL</option>
+        </select>
+        <select id="topbar-save-format" style="margin-right: 15px; width: 80px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()">
+            <option value="txt">.txt</option>
+            <option value="json">.json</option>
+        </select>
+        
+        <div style="display:flex; align-items:center; gap:5px; margin-right: 10px;" title="Font Size (Tags/NL)">
+            <span style="font-size: 11px; color: #888;">🔤</span>
+            <input type="range" id="font-slider" min="11" max="26" value="13" style="width: 70px; accent-color: #00ff99;" oninput="window.updateEditorFontSize(this.value)">
+        </div>
+
+        <button id="btn-help" onclick="window.showHelp()" title="Help" style="display:inline-block;">❓</button>
+        <button id="btn-mode-switch" onclick="window.toggleMode()" title="Toggle Auto Captioner" style="font-size: 13px;">🤖 Auto-Caption</button>
+        <button id="btn-settings" onclick="window.toggleSettings()" title="Settings">⚙️</button>
+    </div>
+</div>
+
+<div id="settings-dropdown" class="settings-dropdown">
+    <label><input type="checkbox" id="toggle-type-select" onchange="window.toggleTypeSelect()"> Show Type Selector (Tag/NL)</label>
+    <label><input type="checkbox" id="toggle-format-select" onchange="window.toggleFormatSelect()"> Show Format Selector (.txt/.json)</label>
+    <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
+</div>
+
+<div id="replace-dropdown" class="settings-dropdown" style="right: auto; left: 50%; transform: translateX(-50%); top: 60px; width: 260px; position: fixed;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Replace Tag (<span id="replace-scope"></span>):</span>
+    <input type="text" id="replace-old-tag" readonly style="background: #222; color: #888; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <input type="text" id="replace-new-tag" placeholder="New tag..." list="all-tags-list" onkeydown="if(event.key === 'Enter') window.confirmReplaceTag()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="window.confirmReplaceTag()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Replace</button>
+        <button onclick="document.getElementById('replace-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="rename-dropdown" class="settings-dropdown" style="right: auto; left: 50%; transform: translateX(-50%); top: 60px; width: 260px; position: fixed;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Rename Selected Images:</span>
+    <input type="text" id="rename-input" placeholder="New base name..." onkeydown="if(event.key === 'Enter') window.confirmRename()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px; margin-top: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="window.confirmRename()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="document.getElementById('rename-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="workspace">
+    <div id="view-editor" class="view-layer active">
+        
+        <div class="panel" id="col-list">
+            <div class="panel-header">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    Dataset <span id="list-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
+                    <button id="btn-filter-star-img" class="btn-save-local" style="background:transparent; border: 1px solid #444; color:#888; padding: 2px 6px; font-size: 12px; margin-left: 5px;" onclick="window.toggleStarFilterImg()" title="Show Only Starred Images">☆</button>
+                </div>
+                
+                <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
+                    <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
+                    <button class="btn-save-local" style="background:#2a0000; border-color:#aa0000; color:#ff6060; padding: 2px 6px; font-size: 14px;" onclick="window.deleteSelectedImages()" title="Delete Selected">🗑️</button>
+                </div>
+            </div>
+            
+            <div id="image-list"></div>
+            
+            <div style="padding: 10px; background: #151515; border-top: 1px solid #222; flex-shrink: 0; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 11px; color: #555;">🔍</span>
+                <input type="range" id="thumb-slider" min="70" max="250" value="70" style="flex: 1; accent-color: #00ff99;" oninput="window.updateThumbSize(this.value)">
+                <span style="font-size: 14px; color: #555;">🖼️</span>
+            </div>
+        </div>
+
+        <div class="resizer vertical" id="resizer-left"></div>
+
+        <div class="panel" id="col-editor">
+            <div class="panel-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span>Active Image</span><span id="editor-type-badge" style="font-size: 10px; background: #2f1a5c; color: #b890ff; padding: 3px 6px; border-radius: 4px;">Auto</span>
+                </div>
+                <button id="btn-save-active" class="btn-save-local" onclick="window.saveActiveSelectedImages()" style="display:none;">💾 Save Selected</button>
+            </div>
+            <div id="active-selection-actions" class="selection-actions">
+                <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('active')">🔄 Replace</button>
+                <button class="btn-multi btn-remove" onclick="removeSelectedActiveTags()">🗑️ Remove Selected</button>
+                <button class="btn-multi" style="background: #333; color: #aaa; border-color: #444;" onclick="clearActiveSelection()">Cancel</button>
+            </div>
+            
+            <div id="editor-content">
+                <div id="tags-editor-container"><div id="tag-list-vertical"></div></div>
+                <div id="nl-editor-container"><textarea id="nl-textarea" placeholder="Type natural language caption here..."></textarea></div>
+            </div>
+
+            <div class="inline-add-box" id="active-add-container">
+                <input type="text" id="active-add-input" placeholder="Type tag to add..." list="all-tags-list" onkeydown="if(event.key === 'Enter') inlineAdd('active')">                
+                <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
+				<select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+            </div>
+        </div>
+
+        <div class="resizer vertical" id="resizer-right"></div>
+
+        <div class="panel" id="col-tools">
+            <div class="panel-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span>All Dataset Tags</span>
+                </div>
+                <button id="btn-save-all" class="btn-save-local" onclick="window.saveAllImages()" style="display:none;">💾 Save All</button>
+            </div>
+            <div class="logic-bar">
+                <button id="btn-logic-AND" class="logic-btn" onclick="window.setLogic('AND')">AND</button>
+                <button id="btn-logic-OR" class="logic-btn" onclick="window.setLogic('OR')">OR</button>
+                <button id="btn-logic-XOR" class="logic-btn" onclick="window.setLogic('XOR')">XOR</button>
+                <button id="btn-logic-NOT" class="logic-btn" onclick="window.setLogic('NOT')">NOT</button>
+                <button id="btn-filter-fav-tags" class="logic-btn" onclick="window.toggleFavTagsFilter()" title="Show Only Starred Tags">☆</button>
+            </div>
+            <div id="master-selection-actions" class="selection-actions">
+                <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('selected')">➕ Add</button>
+                <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('master')">🔄 Replace</button>
+                <button class="btn-multi btn-remove" onclick="removeSelectedMasterTags()">🗑️ Remove</button>
+            </div>
+            
+            <div class="tools-content"><div id="master-tag-list"></div></div>
+            
+            <div class="inline-add-box">
+                <input type="text" id="master-add-input" placeholder="Type tag to add..." list="all-tags-list" onkeydown="if(event.key === 'Enter') inlineAdd('master')">                
+                <button class="btn-inline-add" onclick="inlineAdd('master')">Add</button>
+				<select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODALS Ocultos ==================== -->
+
+<div id="view-auto" class="modal-overlay" onclick="window.closeModal('view-auto')">
+    <div class="auto-panel" onclick="event.stopPropagation()">
+        <div id="file-protocol-warning" style="display: none; background: #2a0000; border: 1px solid #aa0000; padding: 12px; border-radius: 8px; margin-bottom: 20px; color: #ff6060; font-size: 13px; line-height: 1.5;">
+            <b>⚠️ LOCAL FILE RESTRICTION:</b> You are running this tool directly via <code>file://</code>. Browsers restrict CPU multi-threading and GPU acceleration in this mode. <b>It is highly recommended to use Localhost or the Online version for Auto Captioning.</b> Use this direct file mode only for manually editing already existing captions.
+        </div>
+        
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 20px;">
+            <h2 style="margin: 0; color: #eee;">Batch Process Settings</h2>
+            <button onclick="window.closeModal('view-auto')" style="background: transparent; border: none; color: #ff4444; font-size: 24px; cursor: pointer; font-weight: bold; line-height: 1; padding: 0;" title="Close Auto Caption">&times;</button>
+        </div>
+        
+        <div style="display: flex; gap: 15px; margin-bottom: 25px;">
+            <div style="flex:1;">
+                <label class="meta-label">Processing Mode</label>
+                <select id="batch-mode-select" onchange="window.updateBatchUI()" style="width: 100%; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; font-size: 13px;">
+                    <option value="tags">🏷️ Tagger (ONNX)</option>
+                    <option value="nl-vlm">🖥️ Natural Language (Offline VLMs)</option>
+                </select>
+            </div>
+            <div style="flex:1;">
+                <label class="meta-label">Hardware Acceleration</label>
+                <select id="hardware-select" style="width: 100%; font-size: 13px;">
+                    <option value="webgpu">🚀 GPU (WebGPU Auto)</option>
+                    <option value="wasm">🐌 CPU (WASM Local)</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="batch-tag-settings">
+            <div style="background: #0d0d0d; padding: 15px; border-radius: 8px; border: 1px solid #222; margin-bottom: 15px;">
+                <label class="meta-label">1. Tagger Model Setup</label>
+                <div style="display: flex; gap: 10px;">
+                    <button id="btn-set-taggers" onclick="window.selectTaggersFolder()" style="flex: 1;">📁 Set Directory</button>
+                    <select id="model-select" onchange="window.loadSelectedModelData()" style="flex: 2;">
+                        <option value="">-- Set Model Folder First --</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <div style="flex:1;"><label class="meta-label">Confidence Threshold</label><input type="number" id="threshold" value="0.35" step="0.05" min="0" max="1" style="width: 100%;"></div>
+                <div style="flex:2;"><label class="meta-label">Additional Prefix</label><input type="text" id="prefix" placeholder="Ex: 1girl, masterpiece, " style="width: 100%;"></div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="meta-label">Exclude Tags (Comma separated)</label>
+                <input type="text" id="exclude" placeholder="Ex: simple background, white background" style="width: 100%;">
+            </div>
+        </div>
+
+        <div id="batch-vlm-settings" style="display: none;">
+            <div style="background: #1a1500; border: 1px solid #aa8800; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #ffcc66; font-size: 12px; line-height: 1.5;">
+                <b>⚠️ Offline Model Download:</b> Upon running for the first time, it will automatically download the selected Vision Model to your browser's internal cache.
+                <div id="vlm-dl-container" style="display:none; margin-top: 10px;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:bold;">
+                        <span id="vlm-dl-file">Preparing Download...</span><span id="vlm-dl-percent">0%</span>
+                    </div>
+                    <div style="width:100%; background:#222; height:8px; border-radius:4px; overflow:hidden;">
+                        <div id="vlm-dl-bar" style="width:0%; height:100%; background:#ffcc66; transition: 0.1s;"></div>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="meta-label">Select Vision Language Model (VLM)</label>
+                <select id="vlm-model-select" onchange="window.updateVlmPromptDefault()" style="width: 100%; box-sizing: border-box;">
+                    <option value="HuggingFaceTB/SmolVLM-256M-Instruct">SmolVLM 256M Instruct (~200MB) - Fast, great with GPU (WebGPU)</option>
+                    <option value="HuggingFaceTB/SmolVLM-500M-Instruct">SmolVLM 500M Instruct (~450MB) - Better quality, GPU (WebGPU)</option>
+                    <option value="onnx-community/Florence-2-base-ft">Florence-2 Base FT (~300MB) - Excellent for Captioning, unstable WebGPU</option>
+                </select>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <button type="button" onclick="window.clearVlmModelCache()" style="width: 100%; background: #2a1a00; color: #ffcc66; border: 1px solid #aa6600;" title="Deletes the downloaded model from the browser cache">🧹 Clear Model Cache (VLM)</button>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="meta-label">Task Prompt (Model Input)</label>
+                <textarea id="batch-vlm-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
+                <span id="vlm-prompt-help" style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
+            </div>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0 20px 0;">
+        <div style="margin-bottom: 15px;">
+            <label class="meta-label">Batch Save Format</label>
+            <select id="save-format" style="width: 100%; box-sizing: border-box;">
+                <option value="txt">.txt (Standard Kohya)</option>
+                <option value="json">.json (Sidecar)</option>
+            </select>
+        </div>
+        
+        <button id="btn-create-empty" class="btn-action" onclick="window.generateEmptyFiles()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">📄 Generate Empty Missing Files</button>
+        
+        <div class="progress-box" id="progress-container"><div class="progress-fill" id="progress-bar"></div></div>
+        <div class="progress-text" id="progress-text">0 / 0 Processed</div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button id="btn-start-batch" class="btn-action run" style="margin-top: 0; flex: 2;" onclick="window.startBatchTagging()" disabled>▶ Start Batch Process</button>
+            <button id="btn-cancel-batch" class="btn-action" style="margin-top: 0; flex: 1; background: #4a1118; color: #ffb6c0; border-color: #7a222c; display: none;" onclick="window.stopBatchTagging()">⏹ Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-image" class="modal-overlay" onclick="window.closeModal('modal-image')"><img id="image-popout" src="" onclick="event.stopPropagation()"></div>
+
+<div id="modal-help" class="modal-overlay" onclick="window.closeModal('modal-help')">
+    <div class="tool-modal" style="width: 550px;" onclick="event.stopPropagation()">
+        <h3>❓ Help & Instructions</h3>
+        <div style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 65vh; overflow-y: auto;">
+            <h4 style="color: #00ff99; margin-top: 0; margin-bottom: 5px;">Auto Caption / Batch Tagger (ONNX)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">To use the Auto Captioner via ONNX WebGPU, you need to download the model files locally:</p>
+            <ol style="padding-left: 20px; margin-bottom: 15px;">
+                <li style="margin-bottom: 8px;">
+                    Download a WD14 ONNX model and its CSV tags file.<br>
+                    <span style="font-size: 11px; color: #888;">SmilingWolf Official Links:</span><br>
+                    <a href="https://huggingface.co/SmilingWolf" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 HuggingFace Models</a> | 
+                    <a href="https://github.com/SmilingWolf" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 GitHub Repository</a>
+                </li>
+                <li style="margin-bottom: 8px;">Ensure both files have the <b>exact same base name</b> (e.g., <code>model.onnx</code> and <code>model.csv</code>).</li>
+                <li style="margin-bottom: 8px;">Place them together in a dedicated folder on your computer.</li>
+                <li style="margin-bottom: 8px;">In the "Auto Captioner" tab, click <b>"📁 Set Directory"</b> and select that folder.</li>
+            </ol>
+            <h4 style="color: #b890ff; margin-bottom: 5px; margin-top: 15px;">Natural Language (Offline VLMs)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">Generates natural English descriptions directly in your browser without requiring external APIs or Python installation:</p>
+            <ul style="padding-left: 20px; margin-bottom: 15px;">
+                <li style="margin-bottom: 8px;"><b>SmolVLM (recommended for GPU):</b> lightweight Hugging Face model, with stable WebGPU support. Use natural language instructions in the prompt field.</li>
+                <li style="margin-bottom: 8px;"><b>Florence-2:</b> great for captions, but WebGPU support may be unstable depending on driver/browser (in that case, falls back to CPU automatically).</li>
+                <li style="margin-bottom: 8px;"><b>100% Offline:</b> The model is downloaded directly from HuggingFace into your browser cache on the first run.</li>
+                <li style="margin-bottom: 8px;"><b>WebGPU Accelerated:</b> Utilizes your graphics card for rapid processing. If unavailable, it falls back to Local CPU WASM.</li>
+            </ul>
+            
+            <h4 style="color: #ff6060; margin-bottom: 5px; margin-top: 15px;">⚠️ Performance & Execution Mode</h4>
+            <ul style="padding-left: 20px; margin-bottom: 15px;">
+                <li style="margin-bottom: 8px;"><b>Auto Captioning (Heavy Processing):</b> Always run this tool via <b>Localhost</b> (e.g., using the provided .bat file or Live Server) or use the hosted <b>Online version</b>. This unlocks your CPU multi-threading and WebGPU acceleration.</li>
+                <li style="margin-bottom: 8px;"><b>Direct File Execution (<code>file://</code>):</b> If you open the HTML file directly with a double-click, security restrictions will cripple the processing speed. <b>Only use this mode if you just want to manually edit or review already existing captions.</b></li>
+            </ul>
+        </div>
+        <div class="modal-buttons"><button class="btn-cancel" onclick="window.closeModal('modal-help')">Close</button></div>
+    </div>
+</div>
+
+<div class="footerbar"><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a></div>
+<div class="footer-copy">© 2026 shirosaki33</div>
+<div id="alertBar"></div>
+
+<canvas id="offscreen-canvas" width="448" height="448" style="display:none;"></canvas>
+<script src="tools/quick_links.js"></script>
+<script src="tools/tagmanager_ui_core.js"></script>
+
+</body>
+</html>

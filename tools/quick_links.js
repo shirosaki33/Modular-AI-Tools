@@ -82,6 +82,13 @@
             localFile: 'gallery holder.html',
             onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/gallery%20holder.html'
         },
+        {
+            key: 'tag_manager',
+            icon: '🏷️',
+            label: 'Tag Manager',
+            localFile: 'tag manager.html',
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/tag%20manager.html'
+        }
     ];
 
     // Verifica se não é ambiente local (file://) nem um servidor de desenvolvimento (localhost)
@@ -96,10 +103,12 @@
         if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
         if (/lora/i.test(uiTitle) || /lora/i.test(title)) return 'lora_reader';
         if (/png/i.test(uiTitle) || /png/i.test(title)) return 'png_reader';
+        if (/tag/i.test(uiTitle) || /tag/i.test(title)) return 'tag_manager';
 
         if (/gallery|interface/i.test(filename)) return 'gallery';
         if (/lora/i.test(filename)) return 'lora_reader';
         if (/png/i.test(filename)) return 'png_reader';
+        if (/tag/i.test(filename)) return 'tag_manager';
 
         return null;
     }

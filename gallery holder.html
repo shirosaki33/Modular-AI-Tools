@@ -1589,8 +1589,12 @@ function renderGrid() {
         
         const label = document.createElement('div');
         label.className = 'grid-item-label';
-        label.textContent = fileItem.name;
-        label.title = fileItem.name; 
+		const nameOnly = fileItem.name.substring(0, fileItem.name.lastIndexOf('.')) || fileItem.name;
+        label.textContent = nameOnly; 
+        label.title = nameOnly;
+		
+		// label.textContent = fileItem.name;
+        // label.title = fileItem.name; 
         
         if (typeof isTagMode !== 'undefined' && isTagMode || typeof isRenameMode !== 'undefined' && isRenameMode) {
             img.onclick = () => { const cb = wrapper.querySelector('input[type="checkbox"]'); cb.checked = !cb.checked; };

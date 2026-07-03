@@ -1031,6 +1031,7 @@ function normalizeSoftwareName(name) {
 	if (/flux\s*gym|fluxgym/.test(low)) return 'FluxGym';
 	if (/everydream/.test(low)) return 'EveryDream';
 	if (/diffusers/.test(low)) return 'Diffusers';
+	if (/citron/.test(low)) return 'Citron Trainer';
 	if (/sd[-_\s]?scripts[-_\s]?compatible/.test(low)) return 'sd-scripts compatible metadata';
 	return n;
 }
@@ -1047,6 +1048,7 @@ function knownTrainingToolRepo(label, rawRepo = '') {
 	if (key === 'musubi tuner') return 'https://github.com/kohya-ss/musubi-tuner';
 	if (key === 'fluxgym') return 'https://github.com/fluxgym/fluxgym';
 	if (key === 'everydream') return 'https://github.com/victorchall/EveryDream2trainer';
+	if (key === 'citron trainer') return 'https://github.com/citronlegacy/citron-anima-lora-trainer-ui';
 	return '';
 }
 
@@ -1105,6 +1107,7 @@ function detectSystemInfo(meta) {
 	if (/musubi[-_\s]?tuner|musubi/.test(low)) return makeTrainingToolInfo('Musubi Tuner', '', '', source);
 	if (/flux\s*gym|fluxgym/.test(low)) return makeTrainingToolInfo('FluxGym', '', '', source);
 	if (/everydream/.test(low)) return makeTrainingToolInfo('EveryDream', '', '', source);
+	if (/lora_anima|anima-preview|circlestone-labs\/anima/.test(low)) return makeTrainingToolInfo('Citron Trainer', '', '', source);
 	if (meta['ss_sd_scripts_commit_hash'] || /sd[-_\s]?scripts|kohya[-_\s]?ss|github\.com\/kohya-ss\/sd-scripts|\bkohya\b/.test(low)) return makeTrainingToolInfo('kohya / sd-scripts', '', '', source);
 
 	const ssKeyCount = Object.keys(meta || {}).filter(k => /^ss_/.test(k)).length;
