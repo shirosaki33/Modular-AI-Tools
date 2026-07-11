@@ -166,10 +166,10 @@ function updateWeightBar(catId, count, weight) {
 }
 
 const CALIB_NOTES = {
-    anima: 'calibrado com dado real: Citron Legacy Trainer (kohya sd-scripts) em rank 32 / alpha 16 = 90 MB — repare que o LoRA oficial da CircleStone (treinado via diffusion-pipe) sai maior no mesmo rank (132 MB), pois mira em mais camadas',
-    sd15: 'estimativa de comunidade para LoRA de atenção em fp16 — o tamanho real varia com os módulos treinados',
-    sdxl: 'estimativa de comunidade para LoRA de atenção em fp16 — o tamanho real varia com os módulos treinados',
-    flux: 'estimativa de comunidade; FLUX costuma precisar de menos rank pelo prior já ser muito forte'
+    anima: 'calibrated with real data: Citron Legacy Trainer (kohya sd-scripts) at rank 32 / alpha 16 = 90 MB — note that the official CircleStone LoRA (trained via diffusion-pipe) is larger at the same rank (132 MB), as it targets more layers',
+    sd15: 'community estimate for attention LoRA in fp16 — actual size varies with trained modules',
+    sdxl: 'community estimate for attention LoRA in fp16 — actual size varies with trained modules',
+    flux: 'community estimate; FLUX usually needs less rank since the prior is already very strong'
 };
 
 window.onBaseModelChange = function() {

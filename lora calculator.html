@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LoRA Calculator</title>
 
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='6' width='20' height='20' rx='4' fill='none' stroke='%2300e08a' stroke-width='3'/><line x1='12' y1='16' x2='20' y2='16' stroke='%2300e08a' stroke-width='3'/><line x1='16' y1='12' x2='16' y2='20' stroke='%2300e08a' stroke-width='3'/></svg>">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -180,7 +180,7 @@
 
 <div id="topbar">
     <div class="topbar-section left"></div>
-    <div class="topbar-section center" id="app-title"><span class="dot"></span>LoRA Calculator</div>
+    <div class="topbar-section center" id="app-title"><span class="dot"></span>LoRA Calculator<span class="dot"></span></div>
     <div class="topbar-section right" id="topbar-right"></div>
 </div>
 
@@ -192,7 +192,7 @@
         <option value="sdxl">SDXL / Pony / Illustrious</option>
         <option value="flux">FLUX.1</option>
     </select>
-    <span class="calib-note" id="calib-note">calibrado com dado real: Citron Legacy Trainer (kohya sd-scripts) em rank 32 / alpha 16 = 90 MB — repare que o LoRA oficial da CircleStone (treinado via diffusion-pipe) sai maior no mesmo rank (132 MB), pois mira em mais camadas</span>
+    <span class="calib-note" id="calib-note">calibrated with real data: Citron Legacy Trainer (kohya sd-scripts) at rank 32 / alpha 16 = 90 MB — note that the official CircleStone LoRA (trained via diffusion-pipe) is larger at the same rank (132 MB), as it targets more layers</span>
 </div>
 
 <div id="workspace">
