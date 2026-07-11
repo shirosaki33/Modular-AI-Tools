@@ -9,6 +9,9 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
     
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.min.js"></script>
+    
+    <!-- Módulos da Ferramenta -->
+    <script src="tools/tagmanager_custom_conflicts.js"></script>
     <script src="tools/tagmanager_batch_tagger.js"></script>
     <script src="tools/tagmanager_caption_tag.js"></script>
     <script src="tools/tagmanager_nl_editor.js"></script>
@@ -21,15 +24,14 @@
 
         body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: Arial, Helvetica, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* === ANTI-LAG FOR RESIZER === */
         body.is-resizing * { user-select: none !important; }
         body.is-resizing .panel { pointer-events: none !important; transition: none !important; }
-        #col-list, #col-tools { will-change: width; }
+        #col-list, #col-tools, #col-presets { will-change: width; }
 
         #topbar { background: #1b1b1b; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #222; z-index: 20; flex-shrink: 0; }
         .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
         .topbar-section.left { justify-content: flex-start; }
-        .topbar-section.center { justify-content: center; }
+        .topbar-section.center { justify-content: center; text-align: center; }
         .topbar-section.right { justify-content: flex-end; }
         
         #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
@@ -64,6 +66,11 @@
         .panel { background: #1b1b1b; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #222; transition: 0.2s ease-in-out;}
         .panel-header { background: #222; padding: 10px 15px; font-size: 13px; font-weight: bold; color: #aaa; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;}
         
+        /* BOTÃO LUPA (SEARCH/ADD TOGGLE) */
+        .search-toggle-btn { background: transparent; border: none; font-size: 16px; cursor: pointer; filter: grayscale(1) opacity(0.4); padding: 0 6px; transition: 0.2s; user-select: none; }
+        .search-toggle-btn.active { filter: none; opacity: 1; text-shadow: 0 0 8px rgba(0,255,153,0.5); }
+        .search-toggle-btn:hover { transform: scale(1.1); }
+
         .inline-add-box { display: flex; gap: 8px; padding: 10px 15px; background: #111; border-top: 1px solid #222; align-items: center; flex-shrink: 0;}
         .inline-add-box input { flex: 1; }
         .pos-select { width: 60px; padding: 8px; }
@@ -75,6 +82,7 @@
         .logic-btn:hover { background: #333; color: #eee; }
         .logic-btn.active { background: #0d2a18; color: #00ff99; border-color: #00aa66; }
         #btn-filter-fav-tags { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em; }
+        #btn-filter-suggest-img { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em; }
         
         .selection-actions { display: none; gap: 5px; padding: 10px 15px; background: #1a1a1a; border-bottom: 1px solid #333; flex-shrink: 0; }
         .btn-multi { flex: 1; padding: 8px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: 0.1s; }
@@ -85,7 +93,11 @@
         .btn-replace { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
         .btn-replace:hover { background: #4a2a8c; color: #fff; }
 
-        #col-list { width: 300px; flex-shrink: 0; }
+        #col-list { width: 350px; flex-shrink: 0; }
+        #col-editor { flex: 1; min-width: 250px; display: flex; flex-direction: column; }
+        #col-presets { width: 250px; flex-shrink: 0; }
+        #col-tools { width: 350px; flex-shrink: 0; }
+
         #image-list { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; background: #151515;}
         .list-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #222; cursor: pointer; user-select: none; transition: 0.1s;}
         .list-item:hover { background: #222; }
@@ -97,7 +109,6 @@
         .list-item.has-data .list-item-status { color: #00ff99; }
         .list-item.is-nl .list-item-status { color: #b890ff; }
 
-        #col-editor { flex: 1; min-width: 300px; display: flex; flex-direction: column; }
         #editor-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         #nl-editor-container { display: none; flex: 1; flex-direction: column; padding: 15px; }
         #nl-textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none; font-size: var(--editor-font-size); line-height: 1.5; padding: 1em; background: #0d0d0d; border-radius: 8px;}
@@ -114,7 +125,18 @@
         .tag-remove { color: #ff4444; cursor: pointer; font-weight: bold; font-size: 1.25em; padding: 0 0.4em; flex-shrink: 0;}
         .tag-remove:hover { color: #ff0000; transform: scale(1.2); }
 
-        #col-tools { width: 350px; flex-shrink: 0; }
+        .tag-row.ghost { background: transparent; border: 1px dashed #00aa66; cursor: default; }
+        .tag-row.ghost:hover { background: rgba(0,170,102,0.08); }
+        .tag-row.ghost .tag-name { color: #00ff99; font-style: italic; }
+        .tag-ghost-accept { color: #00ff99; cursor: pointer; font-weight: bold; font-size: 1.3em; padding: 0 0.4em; flex-shrink: 0; }
+        .tag-ghost-accept:hover { color: #fff; transform: scale(1.2); }
+        .ghost-section-label { font-size: 10px; color: #00aa66; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; padding: 8px 15px 2px; }
+
+        .master-tag-item.ghost { border: 1px dashed #00aa66; background: transparent; opacity: 0.85; }
+        .master-tag-item.ghost .tag-name { color: #00ff99; font-style: italic; }
+
+        .list-item-status .suggest-badge { color: #00ff99; margin-left: 6px; }
+
         .tools-content { padding: 0; display: flex; flex-direction: column; flex: 1; overflow: hidden;}
         #master-tag-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111;}
         .master-tag-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5em 1em; border-bottom: 1px solid #222; font-size: var(--editor-font-size); cursor: pointer; user-select: none; background: #151515; transition: background 0.1s;}
@@ -171,18 +193,27 @@
 
 <div id="topbar">
     <div class="topbar-section left">
-        <button id="btn-load-dataset" onclick="window.loadImagesDirectory()">📁 Load Dataset</button>
+        <button onclick="window.loadTemporaryFolder()">📁 Load Folder</button>
+        <button id="btn-save-folder" onclick="window.saveFolderToList()" style="display:none; background: #0d2a18; color: #00ff99; border: 1px solid #00aa66;" title="Save folder to dropdown list">+ Add to List</button>
+        
+        <select id="dir-list" class="folder-select" onchange="window.loadSelectedDirectory()">
+            <option value="">Saved directories...</option>
+        </select>
         <select id="sub-dir-1" class="folder-select" onchange="window.loadSubDir1()" style="display:none;" title="Subfolders">
             <option value="">-- Root --</option>
         </select>
         <select id="sub-dir-2" class="folder-select" onchange="window.loadSubDir2()" style="display:none;" title="Inner Folders">
             <option value="">-- Current Folder --</option>
         </select>
+        
         <button id="btn-refresh" onclick="window.refreshDataset()" style="display:none; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c;" title="Refresh Folder">🔄</button>
+        <button id="btn-remove" onclick="window.removeDirectory()" style="display:none; background: #4a1118; color: #ffb6c0; border-color: #7a222c;" title="Remove from saved list">Remove</button>
     </div>
     
-    <div class="topbar-section center" id="app-title">
-        🏷️ Tag Manager 🏷️
+    <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
+        <div id="app-title">🏷️ Tag Manager 🏷️</div>
+        <span id="current-folder-display" style="display: none;"></span>
+        <div id="last-edited-display" style="font-size: 10px; color: #666; display: block; margin-top: 4px; font-weight: bold; letter-spacing: 0.5px;">Last edited: Never</div>
     </div>
     
     <div class="topbar-section right" id="topbar-right">
@@ -207,8 +238,10 @@
 </div>
 
 <div id="settings-dropdown" class="settings-dropdown">
+    <label><input type="checkbox" id="toggle-last-edited" onchange="window.toggleLastEdited()" checked> Show Last Edited Time</label>
     <label><input type="checkbox" id="toggle-type-select" onchange="window.toggleTypeSelect()"> Show Type Selector (Tag/NL)</label>
     <label><input type="checkbox" id="toggle-format-select" onchange="window.toggleFormatSelect()"> Show Format Selector (.txt/.json)</label>
+    <label><input type="checkbox" id="toggle-conflict-warnings" onchange="window.toggleConflictWarnings()" checked> Enable Tag Conflict Warnings</label>
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
 </div>
 
@@ -231,6 +264,15 @@
     </div>
 </div>
 
+<div id="clone-dropdown" class="settings-dropdown" style="right: auto; left: 50%; transform: translateX(-50%); top: 60px; width: 260px; position: fixed;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Clone Selected Images:</span>
+    <input type="number" id="clone-count-input" min="1" value="1" placeholder="How many copies?" onkeydown="if(event.key === 'Enter') window.confirmClone()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px; margin-top: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="window.confirmClone()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="document.getElementById('clone-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
 <div id="workspace">
     <div id="view-editor" class="view-layer active">
         
@@ -238,15 +280,22 @@
             <div class="panel-header">
                 <div style="display:flex; align-items:center; gap:10px;">
                     Dataset <span id="list-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
-                    <button id="btn-filter-star-img" class="btn-save-local" style="background:transparent; border: 1px solid #444; color:#888; padding: 2px 6px; font-size: 12px; margin-left: 5px;" onclick="window.toggleStarFilterImg()" title="Show Only Starred Images">☆</button>
+                    <button id="btn-unhide-all" class="btn-save-local" style="display:none; background:transparent; border: 1px solid #4db8ff; color:#4db8ff; padding: 2px 6px; font-size: 12px; margin-left: 5px;" onclick="window.unhideAllImages()" title="Unhide All Images">👁️‍🗨️ Unhide</button>
                 </div>
                 
                 <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
-                    <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
+                    <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
+                    <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
+                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
+                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
                     <button class="btn-save-local" style="background:#2a0000; border-color:#aa0000; color:#ff6060; padding: 2px 6px; font-size: 14px;" onclick="window.deleteSelectedImages()" title="Delete Selected">🗑️</button>
                 </div>
             </div>
             
+            <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0;">
+                <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 10px;">
+            </div>
+
             <div id="image-list"></div>
             
             <div style="padding: 10px; background: #151515; border-top: 1px solid #222; flex-shrink: 0; display: flex; align-items: center; gap: 10px;">
@@ -263,23 +312,55 @@
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span>Active Image</span><span id="editor-type-badge" style="font-size: 10px; background: #2f1a5c; color: #b890ff; padding: 3px 6px; border-radius: 4px;">Auto</span>
                 </div>
-                <button id="btn-save-active" class="btn-save-local" onclick="window.saveActiveSelectedImages()" style="display:none;">💾 Save Selected</button>
+                <div style="display: flex; gap: 6px;">
+                    <button id="btn-filter-active-ghosts" class="btn-save-local" onclick="window.toggleActiveGhostFilter()" style="display:none; background:transparent; border: 1px solid #00aa66; color:#00ff99;" title="Show Only Ghost Tags">💡</button>
+                    <button id="btn-discard-active-suggestions" class="btn-save-local" onclick="window.discardActiveSuggestions()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;" title="Discard pending ghost tag suggestions for the selected image(s)">🗑️</button>
+                    <button id="btn-save-active" class="btn-save-local" onclick="window.saveActiveSelectedImages()" style="display:none;">💾 Save Selected</button>
+                </div>
             </div>
             <div id="active-selection-actions" class="selection-actions">
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('active')">🔄 Replace</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedActiveTags()">🗑️ Remove Selected</button>
                 <button class="btn-multi" style="background: #333; color: #aaa; border-color: #444;" onclick="clearActiveSelection()">Cancel</button>
             </div>
-            
+
             <div id="editor-content">
                 <div id="tags-editor-container"><div id="tag-list-vertical"></div></div>
                 <div id="nl-editor-container"><textarea id="nl-textarea" placeholder="Type natural language caption here..."></textarea></div>
             </div>
 
             <div class="inline-add-box" id="active-add-container">
-                <input type="text" id="active-add-input" placeholder="Type tag to add..." list="all-tags-list" onkeydown="if(event.key === 'Enter') inlineAdd('active')">                
+                <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
+                <input type="text" id="active-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)">                
                 <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
 				<select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+            </div>
+        </div>
+
+        <div class="resizer vertical" id="resizer-presets" style="display: none;"></div>
+
+        <!-- 4ª COLUNA: USER PRESETS (Oculta por padrão) -->
+        <div class="panel" id="col-presets" style="display: none;">
+            <div class="panel-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="color: #00ff99;">🌟 User Presets</span>
+                </div>
+            </div>
+            
+            <div id="preset-selection-actions" class="selection-actions">
+                <button class="btn-multi btn-add-all" onclick="addSelectedPresetTagsTo('selected')">➕ Add</button>
+                <button class="btn-multi btn-add-all" onclick="addSelectedPresetTagsTo('all')">➕ Add to All</button>
+                <button class="btn-multi btn-remove" onclick="removeSelectedPresetTags()">🗑️ Remove</button>
+            </div>
+
+            <div id="preset-tag-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111;">
+                <!-- Itens inseridos via JS -->
+            </div>
+            
+            <div class="inline-add-box" style="border-top: 1px solid #222; background: #111;">
+                <button id="btn-preset-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('preset')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
+                <input type="text" id="preset-add-input" placeholder="Search or Add tag..." oninput="if(window.presetSearchMode) filterPresetTagsByName(this.value)">                
+                <button class="btn-inline-add" style="background:#00aa66; border-color:#00cc88; color:#000;" onclick="window.addPresetTagFromInput()">Save</button>
             </div>
         </div>
 
@@ -289,16 +370,21 @@
             <div class="panel-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span>All Dataset Tags</span>
+                    <button id="btn-toggle-presets" class="btn-save-local" onclick="window.togglePresetPanel()" style="background:transparent; border: 1px solid #00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px; margin-left: 5px;" title="Toggle User Preset Tags">👁️</button>
                 </div>
+                <button id="btn-discard-suggestions" class="btn-save-local" onclick="window.discardAllSuggestions()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;">🗑️ Discard Suggestions</button>
                 <button id="btn-save-all" class="btn-save-local" onclick="window.saveAllImages()" style="display:none;">💾 Save All</button>
             </div>
+
             <div class="logic-bar">
                 <button id="btn-logic-AND" class="logic-btn" onclick="window.setLogic('AND')">AND</button>
                 <button id="btn-logic-OR" class="logic-btn" onclick="window.setLogic('OR')">OR</button>
                 <button id="btn-logic-XOR" class="logic-btn" onclick="window.setLogic('XOR')">XOR</button>
                 <button id="btn-logic-NOT" class="logic-btn" onclick="window.setLogic('NOT')">NOT</button>
                 <button id="btn-filter-fav-tags" class="logic-btn" onclick="window.toggleFavTagsFilter()" title="Show Only Starred Tags">☆</button>
+                <button id="btn-filter-suggest-img" class="logic-btn" style="display:none;" onclick="window.toggleSuggestFilterImg()" title="Show Only Ghost Tags">💡</button>
             </div>
+            
             <div id="master-selection-actions" class="selection-actions">
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('selected')">➕ Add</button>
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('all')">➕ Add to All</button>
@@ -309,7 +395,8 @@
             <div class="tools-content"><div id="master-tag-list"></div></div>
             
             <div class="inline-add-box">
-                <input type="text" id="master-add-input" placeholder="Type tag to add..." list="all-tags-list" onkeydown="if(event.key === 'Enter') inlineAdd('master')">                
+                <button id="btn-master-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('master')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
+                <input type="text" id="master-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)">                
                 <button class="btn-inline-add" onclick="inlineAdd('master')">Add</button>
 				<select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
             </div>
@@ -317,8 +404,7 @@
     </div>
 </div>
 
-<!-- ==================== MODALS Ocultos ==================== -->
-
+<!-- MODALS -->
 <div id="view-auto" class="modal-overlay" onclick="window.closeModal('view-auto')">
     <div class="auto-panel" onclick="event.stopPropagation()">
         <div id="file-protocol-warning" style="display: none; background: #2a0000; border: 1px solid #aa0000; padding: 12px; border-radius: 8px; margin-bottom: 20px; color: #ff6060; font-size: 13px; line-height: 1.5;">
@@ -364,6 +450,10 @@
             <div style="margin-bottom: 15px;">
                 <label class="meta-label">Exclude Tags (Comma separated)</label>
                 <input type="text" id="exclude" placeholder="Ex: simple background, white background" style="width: 100%;">
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; background:#0d1f13; border:1px solid #1a5c3a; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
+                <input type="checkbox" id="review-mode-toggle" style="width:auto; margin:0;">
+                <label for="review-mode-toggle" style="font-size:12px; color:#66ffaa; font-weight:bold; cursor:pointer; user-select:none;">💡 Review Mode — only suggest new tags (ghost), don't overwrite or save to disk</label>
             </div>
         </div>
 
@@ -471,6 +561,7 @@
 <div id="alertBar"></div>
 
 <canvas id="offscreen-canvas" width="448" height="448" style="display:none;"></canvas>
+
 <script src="tools/quick_links.js"></script>
 <script src="tools/tagmanager_ui_core.js"></script>
 

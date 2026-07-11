@@ -323,13 +323,13 @@
 </div>
 
 <div id="settings-dropdown" class="settings-dropdown">
-    <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields()"> Show Extra Gen Data</label>
-    <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField()"> Show Image Tag</label>
-    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()" checked> Show File Names</label>
-    <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()" checked> Show Visual Path</label>
-    <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon()"> Show Path Button</label>
-    <label><input type="checkbox" id="toggle-count-field" onchange="updateGridCounters()" checked> Show Image Count</label>
-    <label><input type="checkbox" id="toggle-json-count-field" onchange="updateGridCounters()"> Show JSON Count</label>
+    <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields(); saveSettingsToDB();"> Show Extra Gen Data</label>
+    <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField(); saveSettingsToDB();"> Show Image Tag</label>
+    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField(); saveSettingsToDB();" checked> Show File Names</label>
+    <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay(); saveSettingsToDB();" checked> Show Visual Path</label>
+    <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon(); saveSettingsToDB();"> Show Path Button</label>
+    <label><input type="checkbox" id="toggle-count-field" onchange="updateGridCounters(); saveSettingsToDB();" checked> Show Image Count</label>
+    <label><input type="checkbox" id="toggle-json-count-field" onchange="updateGridCounters(); saveSettingsToDB();"> Show JSON Count</label>
 </div>
 
 <div id="workspace">
@@ -349,10 +349,14 @@
             <span id="json-count-display" style="color: #00ff99; font-size: 13px; font-weight: bold; display: none;"></span>
         </div>
 
+        <div id="page-size-toggle" style="position: absolute; bottom: 15px; left: 25px; display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 8px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
+            <button id="btn-page-size" onclick="toggleItemsPerPage()" style="padding: 5px 12px; font-size: 12px;" title="Alternar quantidade de imagens por página">50 grid</button>
+        </div>
+
         <div id="pagination-controls" style="position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 14px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
-            <button id="btn-page-prev" onclick="changePage(-1)" style="padding: 5px 12px; font-size: 12px;">◀ Ant</button>
+            <button id="btn-page-prev" onclick="changePage(-1)" style="padding: 5px 12px; font-size: 12px;">◀ </button>
             <span id="page-info" style="color: #9ecfff; font-size: 13px; font-weight: bold; white-space: nowrap;">Pág 1 de 1</span>
-            <button id="btn-page-next" onclick="changePage(1)" style="padding: 5px 12px; font-size: 12px;">Prox ▶</button>
+            <button id="btn-page-next" onclick="changePage(1)" style="padding: 5px 12px; font-size: 12px;"> ▶</button>
         </div>
     </div>
     
@@ -581,12 +585,16 @@ function updateGridCounters() {
     const container = document.getElementById('grid-counters');
     const imgDisplay = document.getElementById('image-count-display');
     const jsonDisplay = document.getElementById('json-count-display');
+    const pageSizeToggle = document.getElementById('page-size-toggle');
     
     // Esconde se estiver fora do modo grid ou se não tiver pasta
     if (!currentHandle || document.getElementById('grid-view').style.display === 'none') {
         if (container) container.style.display = 'none';
+        if (pageSizeToggle) pageSizeToggle.style.display = 'none';
         return;
     }
+
+    if (pageSizeToggle) pageSizeToggle.style.display = 'flex';
 
     const showImg = document.getElementById('toggle-count-field').checked;
     const showJson = document.getElementById('toggle-json-count-field').checked;
@@ -657,8 +665,9 @@ document.addEventListener('click', (e) => {
 });
 
 let isDraggingRight = false;
-window.addEventListener('DOMContentLoaded', () => {
-    // Apenas aplica o estado padrão do HTML, zero localStorage
+window.addEventListener('DOMContentLoaded', async () => {
+    // Carrega as configs salvas no IndexedDB (ou mantém o padrão do HTML se não houver nada salvo)
+    await loadSettingsFromDB();
     toggleExtraFields();
     toggleTagField();
     toggleFilenameField();
@@ -1328,12 +1337,77 @@ let currentFiles  = [];
 let currentJsonFiles = new Set(); // NOVO: Armazena os JSONs lidos no diretório
 let sortMode = 0;
 let currentPage = 1;
-const itemsPerPage = 100;
+let itemsPerPage = 50;
 
 function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
 async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
-async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
+async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_') && name !== SETTINGS_KEY) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
 async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.oncomplete = r; }); }
+
+/* ---------------------------------------------------------------
+   PERSISTED APP SETTINGS (checkboxes do menu ⚙️, ordenação e grid)
+   Guardadas na mesma IndexedDB, numa chave reservada que não
+   aparece na lista de diretórios (fica de fora do getHandles acima).
+   --------------------------------------------------------------- */
+const SETTINGS_KEY = '__app_settings__';
+
+async function saveSettingsToDB() {
+    try {
+        const settings = {
+            extraFields:    document.getElementById('toggle-extra-fields').checked,
+            tagField:       document.getElementById('toggle-tag-field').checked,
+            filenameField:  document.getElementById('toggle-filename-field').checked,
+            pathField:      document.getElementById('toggle-path-field').checked,
+            pathIcon:       document.getElementById('toggle-path-icon').checked,
+            countField:     document.getElementById('toggle-count-field').checked,
+            jsonCountField: document.getElementById('toggle-json-count-field').checked,
+            sortMode:       sortMode,
+            itemsPerPage:   itemsPerPage
+        };
+        const db = await initDB();
+        await new Promise(r => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).put(settings, SETTINGS_KEY);
+            tx.oncomplete = r;
+        });
+    } catch (e) { console.error('Error saving settings:', e); }
+}
+
+async function loadSettingsFromDB() {
+    try {
+        const db = await initDB();
+        const settings = await new Promise(r => {
+            const tx = db.transaction(storeName, 'readonly');
+            const req = tx.objectStore(storeName).get(SETTINGS_KEY);
+            req.onsuccess = () => r(req.result);
+            req.onerror = () => r(null);
+        });
+        if (!settings) return;
+
+        document.getElementById('toggle-extra-fields').checked    = !!settings.extraFields;
+        document.getElementById('toggle-tag-field').checked       = !!settings.tagField;
+        document.getElementById('toggle-filename-field').checked  = settings.filenameField  !== undefined ? !!settings.filenameField  : true;
+        document.getElementById('toggle-path-field').checked      = settings.pathField      !== undefined ? !!settings.pathField      : true;
+        document.getElementById('toggle-path-icon').checked       = !!settings.pathIcon;
+        document.getElementById('toggle-count-field').checked     = settings.countField     !== undefined ? !!settings.countField     : true;
+        document.getElementById('toggle-json-count-field').checked = !!settings.jsonCountField;
+
+        if (settings.sortMode === 0 || settings.sortMode === 1 || settings.sortMode === 2) {
+            sortMode = settings.sortMode;
+            const btnSort = document.getElementById('btn-sort');
+            if (btnSort) {
+                if (sortMode === 0) btnSort.innerHTML = '🔀 Normal';
+                else if (sortMode === 1) btnSort.innerHTML = '⬇️ A-Z';
+                else if (sortMode === 2) btnSort.innerHTML = '⬆️ Z-A';
+            }
+        }
+        if (settings.itemsPerPage === 50 || settings.itemsPerPage === 100) {
+            itemsPerPage = settings.itemsPerPage;
+            const btnPageSize = document.getElementById('btn-page-size');
+            if (btnPageSize) btnPageSize.textContent = itemsPerPage === 50 ? '50 grid' : '100 grid';
+        }
+    } catch (e) { console.error('Error loading settings:', e); }
+}
 
 window.onload = async () => {
     try {
@@ -1641,6 +1715,15 @@ function updatePaginationControls() {
     prevBtn.style.cursor = (currentPage === 1) ? "default" : "pointer";
     nextBtn.style.opacity = (currentPage === totalPages) ? "0.4" : "1";
     nextBtn.style.cursor = (currentPage === totalPages) ? "default" : "pointer";
+}
+
+function toggleItemsPerPage() {
+    itemsPerPage = (itemsPerPage === 50) ? 100 : 50;
+    currentPage = 1;
+    const btn = document.getElementById('btn-page-size');
+    if (btn) btn.textContent = itemsPerPage === 50 ? '50 grid' : '100 grid';
+    document.getElementById('grid-view').scrollTop = 0;
+    renderGrid();
 }
 
 function changePage(direction) {

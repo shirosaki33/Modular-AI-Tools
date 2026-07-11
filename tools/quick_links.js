@@ -61,7 +61,7 @@
     document.head.appendChild(style);
 
     const APPS = [
-        {
+                {
             key: 'png_reader',
             icon: '🕵️',
             label: 'PNG Metadata Reader',
@@ -88,6 +88,13 @@
             label: 'Tag Manager',
             localFile: 'tag manager.html',
             onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/tag%20manager.html'
+        },
+		{
+            key: 'lora_calc',
+            icon: '🧮',
+            label: 'LoRA Calculator',
+            localFile: 'lora calculator.html',
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/lora%20calculator.html'
         }
     ];
 
@@ -95,18 +102,27 @@
     const isRunningOnline = window.location.protocol !== 'file:' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
 
     // Sistema de detecção de app robusto
+    // Sistema de detecção de app robusto
     function detectCurrentApp() {
         const title = document.title || '';
         const uiTitle = document.getElementById('app-title') ? document.getElementById('app-title').textContent : '';
         const filename = decodeURIComponent(window.location.pathname.split('/').pop() || '');
         
-        if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
+        // Verificações Específicas primeiro para evitar conflitos (Calculator vs Reader)
+        if (/calculator/i.test(uiTitle) || /calculator/i.test(title)) return 'lora_calc';
+        
+        // CORREÇÃO: Busca específica por 'lora' e 'png', removendo a palavra genérica 'reader'
         if (/lora/i.test(uiTitle) || /lora/i.test(title)) return 'lora_reader';
         if (/png/i.test(uiTitle) || /png/i.test(title)) return 'png_reader';
+        
+        // Verificações Padrão
+        if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
         if (/tag/i.test(uiTitle) || /tag/i.test(title)) return 'tag_manager';
 
+        // Fallbacks pelo nome do arquivo
+        if (/calculator/i.test(filename)) return 'lora_calc';
+        if (/lora/i.test(filename) && !/calculator/i.test(filename)) return 'lora_reader';
         if (/gallery|interface/i.test(filename)) return 'gallery';
-        if (/lora/i.test(filename)) return 'lora_reader';
         if (/png/i.test(filename)) return 'png_reader';
         if (/tag/i.test(filename)) return 'tag_manager';
 

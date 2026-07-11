@@ -63,7 +63,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                 taggersDirHandle = savedHandle; 
                 await scanTaggersFolder();
             } else { 
-                // CORREÇÃO: Guarda a pasta na memória para o botão saber o que pedir
                 taggersDirHandle = savedHandle; 
                 const btn = document.getElementById('btn-set-taggers');
                 if(btn) btn.textContent = '🔄 Reconnect Taggers'; 
@@ -224,6 +223,14 @@ window.generateEmptyFiles = async function() {
     const { handle: targetHandle, files: targetFiles } = getTargetEnv();
     if (!targetFiles || !targetHandle) return;
     
+    // NOVO SISTEMA DE SEGURANÇA E TRAVA CONTRA CONFLITOS DE ARQUIVOS EXISTENTES
+    const folderAlreadyHasCaptions = targetFiles.some(img => img.hasFile);
+    if (folderAlreadyHasCaptions) {
+        if (!confirm("⚠️ ATENÇÃO: Esta pasta já contém arquivos de legenda (.txt ou .json). Criar novos arquivos ausentes pode misturar os formatos do seu dataset atual. Tem certeza de que deseja continuar o escaneamento e criar os arquivos vazios que faltam?")) {
+            return;
+        }
+    }
+
     if ((await targetHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
         if ((await targetHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
             if(window.showAlert) window.showAlert("Write permission denied.", "error");
@@ -240,7 +247,6 @@ window.generateEmptyFiles = async function() {
             const fileName = format === 'json' ? baseName + '.json' : baseName + '.txt';
             const contentStr = format === 'json' ? '{\n  "tags": ""\n}' : '';
             
-            // Fallback para manter compatibilidade com o Gallery (que não tem parentDirHandle individual)
             const actualHandle = img.parentDirHandle || targetHandle;
             
             const fileHandle = await actualHandle.getFileHandle(fileName, { create: true });
@@ -308,7 +314,7 @@ function updateDownloadProgress(data) {
     }
 }
 
-// ====== SISTEMA DE CANCELAMENTO ======
+/* === SISTEMA DE CANCELAMENTO === */
 window.isBatchCancelled = false;
 
 window.stopBatchTagging = function() {
@@ -340,6 +346,9 @@ window.startBatchTagging = async function() {
         }
     }
     
+    const reviewModeToggleEl = document.getElementById('review-mode-toggle');
+    const reviewModeActive = !!(mode === 'tags' && reviewModeToggleEl && reviewModeToggleEl.checked);
+
     window.isBatchCancelled = false;
     const btn = document.getElementById('btn-start-batch'); btn.disabled = true;
     const cancelBtn = document.getElementById('btn-cancel-batch');
@@ -361,6 +370,7 @@ window.startBatchTagging = async function() {
             const prefix = document.getElementById('prefix').value.trim();
             const excludeStr = document.getElementById('exclude') ? document.getElementById('exclude').value.trim() : '';
             const excludeArray = excludeStr.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+            const reviewMode = reviewModeActive;
 
             const select = document.getElementById('model-select');
             const selectedModelObj = availableModelsObjects[select.value];
@@ -403,6 +413,7 @@ window.startBatchTagging = async function() {
                 }
 
                 const imgObj = targetFiles[idx];
+                if (imgObj.hidden) continue; // Evita alterar fotos marcadas em Hide
                 const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
                 
                 const canvas = await preprocessImage(imgObj.url);
@@ -438,6 +449,25 @@ window.startBatchTagging = async function() {
                     finalTags = [...prefixArray, ...finalTags.filter(t => !prefixArray.includes(t))];
                 }
                 
+                if (reviewMode) {
+                    const existingTags = (imgObj.content || '').split(',').map(t => t.trim()).filter(t => t);
+                    const existingSet = new Set(existingTags);
+                    imgObj.pendingAdd = finalTags.filter(t => !existingSet.has(t));
+
+                    if (typeof pendingTagsStore !== 'undefined') {
+                        if (imgObj.pendingAdd.length > 0) pendingTagsStore[baseName] = imgObj.pendingAdd;
+                        else delete pendingTagsStore[baseName];
+                    }
+
+                    processed++;
+                    progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
+                    progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
+                    continue;
+                }
+
+                imgObj.pendingAdd = [];
+                if (typeof pendingTagsStore !== 'undefined') delete pendingTagsStore[baseName];
+
                 const finalContent = finalTags.join(', ');
                 imgObj.content = finalContent;
                 imgObj.type = 'tags';
@@ -461,6 +491,8 @@ window.startBatchTagging = async function() {
                 progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
                 progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
             }
+
+            if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle);
         
         } else if (mode === 'nl-vlm') {
             const promptPrefix = document.getElementById('batch-vlm-prompt').value.trim() || '<MORE_DETAILED_CAPTION>';
@@ -537,6 +569,7 @@ window.startBatchTagging = async function() {
                 }
 
                 const imgObj = targetFiles[idx];
+                if (imgObj.hidden) continue; // Ignora fotos em Hide
                 const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
                 let finalContent = "";
 
@@ -601,7 +634,7 @@ window.startBatchTagging = async function() {
             }
         }
         
-        if (!window.isBatchCancelled) {
+        if (!window.isBatchCancelled && !reviewModeActive) {
             if(window.showAlert) window.showAlert("Batch processing complete!", "success");
         }
     } catch (e) { 
@@ -614,7 +647,14 @@ window.startBatchTagging = async function() {
         const dlContainer = document.getElementById('vlm-dl-container');
         if(dlContainer) dlContainer.style.display = 'none'; 
 
-        if(typeof window.refreshDataset === 'function') {
+        if (reviewModeActive) {
+            if(window.refreshListStatus) window.refreshListStatus();
+            if(typeof window.renderImageList === 'function') window.renderImageList();
+            if(window.renderMasterTagList) window.renderMasterTagList();
+            if(typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
+            if(typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
+            if(window.showAlert) window.showAlert("Suggestions generated! Review the ghost tags (💡) and accept the ones you want.", "info");
+        } else if(typeof window.refreshDataset === 'function') {
             await window.refreshDataset();
         } else {
             if(window.refreshListStatus) window.refreshListStatus();

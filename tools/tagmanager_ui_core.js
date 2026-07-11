@@ -1,7 +1,11 @@
 /* =========================================================================
-   UI CORE & SYSTEM LOGIC - TAG MANAGER (MULTI-LEVEL DIRECTORY)
+   UI CORE & SYSTEM LOGIC - TAG MANAGER (NON-RECURSIVE, LIST SAVE)
    Handles resizers, modals, list rendering, renaming, replacing, and filters.
 ========================================================================= */
+
+window.showGhostTagsInList = false;
+window.hiddenImagesStore = new Set(); 
+window.sortedActiveTags = window.sortedActiveTags || []; // Previne erros globais
 
 window.rootHandle = null;
 window.sub1Handles = new Map();
@@ -13,56 +17,203 @@ let selectedIndices = new Set();
 
 let masterTagSet = new Set(); 
 let masterSelectedTags = new Set(); 
+let masterSelectedGhostTags = new Set();
 let activeSelectedTags = new Set();
 
 let datasetConfig = {}; 
+let pendingTagsStore = {}; 
 window.filterMode = 'NONE'; 
 
-/* === INDEXEDDB PARA O DATASET (SALVAR PASTA) === */
-const dbNameDataset = 'TagManagerDatasetDB';
+/* === VARIAVEIS DA LUPA DE BUSCA UNIFICADA === */
+window.imageNameFilter = '';
+window.tagNameFilter = '';
+window.presetTagNameFilter = '';
 
-function initDatasetDB() { 
+window.activeSearchMode = true;
+window.masterSearchMode = true;
+window.presetSearchMode = true;
+
+window.toggleSearchMode = function(context) {
+    if (context === 'active') {
+        window.activeSearchMode = !window.activeSearchMode;
+        document.getElementById('btn-active-search-toggle').classList.toggle('active', window.activeSearchMode);
+        window.filterActiveTagsByName(window.activeSearchMode ? document.getElementById('active-add-input').value : '');
+    } else if (context === 'master') {
+        window.masterSearchMode = !window.masterSearchMode;
+        document.getElementById('btn-master-search-toggle').classList.toggle('active', window.masterSearchMode);
+        window.filterMasterTagsByName(window.masterSearchMode ? document.getElementById('master-add-input').value : '');
+    } else if (context === 'preset') {
+        window.presetSearchMode = !window.presetSearchMode;
+        document.getElementById('btn-preset-search-toggle').classList.toggle('active', window.presetSearchMode);
+        window.filterPresetTagsByName(window.presetSearchMode ? document.getElementById('preset-add-input').value : '');
+    }
+};
+
+/* === INDEXEDDB (GALLERY HOLDER COMPATIBILITY) === */
+const dbName = 'GalleryDB';
+const storeName = 'directories';
+
+window.initDB = function() { 
     return new Promise((res, rej) => { 
         try {
-            const req = indexedDB.open(dbNameDataset, 1); 
-            req.onupgradeneeded = e => e.target.result.createObjectStore('handles'); 
+            const req = indexedDB.open(dbName, 1); 
+            req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); 
             req.onsuccess = e => res(e.target.result); 
             req.onerror = e => rej(e.target.error); 
         } catch (err) { rej(err); }
     }); 
 }
 
-async function saveDatasetHandle(h) { 
+window.saveHandle = async function(n, h) { 
     try {
-        const db = await initDatasetDB(); 
+        const db = await window.initDB(); 
         return new Promise(r => { 
-            const tx = db.transaction('handles', 'readwrite'); 
-            tx.objectStore('handles').put(h, 'dataset_dir'); 
+            const tx = db.transaction(storeName, 'readwrite'); 
+            tx.objectStore(storeName).put(h, n); 
             tx.oncomplete = r; 
         }); 
     } catch (e) {}
 }
 
-async function getDatasetHandle() { 
+window.getHandles = async function() { 
     try {
-        const db = await initDatasetDB(); 
+        const db = await window.initDB(); 
         return new Promise(r => { 
-            const tx = db.transaction('handles', 'readonly'); 
-            const req = tx.objectStore('handles').get('dataset_dir'); 
-            req.onsuccess = () => r(req.result); 
-            req.onerror = () => r(null); 
+            const tx = db.transaction(storeName, 'readonly'); 
+            const store = tx.objectStore(storeName); 
+            const keysReq = store.getAllKeys(); 
+            const valsReq = store.getAll(); 
+            tx.oncomplete = () => { 
+                const result = []; 
+                for (let i = 0; i < keysReq.result.length; i++) { 
+                    const name = keysReq.result[i]; 
+                    if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] }); 
+                } 
+                r(result); 
+            }; 
         }); 
-    } catch (e) { return null; }
+    } catch (e) { return []; }
 }
 
-// Verifica se tem pasta salva ao carregar a página
+window.deleteHandle = async function(n) { 
+    try {
+        const db = await window.initDB(); 
+        return new Promise(r => { 
+            const tx = db.transaction(storeName, 'readwrite'); 
+            tx.objectStore(storeName).delete(n); 
+            tx.objectStore(storeName).delete('path_' + n); 
+            tx.oncomplete = r; 
+        }); 
+    } catch (e) {}
+}
+
+/* === INDEXEDDB PARA CONFIGURAÇÕES DA INTERFACE (SETTINGS) === */
+const settingsDbName = 'SettingsDB';
+const settingsStoreName = 'settings';
+
+window.initSettingsDB = function() {
+    return new Promise((res, rej) => {
+        try {
+            const req = indexedDB.open(settingsDbName, 1);
+            req.onupgradeneeded = e => {
+                if (!e.target.result.objectStoreNames.contains(settingsStoreName)) {
+                    e.target.result.createObjectStore(settingsStoreName, { keyPath: 'id' });
+                }
+            };
+            req.onsuccess = e => res(e.target.result);
+            req.onerror = e => rej(e.target.error);
+        } catch (err) { rej(err); }
+    });
+};
+
+window.saveSetting = async function(id, value) {
+    try {
+        const db = await window.initSettingsDB();
+        return new Promise(r => {
+            const tx = db.transaction(settingsStoreName, 'readwrite');
+            tx.objectStore(settingsStoreName).put({ id: id, value: value });
+            tx.oncomplete = () => r();
+        });
+    } catch (e) {}
+};
+
+window.getSetting = async function(id, defaultValue) {
+    try {
+        const db = await window.initSettingsDB();
+        return new Promise(r => {
+            const tx = db.transaction(settingsStoreName, 'readonly');
+            const req = tx.objectStore(settingsStoreName).get(id);
+            req.onsuccess = () => r(req.result !== undefined ? req.result.value : defaultValue);
+            req.onerror = () => r(defaultValue);
+        });
+    } catch (e) { return defaultValue; }
+};
+
+window.loadSettings = async function() {
+    // 1. Carrega Toggle Checkboxes
+    const lastEdited = await window.getSetting('toggle-last-edited', true);
+    const typeSelect = await window.getSetting('toggle-type-select', false);
+    const formatSelect = await window.getSetting('toggle-format-select', false);
+    const conflictWarn = await window.getSetting('toggle-conflict-warnings', true);
+    const helpBtn = await window.getSetting('toggle-help-btn', true);
+
+    // 2. Carrega Sliders de Tamanho
+    const thumbSize = await window.getSetting('thumb-size', 70);
+    const fontSize = await window.getSetting('font-size', 13);
+    
+    // 3. Carrega Larguras dos Painéis
+    const colListWidth = await window.getSetting('col-list-width', '350px');
+    const colToolsWidth = await window.getSetting('col-tools-width', '350px');
+    const colPresetsWidth = await window.getSetting('col-presets-width', '250px');
+
+    // Aplica Checkboxes
+    if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
+    if (document.getElementById('toggle-type-select')) document.getElementById('toggle-type-select').checked = typeSelect;
+    if (document.getElementById('toggle-format-select')) document.getElementById('toggle-format-select').checked = formatSelect;
+    if (document.getElementById('toggle-conflict-warnings')) document.getElementById('toggle-conflict-warnings').checked = conflictWarn;
+    if (document.getElementById('toggle-help-btn')) document.getElementById('toggle-help-btn').checked = helpBtn;
+
+    // Aplica Sliders
+    if (document.getElementById('thumb-slider')) document.getElementById('thumb-slider').value = thumbSize;
+    if (document.getElementById('font-slider')) document.getElementById('font-slider').value = fontSize;
+    window.updateThumbSize(thumbSize, true);
+    window.updateEditorFontSize(fontSize, true);
+
+    // Aplica Larguras
+    const colList = document.getElementById('col-list');
+    const colTools = document.getElementById('col-tools');
+    const colPresets = document.getElementById('col-presets');
+    if (colList) colList.style.width = colListWidth;
+    if (colTools) colTools.style.width = colToolsWidth;
+    if (colPresets) colPresets.style.width = colPresetsWidth;
+
+    // Dispara as funções visuais silenciosamente
+    window.enableConflictWarnings = conflictWarn;
+    window.toggleLastEdited(true);
+    window.toggleTypeSelect(true);
+    window.toggleFormatSelect(true);
+    window.toggleHelpBtn(true);
+};
+
+/* === ON LOAD === */
 window.addEventListener('DOMContentLoaded', async () => {
-    let savedDatasetHandle = await getDatasetHandle();
-    if (savedDatasetHandle) {
-        window.rootHandle = savedDatasetHandle;
-        const btn = document.getElementById('btn-load-dataset');
-        if (btn) btn.innerHTML = '🔄 Reconnect Dataset';
-    }
+    try {
+        await window.loadSettings(); 
+        window.renderPresetTags();
+        await window.updateSelect();
+        const handles = await window.getHandles();
+        if (handles.length > 0) {
+            const h = handles[0].handle;
+            if ((await h.queryPermission({ mode: 'readwrite' })) === 'granted') {
+                document.getElementById('dir-list').value = handles[0].name;
+                window.rootHandle = h;
+                document.getElementById('btn-save-folder').style.display = 'none';
+                document.getElementById('btn-remove').style.display = 'inline-block';
+                document.getElementById('current-folder-display').textContent = `📂 ${h.name}`;
+                window.loadGallery(h);
+            }
+        }
+    } catch (e) {}
 });
 
 window.addEventListener('keydown', (e) => {
@@ -82,7 +233,6 @@ window.initSystem = function() {
     if(typeof window.updateBatchUI === 'function') window.updateBatchUI(); 
     setupResizers();
     
-    // Checa se está rodando via file:// e exibe o aviso
     if (window.location.protocol === 'file:') {
         const fileWarning = document.getElementById('file-protocol-warning');
         if (fileWarning) fileWarning.style.display = 'block';
@@ -90,42 +240,44 @@ window.initSystem = function() {
 };
 
 /* === IMAGE SLIDER SIZE === */
-window.updateThumbSize = function(val) {
+window.updateThumbSize = function(val, skipSave = false) {
     document.documentElement.style.setProperty('--thumb-size', val + 'px');
+    if (!skipSave) window.saveSetting('thumb-size', val);
 };
 
 /* === EDITOR (TAGS/NL) FONT SIZE SLIDER === */
-window.updateEditorFontSize = function(val) {
+window.updateEditorFontSize = function(val, skipSave = false) {
     document.documentElement.style.setProperty('--editor-font-size', val + 'px');
+    if (!skipSave) window.saveSetting('font-size', val);
 };
 
-/* === RESIZER OPTIMIZATION (No Lag) === */
+/* === RESIZER OPTIMIZATION (4 COLUMNS SUPPORT) === */
 function setupResizers() {
     let isDraggingLeft = false;
     let isDraggingRight = false;
+    let isDraggingPresets = false;
     let rafPending = false;
 
     const resizerLeft = document.getElementById('resizer-left');
     const resizerRight = document.getElementById('resizer-right');
+    const resizerPresets = document.getElementById('resizer-presets');
+    
     const colList = document.getElementById('col-list');
     const colTools = document.getElementById('col-tools');
+    const colPresets = document.getElementById('col-presets');
 
     if(resizerLeft) {
-        resizerLeft.addEventListener('mousedown', () => { 
-            isDraggingLeft = true; 
-            document.body.classList.add('is-resizing'); 
-        });
+        resizerLeft.addEventListener('mousedown', () => { isDraggingLeft = true; document.body.classList.add('is-resizing'); });
     }
-    
     if(resizerRight) {
-        resizerRight.addEventListener('mousedown', () => { 
-            isDraggingRight = true; 
-            document.body.classList.add('is-resizing');
-        });
+        resizerRight.addEventListener('mousedown', () => { isDraggingRight = true; document.body.classList.add('is-resizing'); });
+    }
+    if(resizerPresets) {
+        resizerPresets.addEventListener('mousedown', () => { isDraggingPresets = true; document.body.classList.add('is-resizing'); });
     }
 
     document.addEventListener('mousemove', (e) => {
-        if (!isDraggingLeft && !isDraggingRight) return;
+        if (!isDraggingLeft && !isDraggingRight && !isDraggingPresets) return;
         if (rafPending) return;
         
         rafPending = true;
@@ -138,26 +290,90 @@ function setupResizers() {
             }
             if (isDraggingRight && colTools) {
                 let newWidth = window.innerWidth - e.clientX;
-                if (newWidth < 250) newWidth = 250;
-                if (newWidth > window.innerWidth * 0.45) newWidth = window.innerWidth * 0.45;
+                if (newWidth < 200) newWidth = 200;
                 colTools.style.width = newWidth + 'px';
+            }
+            if (isDraggingPresets && colPresets && colTools) {
+                let newWidth = window.innerWidth - e.clientX - colTools.offsetWidth - 14; 
+                if (newWidth < 150) newWidth = 150;
+                colPresets.style.width = newWidth + 'px';
             }
             rafPending = false;
         });
     });
 
     document.addEventListener('mouseup', () => {
+        // Ao soltar o clique, salva as larguras no IndexedDB
+        if (isDraggingLeft || isDraggingRight || isDraggingPresets) {
+            if (colList && colList.style.width) window.saveSetting('col-list-width', colList.style.width);
+            if (colTools && colTools.style.width) window.saveSetting('col-tools-width', colTools.style.width);
+            if (colPresets && colPresets.style.width) window.saveSetting('col-presets-width', colPresets.style.width);
+        }
+        
         isDraggingLeft = false;
         isDraggingRight = false;
+        isDraggingPresets = false;
         document.body.classList.remove('is-resizing');
     });
 }
 
-/* === MODALS & UI TOGGLES === */
+/* === MODALS, UI TOGGLES E LAST EDITED TIME === */
 window.toggleSettings = () => document.getElementById('settings-dropdown').classList.toggle('open');
-window.toggleTypeSelect = () => document.getElementById('topbar-system-type').style.display = document.getElementById('toggle-type-select').checked ? 'inline-block' : 'none';
-window.toggleFormatSelect = () => document.getElementById('topbar-save-format').style.display = document.getElementById('toggle-format-select').checked ? 'inline-block' : 'none';
-window.toggleHelpBtn = () => document.getElementById('btn-help').style.display = document.getElementById('toggle-help-btn').checked ? 'inline-block' : 'none';
+
+window.toggleTypeSelect = (skipSave = false) => {
+    const isChecked = document.getElementById('toggle-type-select').checked;
+    document.getElementById('topbar-system-type').style.display = isChecked ? 'inline-block' : 'none';
+    if (!skipSave) window.saveSetting('toggle-type-select', isChecked);
+};
+
+window.toggleFormatSelect = (skipSave = false) => {
+    const isChecked = document.getElementById('toggle-format-select').checked;
+    document.getElementById('topbar-save-format').style.display = isChecked ? 'inline-block' : 'none';
+    if (!skipSave) window.saveSetting('toggle-format-select', isChecked);
+};
+
+window.toggleHelpBtn = (skipSave = false) => {
+    const isChecked = document.getElementById('toggle-help-btn').checked;
+    document.getElementById('btn-help').style.display = isChecked ? 'inline-block' : 'none';
+    if (!skipSave) window.saveSetting('toggle-help-btn', isChecked);
+};
+
+window.enableConflictWarnings = true;
+window.toggleConflictWarnings = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-conflict-warnings');
+    if (checkbox) {
+        window.enableConflictWarnings = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-conflict-warnings', checkbox.checked);
+    }
+    
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
+};
+
+window.toggleLastEdited = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-last-edited');
+    const display = document.getElementById('last-edited-display');
+    if (checkbox && display) {
+        display.style.display = checkbox.checked ? 'block' : 'none';
+        if (!skipSave) window.saveSetting('toggle-last-edited', checkbox.checked);
+    }
+};
+
+window.updateLastEditedUI = function() {
+    const display = document.getElementById('last-edited-display');
+    if (display) {
+        display.textContent = datasetConfig.lastEdited ? `Last edited: ${datasetConfig.lastEdited}` : "Last edited: Never";
+    }
+};
+
+window.markDatasetEdited = function() {
+    datasetConfig.lastEdited = new Date().toLocaleString();
+    window.updateLastEditedUI();
+    const handle = window.currentImagesHandle || window.rootHandle;
+    if (handle) saveDatasetConfig(handle);
+};
+
 window.showHelp = () => document.getElementById('modal-help').classList.add('active');
 window.closeModal = (id) => document.getElementById(id).classList.remove('active');
 
@@ -244,6 +460,9 @@ document.addEventListener('click', (e) => {
 
     const ddRename = document.getElementById('rename-dropdown');
     if (ddRename && ddRename.classList.contains('open') && !ddRename.contains(e.target) && !e.target.closest('.btn-save-local')) ddRename.classList.remove('open');
+
+    const ddClone = document.getElementById('clone-dropdown');
+    if (ddClone && ddClone.classList.contains('open') && !ddClone.contains(e.target) && !e.target.closest('.btn-save-local')) ddClone.classList.remove('open');
 });
 
 window.toggleMode = function() {
@@ -265,46 +484,87 @@ window.updateBatchUI = function() {
     if(typeof window.checkBatchReadyState === 'function') window.checkBatchReadyState();
 }
 
-/* === MULTI-LEVEL DATASET LOADING === */
-window.loadImagesDirectory = async function() {
-    try {
-        if (typeof window.showDirectoryPicker === 'undefined') {
-            window.showAlert("Browser does not support folder selection.", "error"); return;
-        }
 
-        const btn = document.getElementById('btn-load-dataset');
+/* === DIRECTORY SELECTION SYSTEM === */
 
-        // Se o botão for "Reconnect" e tivermos o handle salvo na memória, pede permissão
-        if (btn && btn.innerHTML.includes('Reconnect') && window.rootHandle) {
-            if (await window.rootHandle.requestPermission({ mode: 'readwrite' }) === 'granted') {
-                btn.innerHTML = '📁 Load Dataset'; 
-                document.getElementById('btn-refresh').style.display = 'inline-block';
-                await window.loadGallery(window.rootHandle);
-                return;
-            }
-        }
+window.updateSelect = async function() {
+    const list = document.getElementById('dir-list'); 
+    if (!list) return;
+    list.innerHTML = '<option value="">Saved directories...</option>';
+    const handles = await window.getHandles(); 
+    handles.forEach(h => { 
+        const opt = document.createElement('option'); 
+        opt.value = h.name; 
+        opt.textContent = h.name; 
+        list.appendChild(opt); 
+    });
+}
 
-        // Seleção normal (nova pasta escolhida pelo usuário)
-        window.rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+window.loadTemporaryFolder = async function() { 
+    try { 
+        const dh = await window.showDirectoryPicker({ mode: 'readwrite' }); 
+        window.rootHandle = dh;
         
-        // Salva a nova pasta no IndexedDB
-        await saveDatasetHandle(window.rootHandle); 
+        const handles = await window.getHandles();
+        const exists = handles.some(h => h.name === dh.name);
         
-        if (btn) btn.innerHTML = '📁 Load Dataset';
-        document.getElementById('btn-refresh').style.display = 'inline-block';
-        await window.loadGallery(window.rootHandle);
+        document.getElementById('dir-list').value = exists ? dh.name : "";
+        document.getElementById('btn-save-folder').style.display = exists ? 'none' : 'inline-block';
+        document.getElementById('btn-remove').style.display = exists ? 'inline-block' : 'none';
+        document.getElementById('current-folder-display').textContent = `📂 ${dh.name}`;
         
-    } catch (e) { 
-        if(e.name !== 'AbortError') window.showAlert("Error: " + e.message, "error"); 
+        window.loadGallery(dh); 
+    } catch (e) { if (e.name !== 'AbortError') window.showAlert('Permission error.', 'error'); } 
+}
+
+window.saveFolderToList = async function() {
+    if (!window.rootHandle) return;
+    await window.saveHandle(window.rootHandle.name, window.rootHandle);
+    await window.updateSelect();
+    document.getElementById('dir-list').value = window.rootHandle.name;
+    
+    document.getElementById('btn-save-folder').style.display = 'none';
+    document.getElementById('btn-remove').style.display = 'inline-block';
+    window.showAlert('Folder added to saved list!', 'success');
+}
+
+window.removeDirectory = async function() { 
+    if (!window.rootHandle) return; 
+    await window.deleteHandle(window.rootHandle.name); 
+    await window.updateSelect();
+    
+    document.getElementById('dir-list').value = "";
+    document.getElementById('btn-save-folder').style.display = 'inline-block';
+    document.getElementById('btn-remove').style.display = 'none';
+    
+    window.showAlert('Folder removed from saved list.', 'info');
+}
+
+window.loadSelectedDirectory = async function() {
+    const name = document.getElementById('dir-list').value; 
+    if (!name) return; 
+    const handles = await window.getHandles();
+    const h = handles.find(x => x.name === name)?.handle;
+    if (h) { 
+        if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') await h.requestPermission({ mode: 'readwrite' }); 
+        
+        window.rootHandle = h;
+        document.getElementById('btn-save-folder').style.display = 'none';
+        document.getElementById('btn-remove').style.display = 'inline-block';
+        document.getElementById('current-folder-display').textContent = `📂 ${h.name}`;
+        
+        window.loadGallery(h); 
     }
-};
+}
+
+/* === MULTI-LEVEL DIRECTORY LOADING (NON-RECURSIVE) === */
 
 window.refreshDataset = async function() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
     const selectedBaseNames = Array.from(selectedIndices).map(i => imageFiles[i].baseName);
     
-    const val2 = document.getElementById('sub-dir-2').value;
-    const val1 = document.getElementById('sub-dir-1').value;
+    const val2 = document.getElementById('sub-dir-2') ? document.getElementById('sub-dir-2').value : '';
+    const val1 = document.getElementById('sub-dir-1') ? document.getElementById('sub-dir-1').value : '';
 
     if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { 
         await window.loadSubDir2(); 
@@ -320,17 +580,21 @@ window.refreshDataset = async function() {
     window.showAlert(`Refreshed! ${imageFiles.length} images loaded.`);
 };
 
-// --- LEVEL 1 (ROOT) ---
 window.loadGallery = async function(dirHandle) {
+    window.rootHandle = dirHandle;
     window.currentImagesHandle = dirHandle;
     window.sub1Handles.clear();
+    if(window.sub2Handles) window.sub2Handles.clear();
     
+    document.getElementById('btn-refresh').style.display = 'inline-block';
+
     const sel1 = document.getElementById('sub-dir-1');
     const sel2 = document.getElementById('sub-dir-2');
     sel1.style.display = 'none';
     sel2.style.display = 'none';
 
     await loadDatasetConfig(dirHandle);
+    await loadPendingTagsStore(dirHandle);
 
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
@@ -356,7 +620,6 @@ window.loadGallery = async function(dirHandle) {
     finishLoading();
 };
 
-// --- LEVEL 2 (FLATTENED SUBFOLDER) ---
 window.loadSubDir1 = async function() {
     const val = document.getElementById('sub-dir-1').value;
     const sel2 = document.getElementById('sub-dir-2');
@@ -372,11 +635,18 @@ window.loadSubDir1 = async function() {
     sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
 
     await loadDatasetConfig(window.currentImagesHandle);
+    await loadPendingTagsStore(window.currentImagesHandle);
 
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
 
-    configNeedsSave = await scanFlattenedTags(window.currentImagesHandle, "", true, 0, configNeedsSave);
+    for await (const entry of window.currentImagesHandle.values()) {
+        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+            configNeedsSave = await processSingleImage(entry, window.currentImagesHandle, configNeedsSave);
+        } else if (entry.kind === 'directory') {
+            window.sub2Handles.set(entry.name, entry);
+        }
+    }
 
     if (configNeedsSave) await saveDatasetConfig(window.currentImagesHandle);
 
@@ -390,22 +660,6 @@ window.loadSubDir1 = async function() {
     finishLoading();
 };
 
-async function scanFlattenedTags(dirHandle, pathPrefix, isFirstLevel, depth, configNeedsSave) {
-    if (depth > 10) return configNeedsSave; 
-    
-    for await (const entry of dirHandle.values()) {
-        if (entry.kind === 'directory') {
-            const fullPath = pathPrefix ? pathPrefix + '/' + entry.name : entry.name;
-            window.sub2Handles.set(fullPath, entry);
-            configNeedsSave = await scanFlattenedTags(entry, fullPath, false, depth + 1, configNeedsSave);
-        } else if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await processSingleImage(entry, dirHandle, configNeedsSave);
-        }
-    }
-    return configNeedsSave;
-}
-
-// --- LEVEL 3 (SPECIFIC SUBFOLDER FILTER) ---
 window.loadSubDir2 = async function() {
     const val = document.getElementById('sub-dir-2').value;
 
@@ -418,6 +672,7 @@ window.loadSubDir2 = async function() {
     window.currentImagesHandle = targetHandle;
 
     await loadDatasetConfig(targetHandle);
+    await loadPendingTagsStore(targetHandle);
 
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
@@ -474,7 +729,8 @@ async function processSingleImage(entry, parentHandle, configNeedsSave) {
         content.split(',').forEach(t => { if(t.trim()) masterTagSet.add(t.trim()); });
     }
     
-    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext });
+    const isHidden = window.hiddenImagesStore.has(baseName);
+    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden });
     return configNeedsSave;
 }
 
@@ -482,7 +738,9 @@ function finishLoading() {
     imageFiles.sort((a,b) => a.name.localeCompare(b.name));
     document.getElementById('list-count').textContent = imageFiles.length;
     
+    window.updateLastEditedUI();
     window.updateTagsDatalist();
+    window.updateUnhideButton();
     window.renderImageList(); 
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.checkBatchReadyState === "function") window.checkBatchReadyState();
@@ -504,6 +762,7 @@ async function loadDatasetConfig(dirHandle) {
         const file = await configHandle.getFile();
         datasetConfig = JSON.parse(await file.text());
     } catch(e) { datasetConfig = {}; }
+    window.updateLastEditedUI();
 }
 
 async function saveDatasetConfig(dirHandle) {
@@ -515,6 +774,32 @@ async function saveDatasetConfig(dirHandle) {
         await writable.close();
     } catch(e) {}
 }
+
+async function loadPendingTagsStore(dirHandle) {
+    try {
+        const h = await dirHandle.getFileHandle('_pending_tags.json');
+        const file = await h.getFile();
+        pendingTagsStore = JSON.parse(await file.text());
+    } catch(e) { pendingTagsStore = {}; }
+}
+
+async function savePendingTagsStore(dirHandle) {
+    if (!dirHandle) return;
+    try {
+        Object.keys(pendingTagsStore).forEach(k => {
+            if (!pendingTagsStore[k] || pendingTagsStore[k].length === 0) delete pendingTagsStore[k];
+        });
+        if (Object.keys(pendingTagsStore).length === 0) {
+            try { await dirHandle.removeEntry('_pending_tags.json'); } catch(e) {}
+            return;
+        }
+        const h = await dirHandle.getFileHandle('_pending_tags.json', { create: true });
+        const writable = await h.createWritable();
+        await writable.write(JSON.stringify(pendingTagsStore, null, 2));
+        await writable.close();
+    } catch(e) {}
+}
+window.savePendingTagsStore = savePendingTagsStore;
 
 window.updateSelectedConfig = async function() {
     if (selectedIndices.size === 0) return;
@@ -529,7 +814,7 @@ window.updateSelectedConfig = async function() {
         datasetConfig[img.baseName] = { type: newType, ext: newExt };
     });
 
-    await saveDatasetConfig(window.currentImagesHandle);
+    window.markDatasetEdited();
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     window.refreshListStatus();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
@@ -546,6 +831,72 @@ window.updateTagsDatalist = function() {
         const opt = document.createElement('option');
         opt.value = tag; datalist.appendChild(opt);
     });
+};
+
+/* === IMAGE HIDING SYSTEM === */
+window.hideSelectedImages = function() {
+    if (selectedIndices.size === 0) return;
+    selectedIndices.forEach(idx => {
+        imageFiles[idx].hidden = true;
+        window.hiddenImagesStore.add(imageFiles[idx].baseName); 
+        if (imageFiles[idx].element) {
+            imageFiles[idx].element.classList.remove('selected');
+        }
+    });
+    selectedIndices.clear();
+    
+    window.updateUnhideButton();
+    window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    window.updateListSelectionVisuals();
+};
+
+window.unhideAllImages = function() {
+    let changed = false;
+    imageFiles.forEach(img => {
+        if (img.hidden) { img.hidden = false; changed = true; }
+    });
+    window.hiddenImagesStore.clear(); 
+    if (changed) {
+        window.updateUnhideButton();
+        window.renderImageList();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+        if (typeof window.applyFilters === 'function') window.applyFilters();
+    }
+};
+
+window.updateUnhideButton = function() {
+    const btn = document.getElementById('btn-unhide-all');
+    const hasHidden = window.hiddenImagesStore.size > 0 || imageFiles.some(img => img.hidden);
+    if (btn) btn.style.display = hasHidden ? 'inline-block' : 'none';
+};
+
+/* === FOCUS MODE (INVERSE OF HIDE) === */
+window.enterFocusMode = function() {
+    if (selectedIndices.size === 0) { window.showAlert("Select at least one image first!", "warn"); return; }
+
+    const keepVisible = new Set(Array.from(selectedIndices).map(i => imageFiles[i].baseName));
+    let hiddenCount = 0;
+
+    imageFiles.forEach(img => {
+        if (!keepVisible.has(img.baseName) && !img.hidden) {
+            img.hidden = true;
+            window.hiddenImagesStore.add(img.baseName);
+            if (img.element) img.element.classList.remove('selected');
+            hiddenCount++;
+        }
+    });
+
+    window.updateUnhideButton();
+    window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    window.updateListSelectionVisuals();
+
+    window.showAlert(`Focus mode: hid ${hiddenCount} other image(s). Use 👁️‍🗨️ Unhide to restore.`, "success");
 };
 
 /* === MULTI RENAME SYSTEM === */
@@ -578,7 +929,6 @@ window.confirmRename = async function() {
         if (oldName === newName) { count++; continue; }
 
         try {
-            // Rename Image
             const oldImgHandle = await img.parentDirHandle.getFileHandle(oldName);
             const oldImgFile = await oldImgHandle.getFile();
             const newImgHandle = await img.parentDirHandle.getFileHandle(newName, {create: true});
@@ -587,7 +937,6 @@ window.confirmRename = async function() {
             await writableImg.close();
             await img.parentDirHandle.removeEntry(oldName);
 
-            // Rename Text/JSON
             const textFormat = img.ext || 'txt';
             const oldTextName = `${img.baseName}.${textFormat}`;
             const newTextName = `${finalBaseName}.${textFormat}`;
@@ -608,6 +957,14 @@ window.confirmRename = async function() {
                 datasetConfig[finalBaseName] = datasetConfig[img.baseName];
                 delete datasetConfig[img.baseName];
             }
+            if (pendingTagsStore[img.baseName]) {
+                pendingTagsStore[finalBaseName] = pendingTagsStore[img.baseName];
+                delete pendingTagsStore[img.baseName];
+            }
+            if (window.hiddenImagesStore.has(img.baseName)) {
+                window.hiddenImagesStore.delete(img.baseName);
+                window.hiddenImagesStore.add(finalBaseName);
+            }
             img.name = newName; img.baseName = finalBaseName;
             renamedCount++;
         } catch(e) { console.error("Rename Error:", e); }
@@ -615,9 +972,82 @@ window.confirmRename = async function() {
     }
 
     if(renamedCount > 0) {
-        await saveDatasetConfig(window.currentImagesHandle);
+        window.markDatasetEdited();
+        await savePendingTagsStore(window.currentImagesHandle);
         window.showAlert(`Renamed ${renamedCount} files!`, "success");
         await window.refreshDataset(); 
+    }
+}
+
+/* === CLONE SYSTEM === */
+window.openCloneModal = function() {
+    if (selectedIndices.size === 0) { window.showAlert("Select at least one image first!", "warn"); return; }
+    document.getElementById('clone-count-input').value = 1;
+    document.getElementById('clone-dropdown').classList.add('open');
+    document.getElementById('clone-count-input').focus();
+    document.getElementById('clone-count-input').select();
+}
+
+window.confirmClone = async function() {
+    if (selectedIndices.size === 0) { document.getElementById('clone-dropdown').classList.remove('open'); return; }
+
+    const count = parseInt(document.getElementById('clone-count-input').value, 10);
+    document.getElementById('clone-dropdown').classList.remove('open');
+    if (!count || count < 1) return;
+
+    const indices = Array.from(selectedIndices);
+    let clonedCount = 0;
+
+    const existingBaseNames = new Set(imageFiles.map(f => f.baseName));
+
+    for (let idx of indices) {
+        const img = imageFiles[idx];
+        const oldExt = img.name.substring(img.name.lastIndexOf('.') + 1);
+
+        for (let n = 1; n <= count; n++) {
+            let newBaseName = `${img.baseName}_${n}`;
+            let bump = 1;
+            while (existingBaseNames.has(newBaseName)) {
+                bump++;
+                newBaseName = `${img.baseName}_${n}_${bump}`;
+            }
+            existingBaseNames.add(newBaseName);
+            const newImgName = `${newBaseName}.${oldExt}`;
+
+            try {
+                const imgFile = await img.handle.getFile();
+                const newImgHandle = await img.parentDirHandle.getFileHandle(newImgName, { create: true });
+                const writableImg = await newImgHandle.createWritable();
+                await writableImg.write(await imgFile.arrayBuffer());
+                await writableImg.close();
+
+                if (img.hasFile) {
+                    const textFormat = img.ext || 'txt';
+                    const oldTextName = `${img.baseName}.${textFormat}`;
+                    const newTextName = `${newBaseName}.${textFormat}`;
+                    try {
+                        const oldTextHandle = await img.parentDirHandle.getFileHandle(oldTextName);
+                        const oldTextFile = await oldTextHandle.getFile();
+                        const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, { create: true });
+                        const writableText = await newTextHandle.createWritable();
+                        await writableText.write(await oldTextFile.arrayBuffer());
+                        await writableText.close();
+                    } catch (e) {}
+                }
+
+                if (datasetConfig[img.baseName]) {
+                    datasetConfig[newBaseName] = { ...datasetConfig[img.baseName] };
+                }
+                clonedCount++;
+            } catch (e) { console.error("Clone Error:", e); }
+        }
+    }
+
+    if (clonedCount > 0) {
+        await saveDatasetConfig(window.currentImagesHandle || window.rootHandle);
+        window.markDatasetEdited();
+        window.showAlert(`Cloned ${clonedCount} file(s)!`, "success");
+        await window.refreshDataset();
     }
 }
 
@@ -646,9 +1076,7 @@ window.confirmReplaceTag = async function() {
     
     document.getElementById('replace-dropdown').classList.remove('open');
 
-    if (!oldTag || !newTag || oldTag === newTag) {
-        return;
-    }
+    if (!oldTag || !newTag || oldTag === newTag) return;
 
     let replacedCount = 0;
     let indicesToProcess = replaceScope === 'active' ? Array.from(selectedIndices) : imageFiles.map((_, i) => i);
@@ -656,6 +1084,7 @@ window.confirmReplaceTag = async function() {
 
     for (const idx of indicesToProcess) {
         const img = imageFiles[idx];
+        if (img.hidden) continue; 
         if (img.type === 'tags' && img.content) {
             let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
             if (tags.includes(oldTag)) {
@@ -702,15 +1131,14 @@ window.confirmReplaceTag = async function() {
             const writable = await fileHandle.createWritable();
             await writable.write(contentToSave);
             await writable.close();
-        } catch(e) {
-            console.error("Failed to save", img.name, e);
-        }
+        } catch(e) { console.error("Failed to save", img.name, e); }
     });
-
-    Promise.all(savePromises).catch(e => console.error("Batch save error:", e));
+    
+    await Promise.all(savePromises);
+    if(replacedCount > 0) window.markDatasetEdited();
 }
 
-/* === FILTERS (WITH DISABLE OPTION) === */
+/* === FILTERS === */
 window.setLogic = function(mode) {
     const btn = document.getElementById('btn-logic-' + mode);
     
@@ -723,48 +1151,21 @@ window.setLogic = function(mode) {
         window.filterMode = mode;
     }
 
-    if (typeof window.applyFilters === 'function') {
-        if (window.filterMode === 'NONE') {
-            imageFiles.forEach(img => { if(img.element) img.element.style.display = 'flex'; });
-        } else {
-            window.applyFilters();
-        }
-    }
+    if (typeof window.applyFilters === 'function') window.applyFilters();
 };
 
-/* === IMAGE LIST RENDERING === */
+/* === IMAGE LIST RENDERING E SELEÇÃO === */
 let lastSelectedIndex = 0;
-
-window.renderImageList = function() {
-    const listDiv = document.getElementById('image-list'); listDiv.innerHTML = '';
-    imageFiles.forEach((img, index) => {
-        const div = document.createElement('div');
-        let currentExt = img.ext || 'txt';
-        let typeBadge = img.hasFile ? (img.type === 'nl' ? `📝 NL (.${currentExt})` : `🏷️ Tags (.${currentExt})`) : 'Empty';
-        
-        div.className = `list-item ${img.hasFile ? (img.type === 'nl' ? 'is-nl' : 'has-data') : ''}`;
-        div.innerHTML = `
-            <img src="${img.url}">
-            <div class="list-item-info">
-                <div class="list-item-name">${img.name}</div>
-                <div class="list-item-status">${typeBadge}</div>
-            </div>
-        `;
-        div.onclick = (e) => window.handleListClick(index, e.shiftKey, e.ctrlKey || e.metaKey);
-        div.ondblclick = () => { document.getElementById('image-popout').src = img.url; window.openModal('modal-image'); };
-        img.element = div; listDiv.appendChild(div);
-    });
-    
-    if (typeof window.applyFilters === 'function') {
-        if (window.filterMode === 'NONE') { imageFiles.forEach(img => { if(img.element) img.element.style.display = 'flex'; }); } 
-        else window.applyFilters();
-    }
-}
 
 window.handleListClick = function(index, shiftKey, ctrlKey) {
     if (shiftKey && selectedIndices.size > 0) {
         const start = Math.min(lastSelectedIndex, index), end = Math.max(lastSelectedIndex, index);
-        selectedIndices.clear(); for (let i = start; i <= end; i++) selectedIndices.add(i);
+        selectedIndices.clear(); 
+        for (let i = start; i <= end; i++) {
+            if (imageFiles[i].element && imageFiles[i].element.style.display !== 'none') {
+                selectedIndices.add(i);
+            }
+        }
     } else if (ctrlKey) {
         if (selectedIndices.has(index)) selectedIndices.delete(index); else selectedIndices.add(index);
         lastSelectedIndex = index;
@@ -776,9 +1177,139 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
     if (typeof window.renderEditor === 'function') window.renderEditor();
 }
 
+window.renderImageList = function() {
+    const listDiv = document.getElementById('image-list'); listDiv.innerHTML = '';
+    imageFiles.forEach((img, index) => {
+        if (img.hidden) {
+            if (img.element) img.element.style.display = 'none';
+            return;
+        }
+
+        const div = document.createElement('div');
+        let currentExt = img.ext || 'txt';
+        let typeBadge = img.hasFile ? (img.type === 'nl' ? `📝 NL (.${currentExt})` : `🏷️ Tags (.${currentExt})`) : 'Empty';
+        const suggestCount = (img.pendingAdd && img.pendingAdd.length) ? img.pendingAdd.length : 0;
+        const suggestBadge = suggestCount > 0 ? `<span class="suggest-badge">💡${suggestCount}</span>` : '';
+        
+        div.className = `list-item ${img.hasFile ? (img.type === 'nl' ? 'is-nl' : 'has-data') : ''}`;
+        div.innerHTML = `
+            <img src="${img.url}">
+            <div class="list-item-info">
+                <div class="list-item-name">${img.name}</div>
+                <div class="list-item-status">${typeBadge}${suggestBadge}</div>
+            </div>
+        `;
+        div.onclick = (e) => window.handleListClick(index, e.shiftKey, e.ctrlKey || e.metaKey);
+        div.ondblclick = () => { document.getElementById('image-popout').src = img.url; window.openModal('modal-image'); };
+        img.element = div; listDiv.appendChild(div);
+    });
+    
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    window.updateSuggestFilterVisibility();
+}
+
+/* === TYPABLE SEARCH FILTERS (IMAGES & ALL TAGS) === */
+window.filterImagesByName = function(val) {
+    window.imageNameFilter = (val || '').trim().toLowerCase();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+};
+
+function applyTagNameFilterToDOM() {
+    const container = document.getElementById('master-tag-list');
+    if (!container) return;
+    container.querySelectorAll('.master-tag-item').forEach(item => {
+        const nameEl = item.querySelector('.tag-name');
+        const text = (nameEl ? nameEl.textContent : item.textContent).toLowerCase();
+        item.style.display = (!window.tagNameFilter || text.includes(window.tagNameFilter)) ? 'flex' : 'none';
+    });
+}
+
+window.filterMasterTagsByName = function(val) {
+    window.tagNameFilter = (val || '').trim().toLowerCase();
+    applyTagNameFilterToDOM();
+};
+
+/* GHOST TAGS (BUTTON LOGIC) */
+window.toggleSuggestFilterImg = function() {
+    window.showGhostTagsInList = !window.showGhostTagsInList;
+    
+    masterSelectedTags.clear();
+    masterSelectedGhostTags.clear();
+    window.filterMode = 'NONE';
+    document.querySelectorAll('.logic-btn').forEach(b => b.classList.remove('active'));
+    if (typeof updateSelectionActions === 'function') updateSelectionActions();
+
+    const btn = document.getElementById('btn-filter-suggest-img');
+    if (btn) {
+        btn.classList.toggle('active', window.showGhostTagsInList);
+        if (window.showGhostTagsInList) {
+            btn.style.color = '#00ff99';
+            btn.style.borderColor = '#00aa66';
+        } else {
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }
+    }
+    
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+};
+
+window.updateSuggestFilterVisibility = function() {
+    const btn = document.getElementById('btn-filter-suggest-img');
+    const discardBtn = document.getElementById('btn-discard-suggestions');
+    const anyPending = imageFiles.some(img => img.pendingAdd && img.pendingAdd.length > 0 && !img.hidden);
+
+    if (btn) {
+        if (!anyPending && window.showGhostTagsInList) {
+            window.showGhostTagsInList = false;
+            btn.classList.remove('active');
+            btn.style.color = '';
+            btn.style.borderColor = '';
+        }
+        btn.style.display = anyPending ? 'inline-flex' : 'none';
+    }
+    if (discardBtn) discardBtn.style.display = anyPending ? 'inline-flex' : 'none';
+};
+
+window.discardAllSuggestions = async function() {
+    const anyPending = imageFiles.some(img => img.pendingAdd && img.pendingAdd.length > 0 && !img.hidden);
+    if (!anyPending) return;
+
+    if (!confirm("Discard ALL pending tag suggestions? This cannot be undone.")) return;
+
+    imageFiles.forEach(img => { 
+        if (!img.hidden) img.pendingAdd = []; 
+    });
+    
+    pendingTagsStore = {};
+    imageFiles.forEach(img => {
+        if (img.pendingAdd && img.pendingAdd.length > 0) {
+            pendingTagsStore[img.baseName] = img.pendingAdd;
+        }
+    });
+    
+    masterSelectedGhostTags.clear();
+
+    const handle = window.currentImagesHandle || window.rootHandle;
+    await savePendingTagsStore(handle);
+
+    window.showGhostTagsInList = false;
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+
+    window.showAlert("All pending suggestions discarded.", "success");
+};
+
 window.updateListSelectionVisuals = function() {
     imageFiles.forEach((img, i) => {
-        if (selectedIndices.has(i)) img.element.classList.add('selected'); else img.element.classList.remove('selected');
+        if (selectedIndices.has(i)) {
+            if (img.element) img.element.classList.add('selected'); 
+        } else {
+            if (img.element) img.element.classList.remove('selected');
+        }
     });
     const listActions = document.getElementById('list-selection-actions');
     if(listActions) listActions.style.display = selectedIndices.size > 0 ? 'flex' : 'none';
@@ -786,7 +1317,7 @@ window.updateListSelectionVisuals = function() {
 
 window.refreshListStatus = function() {
     imageFiles.forEach(img => {
-        if(img.hasFile) {
+        if(img.hasFile && img.element) {
             img.element.className = img.type === 'nl' ? 'list-item is-nl' : 'list-item has-data';
             img.element.querySelector('.list-item-status').textContent = img.type === 'nl' ? `📝 NL (.${img.ext})` : `🏷️ Tags (.${img.ext})`;
         }
@@ -803,7 +1334,11 @@ window.deleteSingleImage = async function(e, index) {
         try { await img.parentDirHandle.removeEntry(img.baseName + '.txt'); } catch(err){}
         try { await img.parentDirHandle.removeEntry(img.baseName + '.json'); } catch(err){}
         
-        if (datasetConfig[img.baseName]) { delete datasetConfig[img.baseName]; await saveDatasetConfig(window.currentImagesHandle); }
+        if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
+        if (pendingTagsStore[img.baseName]) { delete pendingTagsStore[img.baseName]; await savePendingTagsStore(window.currentImagesHandle); }
+        if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
+        
+        window.markDatasetEdited();
         window.showAlert(`Deleted file.`, 'success');
         await window.refreshDataset();
     } catch(err) { window.showAlert("Error deleting file.", "error"); }
@@ -823,13 +1358,18 @@ window.deleteSelectedImages = async function() {
             try { await img.parentDirHandle.removeEntry(img.baseName + '.txt'); } catch(err){}
             try { await img.parentDirHandle.removeEntry(img.baseName + '.json'); } catch(err){}
             if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
+            if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
+            if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
             deletedCount++;
         } catch(e) {}
     }
     
-    await saveDatasetConfig(window.currentImagesHandle);
-    window.showAlert(`Deleted ${deletedCount} files.`, 'success');
-    await window.refreshDataset();
+    if(deletedCount > 0) {
+        window.markDatasetEdited();
+        await savePendingTagsStore(window.currentImagesHandle);
+        window.showAlert(`Deleted ${deletedCount} files.`, 'success');
+        await window.refreshDataset();
+    }
 }
 
 window.saveActiveSelectedImages = async function(silent = false) {
@@ -851,6 +1391,7 @@ window.saveActiveSelectedImages = async function(silent = false) {
         }
     });
     await Promise.all(promises);
+    if(savedCount > 0) window.markDatasetEdited();
     if(!silent) window.showAlert(`Saved ${savedCount} active files.`);
 }
 
@@ -858,7 +1399,7 @@ window.saveAllImages = async function(silent = false) {
     if (!window.currentImagesHandle && !window.rootHandle || imageFiles.length === 0) return;
     let savedCount = 0;
     const promises = imageFiles.map(async (img) => {
-        if (img.hasFile) {
+        if (img.hasFile && !img.hidden) {
             const formatToUse = img.ext || 'txt';
             const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
             let contentToSave = img.content;
@@ -872,5 +1413,347 @@ window.saveAllImages = async function(silent = false) {
         }
     });
     await Promise.all(promises);
+    if(savedCount > 0) window.markDatasetEdited();
     if(!silent) window.showAlert(`Saved all ${savedCount} modified files in the dataset.`);
 }
+
+/* === USER PRESET TAGS SYSTEM (INDEXEDDB COM DRAG & DROP E MULTI-SELEÇÃO) === */
+const presetDbName = 'PresetTagsDB';
+const presetStoreName = 'presets';
+let presetSelectedTags = new Set();
+let lastSelectedPresetIndex = 0;
+
+window.initPresetDB = function() {
+    return new Promise((res, rej) => {
+        try {
+            const req = indexedDB.open(presetDbName, 1);
+            req.onupgradeneeded = e => {
+                if (!e.target.result.objectStoreNames.contains(presetStoreName)) {
+                    e.target.result.createObjectStore(presetStoreName, { keyPath: 'tag' });
+                }
+            };
+            req.onsuccess = e => res(e.target.result);
+            req.onerror = e => rej(e.target.error);
+        } catch (err) { rej(err); }
+    });
+};
+
+window.getPresetTags = async function() {
+    try {
+        const db = await window.initPresetDB();
+        return new Promise(r => {
+            const tx = db.transaction(presetStoreName, 'readonly');
+            const store = tx.objectStore(presetStoreName);
+            const req = store.getAll();
+            tx.oncomplete = () => r(req.result.map(item => ({ tag: item.tag, category: item.category || 'Uncategorized' })));
+        });
+    } catch (e) { return []; }
+};
+
+window.savePresetTag = async function(tag, category = 'Uncategorized') {
+    if (!tag) return;
+    try {
+        const db = await window.initPresetDB();
+        return new Promise(r => {
+            const tx = db.transaction(presetStoreName, 'readwrite');
+            const req = tx.objectStore(presetStoreName).get(tag);
+            req.onsuccess = () => {
+                const existing = req.result;
+                const finalCat = category !== 'Uncategorized' ? category : (existing ? existing.category || 'Uncategorized' : 'Uncategorized');
+                tx.objectStore(presetStoreName).put({ tag: tag, category: finalCat });
+            };
+            tx.oncomplete = () => { r(); window.renderPresetTags(); };
+        });
+    } catch (e) {}
+};
+
+window.deletePresetTag = async function(tag) {
+    try {
+        const db = await window.initPresetDB();
+        return new Promise(r => {
+            const tx = db.transaction(presetStoreName, 'readwrite');
+            tx.objectStore(presetStoreName).delete(tag);
+            tx.oncomplete = () => { r(); window.renderPresetTags(); };
+        });
+    } catch (e) {}
+};
+
+window.createPresetCategory = function() {
+    const catName = prompt("Name the new category:");
+    if (catName && catName.trim()) {
+        window.savePresetTag(`_sys_cat_${catName.trim()}`, catName.trim());
+    }
+};
+
+window.togglePresetPanel = function() {
+    const panel = document.getElementById('col-presets');
+    const resizer = document.getElementById('resizer-presets');
+    const btn = document.getElementById('btn-toggle-presets');
+    
+    if (panel.style.display === 'none' || panel.style.display === '') {
+        panel.style.display = 'flex';
+        if(resizer) resizer.style.display = 'flex';
+        btn.style.background = '#00aa66';
+        btn.style.color = '#000';
+        window.renderPresetTags();
+    } else {
+        panel.style.display = 'none';
+        if(resizer) resizer.style.display = 'none';
+        btn.style.background = 'transparent';
+        btn.style.color = '#00ff99';
+    }
+
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+};
+
+window.filterPresetTagsByName = function(val) {
+    window.presetTagNameFilter = (val || '').trim().toLowerCase();
+    const container = document.getElementById('preset-tag-list');
+    if (!container) return;
+    container.querySelectorAll('.master-tag-item').forEach(item => {
+        const nameEl = item.querySelector('.tag-name');
+        if (nameEl) {
+            const text = nameEl.textContent.toLowerCase();
+            item.style.display = (!window.presetTagNameFilter || text.includes(window.presetTagNameFilter)) ? 'flex' : 'none';
+        }
+    });
+};
+
+window.updatePresetSelectionActions = function() {
+    const bar = document.getElementById('preset-selection-actions');
+    if (bar) bar.style.display = presetSelectedTags.size > 0 ? 'flex' : 'none';
+};
+
+window.removeSelectedPresetTags = function() {
+    if (presetSelectedTags.size === 0) return;
+    if (confirm(`Remove ${presetSelectedTags.size} tags from presets?`)) {
+        presetSelectedTags.forEach(tag => window.deletePresetTag(tag));
+        presetSelectedTags.clear();
+        window.updatePresetSelectionActions();
+    }
+};
+
+window.addSelectedPresetTagsTo = function(target) {
+    if (presetSelectedTags.size === 0) return;
+    const tagsToAdd = Array.from(presetSelectedTags);
+    const globalExt = document.getElementById('topbar-save-format').value;
+    
+    let targets = [];
+    if (target === 'selected') {
+        targets = Array.from(selectedIndices);
+        if(targets.length === 0) { window.showAlert("No images selected on the left list.", "error"); return; }
+    } else if (target === 'all') {
+        targets = imageFiles.map((_, i) => i).filter(i => !imageFiles[i].hidden);
+    }
+    
+    targets.forEach(idx => {
+        if (imageFiles[idx].type === 'tags' || !imageFiles[idx].hasFile) {
+            let currentTags = imageFiles[idx].content ? imageFiles[idx].content.split(',').map(t=>t.trim()).filter(t=>t) : [];
+            tagsToAdd.forEach(tag => {
+                if (!currentTags.includes(tag)) currentTags.push(tag);
+            });
+            imageFiles[idx].content = currentTags.join(', ');
+            imageFiles[idx].hasFile = true;
+            imageFiles[idx].type = 'tags';
+            if(!imageFiles[idx].ext) imageFiles[idx].ext = globalExt;
+        }
+    });
+    
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    window.showAlert(`Added ${tagsToAdd.length} preset tags to ${targets.length} images.`);
+};
+
+window.renderPresetTags = async function() {
+    const container = document.getElementById('preset-tag-list');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    const items = await window.getPresetTags();
+    
+    const btnContainer = document.createElement('div');
+    btnContainer.innerHTML = `<button onclick="window.createPresetCategory()" style="width: 100%; margin-bottom: 10px; background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c;">➕ New Category</button>`;
+    btnContainer.style.padding = '10px 10px 0 10px';
+    container.appendChild(btnContainer);
+
+    if (items.length === 0) {
+        container.innerHTML += '<div style="padding: 15px; text-align: center; color: #555; font-size: 11px;">No presets saved yet.</div>';
+        return;
+    }
+    
+    const categories = {};
+    items.forEach(item => {
+        if (!categories[item.category]) categories[item.category] = [];
+        categories[item.category].push(item.tag);
+    });
+    
+    let globalIndex = 0;
+    let renderedPresetTags = [];
+    
+    Object.keys(categories).sort().forEach(cat => {
+        const catDiv = document.createElement('div');
+        catDiv.style.marginBottom = '5px';
+        
+        const header = document.createElement('div');
+        header.innerHTML = `<span>📁 ${cat}</span> <span class="toggle-icon" style="font-size:10px;">▼</span>`;
+        header.style.cssText = 'background: #222; padding: 8px 10px; font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; border-top: 1px solid #333; border-bottom: 1px solid #111; color: #aaa; transition: 0.2s;';
+        
+        header.onclick = () => {
+            const list = catDiv.querySelector('.preset-list');
+            const isHidden = list.style.display === 'none';
+            list.style.display = isHidden ? 'block' : 'none';
+            header.querySelector('.toggle-icon').textContent = isHidden ? '▼' : '▶';
+        };
+
+        header.ondragover = (e) => { e.preventDefault(); header.style.background = '#0a3a5c'; header.style.color = '#fff'; };
+        header.ondragleave = (e) => { header.style.background = '#222'; header.style.color = '#aaa'; };
+        header.ondrop = async (e) => {
+            e.preventDefault();
+            header.style.background = '#222';
+            header.style.color = '#aaa';
+            const tagToMove = e.dataTransfer.getData('text/plain');
+            if (tagToMove) {
+                await window.savePresetTag(tagToMove, cat);
+            }
+        };
+
+        catDiv.appendChild(header);
+        
+        const listDiv = document.createElement('div');
+        listDiv.className = 'preset-list';
+        listDiv.style.display = 'block';
+
+        categories[cat].sort().forEach(tag => {
+            if (tag.startsWith('_sys_cat_')) return;
+
+            const currentIndex = globalIndex++;
+            renderedPresetTags.push(tag);
+
+            const item = document.createElement('div');
+            item.className = 'master-tag-item';
+            
+            let isSelected = presetSelectedTags.has(tag);
+            let statusHtml = '';
+            let conflictsForThisTag = [];
+            let similarsForThisTag = [];
+
+            // ALERTA DE CONFLITO/SIMILARIDADE (SE ATIVADO NAS CONFIGURAÇÕES)
+            if (isSelected && window.enableConflictWarnings) {
+                item.classList.add('selected-master');
+                if (typeof window.checkTagStatusWithActive === 'function') {
+                    const status = window.checkTagStatusWithActive(tag);
+                    conflictsForThisTag = status.conflicts;
+                    similarsForThisTag = status.similars;
+
+                    if (conflictsForThisTag.length > 0) {
+                        item.classList.add('conflict');
+                        statusHtml += `<span class="conflict-warning" title="Conflict with: ${conflictsForThisTag.join(', ')}">⚠️ Conflict: ${conflictsForThisTag.join(', ')}</span>`;
+                    } else if (similarsForThisTag.length > 0) {
+                        item.classList.add('similar');
+                        statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${similarsForThisTag.join(', ')}">🟨 Similar: ${similarsForThisTag.join(', ')}</span>`;
+                    }
+                }
+            } else if (isSelected) {
+                item.classList.add('selected-master');
+            }
+
+            item.draggable = true;
+            
+            item.ondragstart = (e) => { 
+                e.dataTransfer.setData('text/plain', tag); 
+                item.style.opacity = '0.4';
+            };
+            item.ondragend = (e) => { 
+                item.style.opacity = '1';
+            };
+            
+            item.innerHTML = `
+                <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
+                    <span class="tag-name" style="color: #00ff99; font-weight: bold;">${tag}</span>
+                    ${statusHtml}
+                </div>
+            `;
+
+            // EFEITO HOVER CONSULTANDO A ACTIVE LIST
+            if (conflictsForThisTag.length > 0) {
+                const warningSpan = item.querySelector('.conflict-warning');
+                if(warningSpan) {
+                    warningSpan.onmouseenter = () => {
+                        conflictsForThisTag.forEach(ct => {
+                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
+                            if (targetRow) targetRow.classList.add('glow-conflict');
+                        });
+                    };
+                    warningSpan.onmouseleave = () => {
+                        conflictsForThisTag.forEach(ct => {
+                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
+                            if (targetRow) targetRow.classList.remove('glow-conflict');
+                        });
+                    };
+                }
+            }
+
+            if (similarsForThisTag.length > 0) {
+                const simSpan = item.querySelector('.similar-warning');
+                if(simSpan) {
+                    simSpan.onmouseenter = () => {
+                        similarsForThisTag.forEach(ct => {
+                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
+                            if (targetRow) targetRow.classList.add('glow-similar');
+                        });
+                    };
+                    simSpan.onmouseleave = () => {
+                        similarsForThisTag.forEach(ct => {
+                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
+                            if (targetRow) targetRow.classList.remove('glow-similar');
+                        });
+                    };
+                }
+            }
+            
+            item.onclick = (e) => {
+                if (e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) return; 
+
+                if (e.shiftKey && presetSelectedTags.size > 0) {
+                    const start = Math.min(lastSelectedPresetIndex, currentIndex), end = Math.max(lastSelectedPresetIndex, currentIndex);
+                    presetSelectedTags.clear(); 
+                    for (let i = start; i <= end; i++) presetSelectedTags.add(renderedPresetTags[i]);
+                } else if (e.ctrlKey || e.metaKey) {
+                    if (presetSelectedTags.has(tag)) presetSelectedTags.delete(tag); else presetSelectedTags.add(tag);
+                    lastSelectedPresetIndex = currentIndex;
+                } else {
+                    if (presetSelectedTags.has(tag) && presetSelectedTags.size === 1) {
+                        presetSelectedTags.clear();
+                    } else {
+                        presetSelectedTags.clear(); presetSelectedTags.add(tag); lastSelectedPresetIndex = currentIndex;
+                    }
+                }
+                window.renderPresetTags(); 
+                window.updatePresetSelectionActions();
+            };
+
+            listDiv.appendChild(item);
+        });
+
+        catDiv.appendChild(listDiv);
+        container.appendChild(catDiv);
+    });
+
+    if (window.presetSearchMode) window.filterPresetTagsByName(document.getElementById('preset-add-input').value);
+};
+
+window.addPresetTagFromInput = function() {
+    const input = document.getElementById('preset-add-input');
+    if(!input) return;
+    const tagString = input.value.trim();
+    
+    if (tagString) {
+        const tags = tagString.split(',').map(t => t.trim()).filter(t => t);
+        tags.forEach(t => window.savePresetTag(t, 'Uncategorized'));
+        input.value = '';
+    }
+};

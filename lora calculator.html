@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoRA Calculator</title>
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='6' width='20' height='20' rx='4' fill='none' stroke='%2300e08a' stroke-width='3'/><line x1='12' y1='16' x2='20' y2='16' stroke='%2300e08a' stroke-width='3'/><line x1='16' y1='12' x2='16' y2='20' stroke='%2300e08a' stroke-width='3'/></svg>">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* ==========================================================
+           TOKENS
+        ========================================================== */
+        :root {
+            --bg-0: #0a0c10;
+            --bg-1: #0e1218;
+            --bg-2: #12161d;
+            --line: #1c212b;
+            --line-soft: #171b23;
+            --text-0: #e8eaed;
+            --text-1: #9aa2ad;
+            --text-2: #5b6472;
+            --manual: #00e08a;
+            --manual-dim: #0a5c40;
+            --warn: #f0b429;
+            --danger: #ff6b6b;
+            --font-ui: 'Inter', Arial, Helvetica, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0; padding: 0; background-color: var(--bg-0); color: var(--text-0);
+            font-family: var(--font-ui); display: flex; flex-direction: column; height: 100vh;
+            overflow: hidden; position: relative;
+        }
+
+        body::before {
+            content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px);
+            background-size: 28px 28px;
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 90%);
+        }
+
+        #topbar, #workspace, #alertBar { position: relative; z-index: 1; }
+
+        /* Aumentado o z-index para 100 para o popout do quick links ficar por cima */
+        #topbar {
+            background: var(--bg-1); padding: 12px 22px; display: flex; justify-content: space-between;
+            align-items: center; border-bottom: 1px solid var(--line); flex-shrink: 0;
+            z-index: 100;
+        }
+        .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+        .topbar-section.left { justify-content: flex-start; }
+        .topbar-section.center { justify-content: center; }
+        .topbar-section.right { justify-content: flex-end; }
+
+        #app-title {
+            font-family: var(--font-mono); font-size: 0.95rem; font-weight: 600; color: var(--text-0);
+            letter-spacing: 0.5px; white-space: nowrap; display: flex; align-items: center; gap: 8px;
+        }
+        #app-title .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--manual); box-shadow: 0 0 8px var(--manual); }
+
+        button, select, input[type="text"] {
+            background: var(--bg-2); color: var(--text-0); border: 1px solid var(--line);
+            padding: 8px 12px; border-radius: 6px; font-family: var(--font-ui); font-size: 12px;
+            font-weight: 600; outline: none; transition: 0.15s ease;
+        }
+        button { cursor: pointer; }
+        button:hover { border-color: var(--manual); color: var(--manual); }
+        select:focus, input:focus { border-color: var(--manual); }
+
+        #calibration-bar {
+            background: var(--bg-1); border-bottom: 1px solid var(--line); padding: 8px 22px;
+            display: flex; align-items: center; gap: 10px; flex-shrink: 0; position: relative; z-index: 1;
+        }
+        .calib-label { font-size: 11.5px; color: var(--text-1); font-weight: 600; white-space: nowrap; }
+        #base-model-select { font-family: var(--font-mono); font-size: 11.5px; padding: 5px 10px; }
+        .calib-note { font-size: 10.5px; color: var(--text-2); }
+
+        /* === MAIN LAYOUT === */
+        #workspace { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 20px; }
+
+        .panel-container {
+            flex: 1; background: var(--bg-1); border: 1px solid var(--line);
+            border-radius: 10px; display: flex; flex-direction: column; overflow: hidden;
+            box-shadow: 0 20px 40px -20px rgba(0,0,0,0.6);
+        }
+        .panel-container.manual { border-top: 2px solid var(--manual-dim); }
+
+        .panel-header {
+            background: var(--bg-2); padding: 13px 18px; font-size: 12px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-1);
+            border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;
+        }
+        .panel-header .title-icon { margin-right: 6px; }
+        .panel-header.manual-h span:first-child { color: var(--manual); }
+
+        .panel-body { padding: 18px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
+
+        /* === COUNTER ROWS === */
+        .counter-row {
+            display: flex; justify-content: space-between; align-items: center; background: var(--bg-2);
+            border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 14px; margin-bottom: 7px;
+            transition: border-color 0.15s ease;
+        }
+        .counter-row:hover { border-color: var(--line); }
+
+        .counter-icon {
+            font-size: 16px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+            background: var(--bg-1); border-radius: 6px; margin-right: 10px; flex-shrink: 0;
+        }
+        .counter-label { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+        .counter-title-row { display: flex; align-items: center; gap: 8px; }
+        .counter-title { font-size: 13px; font-weight: 600; color: var(--text-0); }
+        .weight-tag {
+            font-family: var(--font-mono); font-size: 9.5px; color: var(--text-2); background: var(--bg-1);
+            border: 1px solid var(--line); padding: 1px 5px; border-radius: 4px; flex-shrink: 0;
+        }
+        .counter-desc { font-size: 10.5px; color: var(--text-2); margin-top: 2px; }
+
+        .weight-bar-track {
+            height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; width: 100%;
+        }
+        .weight-bar-fill { height: 100%; width: 0%; border-radius: 2px; transition: width 0.25s ease; }
+        .manual .weight-bar-fill { background: var(--manual); }
+
+        .counter-controls { display: flex; align-items: center; gap: 9px; margin-left: 14px; flex-shrink: 0; }
+        .counter-btn {
+            background: var(--bg-1); color: var(--manual); border: 1px solid var(--line); border-radius: 6px;
+            width: 24px; height: 24px; font-size: 15px; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-family: var(--font-mono);
+        }
+        .counter-btn:hover { border-color: var(--manual); background: rgba(0,224,138,0.08); }
+        .counter-btn.minus { color: var(--danger); }
+        .counter-btn.minus:hover { border-color: var(--danger); background: rgba(255,107,107,0.08); }
+        .counter-value { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--text-0); min-width: 16px; text-align: center; }
+
+        /* === RESULT / GAUGE BOX === */
+        .danbooru-result {
+            background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px;
+            margin-top: auto; text-align: center; display: flex; flex-direction: column; align-items: center; flex-shrink: 0;
+        }
+        .result-title { font-size: 10.5px; color: var(--text-2); text-transform: uppercase; letter-spacing: 1.2px; font-weight: 700; margin-bottom: 6px; }
+        .result-rank { font-family: var(--font-mono); font-size: 40px; font-weight: 700; color: var(--manual); margin: 0; line-height: 1; }
+
+        .result-details { display: flex; justify-content: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .detail-badge { background: var(--bg-1); border: 1px solid var(--line); padding: 5px 10px; border-radius: 6px; font-size: 11px; color: var(--text-1); font-family: var(--font-mono); }
+        .detail-badge span { color: var(--manual); font-weight: 700; }
+
+        /* gauge */
+        .rank-gauge { width: 100%; margin-top: 16px; }
+        .gauge-track { display: flex; gap: 2px; height: 16px; }
+        .gauge-segment { flex: 1; min-width: 0; background: var(--bg-1); border: 1px solid var(--line); border-radius: 2px; transition: background 0.2s ease, box-shadow 0.2s ease; }
+        .gauge-segment.filled.manual-fill { background: var(--manual); border-color: var(--manual); }
+        .gauge-segment.head.manual-fill { box-shadow: 0 0 10px var(--manual); }
+        .gauge-ticks { display: flex; justify-content: space-between; margin-top: 5px; font-family: var(--font-mono); font-size: 8.5px; color: var(--text-2); }
+
+        #alertBar {
+            display: none; padding: 10px 16px; text-align: center; font-size: 12px; font-weight: 600;
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;
+            border-radius: 8px; min-width: 250px; font-family: var(--font-ui);
+        }
+        #alertBar.error { background: #200a0a; border: 1px solid #5c2323; color: var(--danger); display: block; }
+        #alertBar.success { background: #08201a; border: 1px solid var(--manual-dim); color: var(--manual); display: block; }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-0); }
+        ::-webkit-scrollbar-thumb { background: #2a303a; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+<div id="topbar">
+    <div class="topbar-section left"></div>
+    <div class="topbar-section center" id="app-title"><span class="dot"></span>LoRA Calculator</div>
+    <div class="topbar-section right" id="topbar-right"></div>
+</div>
+
+<div id="calibration-bar">
+    <span class="calib-label">🎯 Calibrated for:</span>
+    <select id="base-model-select" onchange="window.onBaseModelChange()" title="Changes both the rank bias and the MB-per-rank size estimate">
+        <option value="anima" selected>Anima (CircleStone Labs)</option>
+        <option value="sd15">Stable Diffusion 1.5</option>
+        <option value="sdxl">SDXL / Pony / Illustrious</option>
+        <option value="flux">FLUX.1</option>
+    </select>
+    <span class="calib-note" id="calib-note">calibrado com dado real: Citron Legacy Trainer (kohya sd-scripts) em rank 32 / alpha 16 = 90 MB — repare que o LoRA oficial da CircleStone (treinado via diffusion-pipe) sai maior no mesmo rank (132 MB), pois mira em mais camadas</span>
+</div>
+
+<div id="workspace">
+    <div class="panel-container manual">
+        <div class="panel-header manual-h">
+            <span class="title-icon">⚙️ Manual Parameters</span>
+        </div>
+        <div class="panel-body">
+
+            <div id="manual-counters" style="margin-bottom: 18px;"></div>
+
+            <div class="danbooru-result">
+                <div class="result-title">Final Manual Rank</div>
+                <div class="result-rank" id="final-rank">8</div>
+
+                <div class="result-details">
+                    <div class="detail-badge">Score: <span id="raw-score">8</span></div>
+                    <div class="detail-badge">Alpha: <span id="final-alpha">4</span></div>
+                    <div class="detail-badge">Size: <span id="final-size">~9 MB</span></div>
+                    <div class="detail-badge">Model: <span id="final-model">Anima</span></div>
+                    <div class="detail-badge">Profile: <span id="final-profile">Balanced</span></div>
+                </div>
+
+                <div class="rank-gauge">
+                    <div class="gauge-track" id="gauge-manual"></div>
+                    <div class="gauge-ticks" id="ticks-manual"></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<div id="alertBar"></div>
+
+<script src="tools/quick_links.js?v=4"></script>
+<script src="tools/lora_calc_core.js"></script>
+
+</body>
+</html>
