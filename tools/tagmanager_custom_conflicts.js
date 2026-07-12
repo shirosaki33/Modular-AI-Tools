@@ -52,10 +52,17 @@ window.tagConflicts = [
     ['on back', 'on stomach', 'on side'],
 
     // DIREÇÃO DO OLHAR (básico, mutuamente exclusivo)
-    ['looking at viewer', 'looking away', 'looking back'],
+    // Nota: 'looking back' NÃO entra aqui — descreve a orientação do corpo/cabeça
+    // (virado de costas, olhando por cima do ombro), não a direção do olhar em si.
+    // É perfeitamente válido combinar 'looking back' + 'looking at viewer' (a pose
+    // clássica de "olhando por cima do ombro para o espectador") ou 'looking back' + 'looking away'.
+    ['looking at viewer', 'looking away'],
 
     // EXPRESSÕES MUTUAMENTE EXCLUSIVAS
-    ['happy', 'sad', 'angry', 'crying', 'expressionless', 'scared', 'surprised', 'shocked', 'bored', 'disgusted']
+    // Nota: 'crying' NÃO entra aqui — é um estado/ação que pode coexistir com várias
+    // expressões (chorar de raiva, de susto, de emoção/felicidade, etc.). A relação dela
+    // com 'sad' fica só como aviso de similaridade (amarelo) mais abaixo.
+    ['happy', 'sad', 'angry', 'expressionless', 'scared', 'surprised', 'shocked', 'bored', 'disgusted']
 ];
 
 

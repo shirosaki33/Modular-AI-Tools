@@ -4,7 +4,26 @@
 ========================================================================= */
 
 window.showGhostTagsInList = false;
-window.hiddenImagesStore = new Set(); 
+
+/* Hidden-images state is scoped PER FOLDER (keyed by that folder's directory handle),
+   instead of a single global set keyed only by the image's base filename.
+   Previously, hiding an image in one dataset would also hide any image with the same
+   base filename in a different dataset/subfolder (very common with numbered filenames
+   like "0001.png"), and calling "Unhide All" while inside one folder wiped hidden state
+   that belonged to a different folder entirely — which is why unhide could appear to
+   "not bring images back". Each folder now gets its own independent hidden-images Set. */
+window._hiddenImagesStoreMap = new Map();
+window._defaultHiddenSet = new Set();
+function getHiddenSetForHandle(handle) {
+    if (!handle) return window._defaultHiddenSet;
+    if (!window._hiddenImagesStoreMap.has(handle)) window._hiddenImagesStoreMap.set(handle, new Set());
+    return window._hiddenImagesStoreMap.get(handle);
+}
+Object.defineProperty(window, 'hiddenImagesStore', {
+    get() { return getHiddenSetForHandle(window.currentImagesHandle); },
+    configurable: true
+});
+
 window.sortedActiveTags = window.sortedActiveTags || []; // Previne erros globais
 
 window.rootHandle = null;
@@ -36,7 +55,7 @@ window.presetSearchMode = true;
 window.imageFilterMode = 'ALL'; // ALL, TAGS, NL
 window.cycleImageFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
-    const labels = { 'ALL': '🎨 All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
+    const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
     let idx = states.indexOf(window.imageFilterMode);
     idx = (idx + 1) % states.length;
     window.imageFilterMode = states[idx];
@@ -927,21 +946,26 @@ window.updateTagsDatalist = function() {
 /* === IMAGE HIDING SYSTEM === */
 window.hideSelectedImages = function() {
     if (selectedIndices.size === 0) return;
+
+    let hiddenCount = 0;
     selectedIndices.forEach(idx => {
-        imageFiles[idx].hidden = true;
-        window.hiddenImagesStore.add(imageFiles[idx].baseName); 
-        if (imageFiles[idx].element) {
-            imageFiles[idx].element.classList.remove('selected');
+        const img = imageFiles[idx];
+        if (!img.hidden) {
+            img.hidden = true;
+            window.hiddenImagesStore.add(img.baseName);
+            if (img.element) img.element.classList.remove('selected');
+            hiddenCount++;
         }
     });
-    selectedIndices.clear();
-    
+
     window.updateUnhideButton();
     window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
     window.updateListSelectionVisuals();
+
+    window.showAlert(`Hid ${hiddenCount} image(s). Use 👁️‍🗨️ Unhide to restore.`, "success");
 };
 
 window.unhideAllImages = function() {
@@ -955,6 +979,14 @@ window.unhideAllImages = function() {
         window.renderImageList();
         if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
         if (typeof window.applyFilters === 'function') window.applyFilters();
+        window.updateListSelectionVisuals();
+
+        // If hiding earlier left nothing selected, the selection-actions toolbar (and its icons)
+        // stayed invisible even after unhiding. Auto-select the first image so it reappears
+        // immediately instead of requiring a manual refresh.
+        if (selectedIndices.size === 0 && imageFiles.length > 0) {
+            window.handleListClick(0, false, false);
+        }
     }
 };
 
@@ -1248,7 +1280,11 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
         if (selectedIndices.has(index)) selectedIndices.delete(index); else selectedIndices.add(index);
         lastSelectedIndex = index;
     } else {
-        selectedIndices.clear(); selectedIndices.add(index); lastSelectedIndex = index;
+        if (selectedIndices.has(index) && selectedIndices.size === 1) {
+            selectedIndices.clear();
+        } else {
+            selectedIndices.clear(); selectedIndices.add(index); lastSelectedIndex = index;
+        }
     }
     activeSelectedTags.clear(); 
     window.updateListSelectionVisuals(); 

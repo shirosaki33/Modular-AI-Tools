@@ -279,12 +279,12 @@
                 </div>
                 
                 <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
-                    <button class="btn-save-local" id="btn-img-filter-sel" style="background:#151515; border-color:#555; color:#aaa; padding: 2px 6px; font-size: 14px;" onclick="window.cycleImageFilter()" title="Filter Images by Type">🎨 All</button>
-                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
                     <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
                     <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
+                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
                     <button class="btn-save-local" style="background:#2a0000; border-color:#aa0000; color:#ff6060; padding: 2px 6px; font-size: 14px;" onclick="window.deleteSelectedImages()" title="Delete Selected">🗑️</button>
+                    <button class="btn-save-local" id="btn-img-filter-sel" style="background:#151515; border-color:#555; color:#aaa; padding: 2px 6px; font-size: 14px;" onclick="window.cycleImageFilter()" title="Filter Images by Type">🏷️ All</button>
                 </div>
             </div>
             
@@ -387,7 +387,6 @@
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('selected')">➕ Add</button>
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('all')">➕ Add to All</button>
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('master')">🔄 Replace</button>
-                <button class="btn-multi btn-nl-edit" onclick="window.openNLEditTag('master')">📝 NL Edit</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedMasterTags()">🗑️ Remove</button>
             </div>
             
