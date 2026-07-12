@@ -5,6 +5,22 @@
 
 const style = document.createElement('style');
 style.innerHTML = `
+	.btn-nl-edit { background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; }
+    .btn-nl-edit:hover { background: #00aa66; color: #000; }
+
+    .tag-nl-edit-box { display: flex; flex-direction: column; gap: 8px; padding: 10px 15px; background: #0d0d0d; border-bottom: 1px solid #222; border-left: 3px solid #00aa66; }
+    .tag-nl-edit-textarea { width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical; font-size: var(--editor-font-size); line-height: 1.5; padding: 10px; background: #111; color: #eee; border: 1px solid #00aa66; border-radius: 6px; font-family: inherit; }
+
+    /* Full-panel takeover mode: pins the NL edit box to the top and fills the whole Active Tags area,
+       mirroring the look of the old native NL editor. */
+    .tag-nl-edit-box.tag-nl-edit-fullscreen { flex: 1; height: 100%; padding: 15px; border-left: none; background: #0d0d0d; }
+    .tag-nl-edit-box.tag-nl-edit-fullscreen .tag-nl-edit-textarea { flex: 1; min-height: 200px; resize: none; }
+    .tag-nl-edit-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .btn-nl-edit-save { background: #00aa66; color: #000; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
+    .btn-nl-edit-save:hover { background: #00ff99; }
+    .btn-nl-edit-cancel { background: transparent; color: #aaa; border: 1px solid #444; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
+    .btn-nl-edit-cancel:hover { background: #333; color: #fff; }
+
     .db-autocomplete { position: absolute; bottom: 100%; top: auto; left: 0; background: #111; border: 1px solid #333; z-index: 100; border-radius: 6px 6px 0 0; max-height: 200px; overflow-y: auto; width: 100%; box-shadow: 0 -4px 12px rgba(0,0,0,0.8); margin-bottom: 4px; }
     .db-sugg-item { padding: 8px 10px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
     .db-sugg-item:hover { background: #222; }
@@ -120,6 +136,118 @@ window.checkTagStatusWithActive = function(tag) {
     };
 };
 
+/* === NL EDIT INLINE PARA TAGS (Active / Master) === */
+window.nlEditTarget = null; // { scope: 'active'|'master', tag: string }
+
+window.openNLEditTag = function(scope) {
+    let targetTag = '';
+    if (scope === 'active' && activeSelectedTags.size > 0) targetTag = Array.from(activeSelectedTags)[0];
+    else if (scope === 'master' && masterSelectedTags.size > 0) targetTag = Array.from(masterSelectedTags)[0];
+
+    if (!targetTag) { window.showAlert("Select a tag first!", "warn"); return; }
+
+    window.nlEditTarget = { scope, tag: targetTag };
+    if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
+    if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+};
+
+function buildNLEditBox(tag, scope) {
+    const isCustomNL = tag.startsWith('NL:');
+    const rawText = isCustomNL ? tag.replace('NL:', '').replace(/，/g, ',') : tag.replace(/，/g, ',');
+
+    const box = document.createElement('div');
+    box.className = 'tag-nl-edit-box';
+    box.innerHTML = `
+        <textarea class="tag-nl-edit-textarea" placeholder="Escreva o texto para esta tag..."></textarea>
+        <div style="display:flex; gap:8px; margin-top: 8px; margin-bottom: 8px;">
+            <button class="btn-nl-edit-translate" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:bold;" onclick="window.translateCustomNLEdit(this, 'en')">🌐 Translate (EN)</button>
+            <button class="btn-nl-edit-gemini" style="background:#2f1a5c; color:#b890ff; border:1px solid #4a2a8c; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer; font-weight:bold;" onclick="window.geminiCustomNLEdit(this, 'en-US')">✨ Gemini Fix</button>
+        </div>
+        <div class="tag-nl-edit-actions">
+            <button class="btn-nl-edit-cancel">✖ Cancel</button>
+            <button class="btn-nl-edit-save">💾 Save</button>
+        </div>
+    `;
+    const textarea = box.querySelector('.tag-nl-edit-textarea');
+    textarea.value = rawText;
+
+    box.querySelector('.btn-nl-edit-save').onclick = (e) => {
+        e.stopPropagation();
+        window.confirmNLEditTag(scope, tag, textarea.value);
+    };
+    box.querySelector('.btn-nl-edit-cancel').onclick = (e) => {
+        e.stopPropagation();
+        window.nlEditTarget = null;
+        if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
+        if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+    };
+    return box;
+}
+
+window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
+    let newText = (newTextRaw || '').trim();
+    window.nlEditTarget = null;
+
+    if (!newText) {
+        if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
+        if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+        return;
+    }
+
+    // ESCAPA vírgulas reais para não quebrar o parser de tags (split por ',')
+    const isCustomNL = oldTag.startsWith('NL:');
+    if (isCustomNL) {
+        newText = 'NL:' + newText.replace(/,/g, '，');
+    } else {
+        newText = newText.replace(/,/g, '，');
+    }
+
+    if (newText === oldTag) {
+        if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
+        if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+        return;
+    }
+
+    let replacedCount = 0;
+    let indicesToProcess = scope === 'active' ? Array.from(selectedIndices) : imageFiles.map((_, i) => i);
+    let modifiedFiles = [];
+
+    for (const idx of indicesToProcess) {
+        const img = imageFiles[idx];
+        if (img.hidden) continue;
+        if (img.type === 'tags' && img.content) {
+            let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+            if (tags.includes(oldTag)) {
+                tags = tags.map(t => t === oldTag ? newText : t);
+                img.content = tags.join(', ');
+                img.hasFile = true;
+                modifiedFiles.push(img);
+                replacedCount++;
+            }
+        }
+    }
+
+    masterTagSet.clear();
+    imageFiles.forEach(img => {
+        if (img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if (t.trim()) masterTagSet.add(t.trim()); });
+    });
+    window.updateTagsDatalist();
+
+    if (scope === 'active') activeSelectedTags.delete(oldTag);
+    if (scope === 'master') masterSelectedTags.delete(oldTag);
+
+    window.showAlert(`Tag atualizada com texto NL em ${replacedCount} imagens!`, "success");
+
+    window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+
+    const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
+
+    await Promise.all(savePromises);
+    if (replacedCount > 0) window.markDatasetEdited();
+};
 
 /* === GERENCIADOR GERAL DO PAINEL CENTRAL === */
 window.showOnlyActiveGhosts = false;
@@ -134,9 +262,22 @@ window.toggleActiveGhostFilter = function() {
     renderEditor();
 }
 
+window.activeTagFilterMode = 'ALL';
+window.cycleActiveTagFilter = function() {
+    const states = ['ALL', 'TAGS', 'NL'];
+    const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
+    let idx = states.indexOf(window.activeTagFilterMode);
+    idx = (idx + 1) % states.length;
+    window.activeTagFilterMode = states[idx];
+    
+    const btn = document.getElementById('btn-active-tag-filter');
+    if (btn) btn.textContent = labels[window.activeTagFilterMode];
+    
+    renderEditor();
+};
+
 function renderEditor() {
     const topbarSelectFormat = document.getElementById('topbar-save-format');
-    const topbarSelectType = document.getElementById('topbar-system-type');
     const colTools = document.getElementById('col-tools');
     const colPresets = document.getElementById('col-presets');
     
@@ -144,7 +285,7 @@ function renderEditor() {
     
     if (selectedIndices.size === 0) {
         window.sortedActiveTags = []; 
-        topbarSelectFormat.style.display = 'none'; topbarSelectType.style.display = 'none';
+        topbarSelectFormat.style.display = 'none';
         colTools.style.display = 'flex';
         if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
         return;
@@ -153,57 +294,31 @@ function renderEditor() {
     const imgObj = imageFiles[Array.from(selectedIndices)[0]];
     if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
 
-    topbarSelectType.value = imgObj.type || 'tags';
     topbarSelectFormat.value = imgObj.ext || 'txt';
 
     let isAnyEmpty = false;
     selectedIndices.forEach(idx => { if (!imageFiles[idx].hasFile) isAnyEmpty = true; });
     
-    const typeToggle = document.getElementById('toggle-type-select');
     const formatToggle = document.getElementById('toggle-format-select');
 
     if (isAnyEmpty) {
-        if(typeToggle) typeToggle.checked = true;
         if(formatToggle) formatToggle.checked = true;
-        topbarSelectType.style.display = 'inline-block';
         topbarSelectFormat.style.display = 'inline-block';
     } else {
-        topbarSelectType.style.display = (typeToggle && typeToggle.checked) ? 'inline-block' : 'none';
         topbarSelectFormat.style.display = (formatToggle && formatToggle.checked) ? 'inline-block' : 'none';
     }
 
     const badge = document.getElementById('editor-type-badge');
     const tagsContainer = document.getElementById('tags-editor-container');
-    const nlContainer = document.getElementById('nl-editor-container');
     const activeAddContainer = document.getElementById('active-add-container');
     const activeActions = document.getElementById('active-selection-actions');
 
-    if (imgObj.type === 'nl') {
-        badge.textContent = 'Natural Language'; 
-        tagsContainer.style.display = 'none'; 
-        activeAddContainer.style.display = 'none'; 
-        activeActions.style.display = 'none'; 
-        
-        colTools.style.display = 'none'; 
-        if(colPresets) {
-            colPresets.style.display = 'none';
-            const btn = document.getElementById('btn-toggle-presets');
-            if(btn) { btn.style.background = 'transparent'; btn.style.color = '#00ff99'; }
-        }
-        
-        nlContainer.style.display = 'flex';
-        
-        if (typeof window.renderNLEditor === 'function') window.renderNLEditor(imgObj);
-        return;
-    } 
-    
+    // Native NL mode has been removed: every image is now edited through the unified
+    // (hybrid) comma-tags editor. Free-text captions live inline as "NL:" tags.
     badge.textContent = 'Comma Tags'; 
-    nlContainer.style.display = 'none'; 
     tagsContainer.style.display = 'flex'; 
-    activeAddContainer.style.display = 'flex'; 
     
     colTools.style.display = 'flex'; 
-    activeActions.style.display = activeSelectedTags.size > 0 ? 'flex' : 'none';
     
     const tagListVertical = document.getElementById('tag-list-vertical');
     tagListVertical.innerHTML = '';
@@ -220,6 +335,20 @@ function renderEditor() {
     
     window.sortedActiveTags = Array.from(fusedTags); 
     sortedActiveTags = window.sortedActiveTags;
+
+    // NL EDIT MODE (ACTIVE): instead of an inline box under the tag, the editor takes over
+    // the whole Active Tags panel — pinned to the top, filling all available space.
+    if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
+        activeAddContainer.style.display = 'none';
+        activeActions.style.display = 'none';
+        const box = buildNLEditBox(window.nlEditTarget.tag, 'active');
+        box.classList.add('tag-nl-edit-fullscreen');
+        tagListVertical.appendChild(box);
+        return;
+    }
+
+    activeAddContainer.style.display = 'flex'; 
+    activeActions.style.display = activeSelectedTags.size > 0 ? 'flex' : 'none';
     
     let favTags = new Set(datasetConfig.favoriteTags || []);
     const isMultiSelected = activeSelectedTags.size > 1; 
@@ -228,29 +357,35 @@ function renderEditor() {
     if (!window.showOnlyActiveGhosts) {
         sortedActiveTags.forEach((tag, i) => {
             const isFav = favTags.has(tag);
+            const isCustomNL = tag.startsWith('NL:');
             
-            // VERIFICAÇÃO DE STATUS (Vermelho ou Amarelo)
+            // Verificação do Filtro no Active Tag (All / Tags / NL)
+            if (window.activeTagFilterMode === 'TAGS' && isCustomNL) return;
+            if (window.activeTagFilterMode === 'NL' && !isCustomNL) return;
+            
             let conflictsForThisTag = [];
             let similarsForThisTag = [];
             const tagLower = tag.toLowerCase();
 
-            (window.tagConflicts || []).forEach(group => {
-                const groupLower = group.map(g => g.toLowerCase());
-                if (groupLower.includes(tagLower)) {
-                    let activeInGroup = groupLower.filter(t => sortedActiveTags.some(at => at.toLowerCase() === t));
-                    let others = activeInGroup.filter(t => t !== tagLower);
-                    if (others.length > 0) conflictsForThisTag.push(...others);
-                }
-            });
+            if (window.enableConflictWarnings) {
+                (window.tagConflicts || []).forEach(group => {
+                    const groupLower = group.map(g => g.toLowerCase());
+                    if (groupLower.includes(tagLower)) {
+                        let activeInGroup = groupLower.filter(t => sortedActiveTags.some(at => at.toLowerCase() === t));
+                        let others = activeInGroup.filter(t => t !== tagLower);
+                        if (others.length > 0) conflictsForThisTag.push(...others);
+                    }
+                });
 
-            (window.tagSimilar || []).forEach(group => {
-                const groupLower = group.map(g => g.toLowerCase());
-                if (groupLower.includes(tagLower)) {
-                    let activeInGroup = groupLower.filter(t => sortedActiveTags.some(at => at.toLowerCase() === t));
-                    let others = activeInGroup.filter(t => t !== tagLower);
-                    if (others.length > 0) similarsForThisTag.push(...others);
-                }
-            });
+                (window.tagSimilar || []).forEach(group => {
+                    const groupLower = group.map(g => g.toLowerCase());
+                    if (groupLower.includes(tagLower)) {
+                        let activeInGroup = groupLower.filter(t => sortedActiveTags.some(at => at.toLowerCase() === t));
+                        let others = activeInGroup.filter(t => t !== tagLower);
+                        if (others.length > 0) similarsForThisTag.push(...others);
+                    }
+                });
+            }
 
             conflictsForThisTag = [...new Set(conflictsForThisTag)];
             similarsForThisTag = [...new Set(similarsForThisTag)];
@@ -261,7 +396,6 @@ function renderEditor() {
             
             if (activeSelectedTags.has(tag)) row.classList.add('selected-active');
             
-            // PRIORIDADE PARA O VERMELHO (CONFLITO GRAVE) - O AMARELO NÃO PINTA A LINHA PARA EVITAR POLUIÇÃO VISUAL
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
             
             let statusHtml = '';
@@ -272,17 +406,64 @@ function renderEditor() {
                 statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${similarsForThisTag.join(', ')}">🟨 Similar: ${similarsForThisTag.join(', ')}</span>`;
             }
             
+            const displayTag = isCustomNL ? tag.replace('NL:', '').replace(/，/g, ', ') : tag;
+            const textColor = isCustomNL ? '#b890ff' : '#ddd';
+
+            const pencilIcon = isCustomNL ? `<span class="tag-edit-nl" style="margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Edit Tag Text">✏️</span>` : '';
+            const starIcon = !isCustomNL ? `<span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>` : '';
+            const presetIcon = !isCustomNL ? `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>` : '';
+
             row.innerHTML = `<div class="tag-row-left">
-                <span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>
-                <span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>
-                <span class="tag-name">${tag}</span>
+                ${starIcon}
+                ${presetIcon}
+                ${pencilIcon}
+                <span class="tag-name" style="color: ${textColor};">${displayTag}</span>
                 ${statusHtml}
             </div><span class="tag-remove" title="Remove Tag">&times;</span>`;
+
+            if (isCustomNL) {
+                const pencilEl = row.querySelector('.tag-edit-nl');
+                if (pencilEl) {
+                    pencilEl.onclick = (e) => {
+                        e.stopPropagation();
+                        window.nlEditTarget = { scope: 'active', tag: tag };
+                        renderEditor();
+                    };
+                }
+            }
+            
+            if (!isCustomNL) {
+                const starEl = row.querySelector('.tag-star');
+                starEl.onclick = async (e) => {
+                    e.stopPropagation();
+                    const currentlyFav = favTags.has(tag);
+                    if (currentlyFav) favTags.delete(tag); else favTags.add(tag);
+                    
+                    datasetConfig.favoriteTags = Array.from(favTags);
+                    if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+                    
+                    starEl.textContent = currentlyFav ? '☆' : '⭐';
+                    starEl.style.color = currentlyFav ? '#444' : '#00ff99';
+                    
+                    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+                };
+
+                const presetBtn = row.querySelector('.tag-save-preset');
+                if (presetBtn) {
+                    presetBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        if(typeof window.savePresetTag === 'function') {
+                            window.savePresetTag(tag);
+                            window.showAlert(`Tag "${tag}" saved to Presets!`, 'success');
+                        }
+                    };
+                }
+            }
             
             if (!isMultiSelected && !isMultiImageSelection) {
                 row.draggable = true;
                 row.ondragstart = (e) => { 
-                    if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) return false;
+                    if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl')) return false;
                     e.dataTransfer.setData('text/plain', i); draggedTagIndex = i; row.classList.add('dragging'); 
                 };
                 row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; };
@@ -327,34 +508,8 @@ function renderEditor() {
                 }
             }
 
-            const starEl = row.querySelector('.tag-star');
-            starEl.onclick = async (e) => {
-                e.stopPropagation();
-                const currentlyFav = favTags.has(tag);
-                if (currentlyFav) favTags.delete(tag); else favTags.add(tag);
-                
-                datasetConfig.favoriteTags = Array.from(favTags);
-                if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
-                
-                starEl.textContent = currentlyFav ? '☆' : '⭐';
-                starEl.style.color = currentlyFav ? '#444' : '#00ff99';
-                
-                if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-            };
-
-            const presetBtn = row.querySelector('.tag-save-preset');
-            if (presetBtn) {
-                presetBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    if(typeof window.savePresetTag === 'function') {
-                        window.savePresetTag(tag);
-                        window.showAlert(`Tag "${tag}" saved to Presets!`, 'success');
-                    }
-                };
-            }
-
             row.onclick = (e) => {
-                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl')) { 
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); removeTagFromSelected(tag); }
                     return; 
                 }
@@ -394,10 +549,12 @@ function renderEditor() {
         tagListVertical.appendChild(label);
 
         Array.from(fusedPending).sort().forEach(tag => {
+            const isCustomNL = tag.startsWith('NL:');
+            const displayTag = isCustomNL ? tag.replace('NL:', '').replace(/，/g, ', ') : tag;
             const row = document.createElement('div');
             row.className = 'tag-row ghost';
             row.innerHTML = `<div class="tag-row-left">
-                <span class="tag-name">${tag}</span>
+                <span class="tag-name"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${displayTag}</span>
             </div><span class="tag-ghost-accept" title="Accept suggestion">✓</span>`;
             row.querySelector('.tag-ghost-accept').onclick = (e) => {
                 e.stopPropagation();
@@ -405,6 +562,18 @@ function renderEditor() {
             };
             tagListVertical.appendChild(row);
         });
+    }
+
+    const replaceBtn = document.querySelector('#active-selection-actions .btn-replace');
+    if (replaceBtn) {
+        const hasCustom = Array.from(activeSelectedTags).some(t => t.startsWith('NL:'));
+        replaceBtn.style.display = hasCustom ? 'none' : 'block';
+    }
+    
+    const convertBtn = document.querySelector('#active-selection-actions .btn-nl-edit');
+    if (convertBtn) {
+        const allNL = activeSelectedTags.size > 0 && Array.from(activeSelectedTags).every(t => t.startsWith('NL:'));
+        convertBtn.style.display = allNL ? 'none' : 'block';
     }
 }
 
@@ -479,6 +648,7 @@ function removeTagFromSelected(tagToRemove) {
     selectedIndices.forEach(idx => {
         if (imageFiles[idx].type === 'tags') imageFiles[idx].content = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t && t !== tagToRemove).join(', ');
     });
+    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
@@ -497,6 +667,7 @@ function removeSelectedActiveTags() {
             imageFiles[idx].content = currentTags.join(', ');
         }
     });
+    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
     activeSelectedTags.clear();
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
@@ -518,6 +689,7 @@ function addTagToSelected(newTag, position = 'bottom') {
             if(!imageFiles[idx].ext) imageFiles[idx].ext = document.getElementById('topbar-save-format').value;
         }
     });
+    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
     masterTagSet.add(tag); 
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
@@ -528,8 +700,23 @@ function addTagToSelected(newTag, position = 'bottom') {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
 
+window.addEmptyNLTag = function() {
+    if (selectedIndices.size === 0) return;
+    const pos = document.getElementById('active-add-pos') ? document.getElementById('active-add-pos').value : 'bottom';
+    const newTag = 'NL:New NL Text';
+    addTagToSelected(newTag, pos);
+
+    setTimeout(() => {
+        activeSelectedTags.clear();
+        activeSelectedTags.add(newTag);
+        window.nlEditTarget = { scope: 'active', tag: newTag };
+        renderEditor();
+    }, 50);
+};
+
 function addTagToAllImages(newTag, position = 'bottom') {
     const tag = newTag.trim(); if(!tag) return;
+    const affected = [];
     imageFiles.forEach(img => {
         if (img.hidden) return;
         if (img.type === 'tags' || !img.hasFile) {
@@ -539,8 +726,10 @@ function addTagToAllImages(newTag, position = 'bottom') {
             img.hasFile = true;
             img.type = 'tags';
             if(!img.ext) img.ext = document.getElementById('topbar-save-format').value;
+            affected.push(img);
         }
     });
+    window.markDirty(affected);
     masterTagSet.add(tag);
 
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
@@ -559,13 +748,29 @@ function reorderTags(fromIndex, toIndex) {
             imageFiles[idx].content = tags.join(', ');
         }
     });
+    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
     renderEditor();
 }
 
 function inlineAdd(source) {
     const input = document.getElementById(`${source}-add-input`);
     const pos = document.getElementById(`${source}-add-pos`).value;
-    const tagsToAdd = input.value.split(',').map(t => t.trim()).filter(t => t);
+    const rawText = input.value.trim();
+    if(!rawText) return;
+
+    let tagsToAdd = [];
+
+    // Conta o número de palavras (separando por espaços)
+    const wordCount = rawText.split(/\s+/).length;
+
+    // FILTRO INTELIGENTE DIRETO: Tem vírgula ou mais de 4 palavras? Vira NL automático.
+    if (rawText.includes(',') || wordCount > 4) {
+        tagsToAdd.push('NL:' + rawText.replace(/,/g, '，'));
+    } else {
+        // Não tem vírgula e é curto? É uma tag padrão isolada.
+        tagsToAdd.push(rawText);
+    }
+
     if(tagsToAdd.length === 0) return;
 
     if (source === 'master') {
@@ -619,6 +824,8 @@ function renderMasterTagList() {
     
     if (!window.showGhostTagsInList) {
         sortedMasterTags.forEach((tag, index) => {
+            if (tag.startsWith('NL:')) return; // OCULTA AS TAGS NL
+            
             const count = tagCounts.get(tag) || 0;
             if (count === 0) return;
             
@@ -635,7 +842,7 @@ function renderMasterTagList() {
             // ALERTA DE CONFLITO/SIMILARIDADE (CONSULTANDO A ACTIVE IMAGE)
             if (isSelected) {
                 item.classList.add('selected-master');
-                if (typeof window.checkTagStatusWithActive === 'function') {
+                if (window.enableConflictWarnings && typeof window.checkTagStatusWithActive === 'function') {
                     const status = window.checkTagStatusWithActive(tag);
                     conflictsForThisTag = status.conflicts;
                     similarsForThisTag = status.similars;
@@ -753,6 +960,10 @@ function renderMasterTagList() {
                 renderMasterTagList(); applyFilters(); updateSelectionActions();
             };
             container.appendChild(item);
+
+            if (window.nlEditTarget && window.nlEditTarget.scope === 'master' && window.nlEditTarget.tag === tag) {
+                container.appendChild(buildNLEditBox(tag, 'master'));
+            }
         });
     }
 
@@ -773,6 +984,8 @@ function renderMasterTagList() {
         container.appendChild(label);
 
         sortedGhostTags.forEach((tag, gIndex) => {
+            if (tag.startsWith('NL:')) return; // NL captions are per-image; accept them from the Active Image panel instead
+
             const count = pendingCounts.get(tag);
             const item = document.createElement('div');
             item.className = 'master-tag-item ghost';
@@ -818,6 +1031,7 @@ function renderMasterTagList() {
 function acceptGhostTagGlobal(tag) {
     const globalExt = document.getElementById('topbar-save-format').value;
     let count = 0;
+    const affected = [];
     imageFiles.forEach(img => {
         if (img.hidden) return;
         if (img.pendingAdd && img.pendingAdd.includes(tag)) {
@@ -833,10 +1047,12 @@ function acceptGhostTagGlobal(tag) {
                 img.hasFile = true;
                 img.type = 'tags';
                 if (!img.ext) img.ext = globalExt;
+                affected.push(img);
                 count++;
             }
         }
     });
+    window.markDirty(affected);
     masterTagSet.add(tag);
     masterSelectedGhostTags.delete(tag);
 
@@ -853,22 +1069,6 @@ function acceptGhostTagGlobal(tag) {
     showAlert(`Tag "${tag}" accepted on ${count} images. Press Ctrl+S to save to disk.`, 'success');
 }
 
-function setLogic(mode) {
-    const btn = document.getElementById('btn-logic-' + mode);
-    if (btn && btn.classList.contains('active')) {
-        btn.classList.remove('active');
-        window.filterMode = 'NONE';
-    } else {
-        document.querySelectorAll('.logic-btn').forEach(b => b.classList.remove('active'));
-        if(btn) btn.classList.add('active');
-        window.filterMode = mode;
-    }
-
-    if (typeof window.applyFilters === 'function') {
-        window.applyFilters();
-    }
-}
-
 function applyFilters() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
     imageFiles.forEach(img => {
@@ -880,6 +1080,22 @@ function applyFilters() {
         let visible = true;
         const totalSelected = masterSelectedTags.size + masterSelectedGhostTags.size;
         
+        // NOVO: Image Type Filter
+        if (window.imageFilterMode !== 'ALL') {
+            let hasTag = false;
+            let hasNL = false;
+            if (img.type === 'nl') {
+                hasNL = true;
+            } else if (img.type === 'tags' && img.content) {
+                const tags = img.content.split(',').map(t=>t.trim()).filter(t=>t);
+                hasNL = tags.some(t => t.startsWith('NL:'));
+                hasTag = tags.some(t => !t.startsWith('NL:'));
+            }
+
+            if (window.imageFilterMode === 'TAGS' && !hasTag) visible = false;
+            if (window.imageFilterMode === 'NL' && !hasNL) visible = false;
+        }
+
         if (visible && totalSelected > 0) {
             if (img.type === 'tags') {
                 const tags = img.content.split(',').map(t => t.trim());
@@ -939,6 +1155,7 @@ function addSelectedMasterTagsTo(target) {
             if(!imageFiles[idx].ext) imageFiles[idx].ext = globalExt;
         }
     });
+    window.markDirty(targets.map(idx => imageFiles[idx]));
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
@@ -952,6 +1169,7 @@ function addSelectedMasterTagsTo(target) {
 function globalRemoveTags(tagsToRemove) {
     if(!tagsToRemove || tagsToRemove.length === 0) return;
     let changed = 0;
+    const affected = [];
     
     imageFiles.forEach(img => {
         if (img.hidden) return;
@@ -959,9 +1177,10 @@ function globalRemoveTags(tagsToRemove) {
             let currentTags = img.content.split(',').map(t => t.trim()).filter(t => t);
             let originalLen = currentTags.length;
             currentTags = currentTags.filter(t => !tagsToRemove.includes(t));
-            if(currentTags.length !== originalLen) { img.content = currentTags.join(', '); changed++; }
+            if(currentTags.length !== originalLen) { img.content = currentTags.join(', '); affected.push(img); changed++; }
         }
     });
+    window.markDirty(affected);
     
     tagsToRemove.forEach(t => { masterTagSet.delete(t); masterSelectedTags.delete(t); });
     
@@ -1000,3 +1219,85 @@ window.addEventListener('DOMContentLoaded', () => {
         observer.observe(container, { childList: true });
     }
 });
+
+/* === CUSTOM/NL CONVERSION AND TRANSLATION === */
+window.convertToCustomNL = async function() {
+    if (activeSelectedTags.size === 0) return;
+    let changedCount = 0;
+    let modifiedFiles = [];
+    const tagsToConvert = Array.from(activeSelectedTags);
+    
+    selectedIndices.forEach(idx => {
+        const img = imageFiles[idx];
+        if (img.hidden) return;
+        if (img.type === 'tags' && img.content) {
+            let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+            let imgChanged = false;
+            tags = tags.map(t => {
+                if (tagsToConvert.includes(t) && !t.startsWith('NL:')) {
+                    imgChanged = true;
+                    return 'NL:' + t.replace(/,/g, '，');
+                }
+                return t;
+            });
+            if (imgChanged) {
+                img.content = tags.join(', ');
+                img.hasFile = true;
+                modifiedFiles.push(img);
+                changedCount++;
+            }
+        }
+    });
+
+    if (changedCount > 0) {
+        masterTagSet.clear();
+        imageFiles.forEach(img => {
+            if (img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if (t.trim()) masterTagSet.add(t.trim()); });
+        });
+        
+        activeSelectedTags.clear();
+        tagsToConvert.forEach(t => activeSelectedTags.add('NL:' + t.replace(/,/g, '，')));
+
+        if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+        if (typeof window.renderImageList === 'function') window.renderImageList();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        
+        const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
+        
+        await Promise.all(savePromises);
+        window.markDatasetEdited();
+        if (window.showAlert) window.showAlert(`Convertido para NL em ${changedCount} imagens!`, "success");
+    }
+};
+
+window.translateCustomNLEdit = async function(btn, targetLang) {
+    const box = btn.closest('.tag-nl-edit-box');
+    const ta = box.querySelector('.tag-nl-edit-textarea');
+    const originalText = ta.value.trim();
+    if(!originalText) return;
+    const backup = ta.value;
+    ta.value = "🌐 Translating...";
+    try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(originalText)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        let translated = "";
+        if(data && data[0]) { data[0].forEach(part => { if(part[0]) translated += part[0]; }); }
+        ta.value = translated;
+    } catch(e) { 
+        ta.value = backup; 
+        if (window.showAlert) window.showAlert("Error translating.", "error"); 
+    }
+};
+
+window.geminiCustomNLEdit = function(btn, targetLang) {
+    const box = btn.closest('.tag-nl-edit-box');
+    const ta = box.querySelector('.tag-nl-edit-textarea');
+    const originalText = ta.value.trim();
+    if(!originalText) return;
+    ta.value = "✨ Processing in Gemini...";
+    setTimeout(() => {
+        ta.value = originalText + ` (Simulated Gemini Fix)`;
+    }, 1000);
+};

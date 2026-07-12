@@ -56,6 +56,8 @@ async function getTaggersHandle() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+    if (typeof window.updateVlmPromptDefault === 'function') window.updateVlmPromptDefault();
+
     let savedHandle = await getTaggersHandle();
     if (savedHandle) {
         try {
@@ -185,6 +187,7 @@ window.updateVlmPromptDefault = function() {
     if (!select || !promptBox) return;
 
     const isFlorence = select.value.toLowerCase().includes('florence');
+    const isJoy = select.value.toLowerCase().includes('joycaption');
     const currentVal = promptBox.value.trim();
 
     if (KNOWN_VLM_DEFAULT_PROMPTS.includes(currentVal)) {
@@ -194,16 +197,25 @@ window.updateVlmPromptDefault = function() {
     if (help) {
         help.textContent = isFlorence
             ? 'Florence-2 task tokens: <CAPTION>, <DETAILED_CAPTION>, <MORE_DETAILED_CAPTION>, <OCR>.'
-            : 'SmolVLM: escreva a instrução em linguagem natural (ex: "Describe this image in detail.").';
+            : 'SmolVLM/JoyCaption: escreva a instrução em linguagem natural (ex: "Describe this image in detail.").';
     }
+
+    // JoyCaption runs via local Ollama — it never downloads/caches anything in the browser,
+    // so the browser-cache warning and "Clear Model Cache" button don't apply to it.
+    const downloadWarning = document.getElementById('vlm-download-warning');
+    const clearCacheContainer = document.getElementById('vlm-clear-cache-container');
+    const ollamaInfo = document.getElementById('vlm-ollama-info');
+    if (downloadWarning) downloadWarning.style.display = isJoy ? 'none' : 'block';
+    if (clearCacheContainer) clearCacheContainer.style.display = isJoy ? 'none' : 'block';
+    if (ollamaInfo) ollamaInfo.style.display = isJoy ? 'block' : 'none';
 }
 
 window.clearVlmModelCache = async function() {
     if (!('caches' in window)) {
-        if(window.showAlert) window.showAlert("Cache API não suportada neste navegador.", "error");
+        if(window.showAlert) window.showAlert("Cache API is not supported in this browser.", "error");
         return;
     }
-    if (!confirm("Isso vai apagar do navegador os arquivos do modelo VLM já baixados (ex: Florence-2, ~300MB). Ele será baixado novamente na próxima vez que você rodar o batch. Deseja continuar?")) return;
+    if (!confirm("This will delete the already-downloaded VLM model files from your browser (e.g. Florence-2, ~300MB). It will be downloaded again the next time you run the batch. Continue?")) return;
 
     try {
         const deleted = await caches.delete('transformers-cache');
@@ -211,11 +223,11 @@ window.clearVlmModelCache = async function() {
         currentVlmSession = null;
 
         if(window.showAlert) {
-            window.showAlert(deleted ? "Cache do modelo limpo com sucesso!" : "Nenhum cache encontrado (já estava limpo).", "success");
+            window.showAlert(deleted ? "Model cache cleared successfully!" : "No cache found (already clean).", "success");
         }
     } catch (e) {
         console.error(e);
-        if(window.showAlert) window.showAlert("Erro ao limpar o cache. Veja o console.", "error");
+        if(window.showAlert) window.showAlert("Error clearing the cache. Check the console.", "error");
     }
 }
 
@@ -223,10 +235,9 @@ window.generateEmptyFiles = async function() {
     const { handle: targetHandle, files: targetFiles } = getTargetEnv();
     if (!targetFiles || !targetHandle) return;
     
-    // NOVO SISTEMA DE SEGURANÇA E TRAVA CONTRA CONFLITOS DE ARQUIVOS EXISTENTES
     const folderAlreadyHasCaptions = targetFiles.some(img => img.hasFile);
     if (folderAlreadyHasCaptions) {
-        if (!confirm("⚠️ ATENÇÃO: Esta pasta já contém arquivos de legenda (.txt ou .json). Criar novos arquivos ausentes pode misturar os formatos do seu dataset atual. Tem certeza de que deseja continuar o escaneamento e criar os arquivos vazios que faltam?")) {
+        if (!confirm("⚠️ WARNING: This folder already contains caption files (.txt or .json). Creating new missing files may mix formats within your current dataset. Are you sure you want to continue scanning and create the missing empty files?")) {
             return;
         }
     }
@@ -243,26 +254,16 @@ window.generateEmptyFiles = async function() {
     
     for (const img of targetFiles) {
         if (!img.hasFile) {
-            const baseName = img.baseName || img.name.substring(0, img.name.lastIndexOf('.'));
-            const fileName = format === 'json' ? baseName + '.json' : baseName + '.txt';
-            const contentStr = format === 'json' ? '{\n  "tags": ""\n}' : '';
-            
-            const actualHandle = img.parentDirHandle || targetHandle;
-            
-            const fileHandle = await actualHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            const blob = new Blob([contentStr], { type: "text/plain;charset=utf-8" });
-            await writable.write(blob);
-            await writable.close();
-            
-            img.hasFile = true;
+            img.baseName = img.baseName || img.name.substring(0, img.name.lastIndexOf('.'));
+            img.parentDirHandle = img.parentDirHandle || targetHandle;
             img.content = "";
             img.type = 'tags';
-            img.ext = format; 
-            created++;
+            img.ext = format;
 
-            if (typeof currentJsonFiles !== 'undefined' && format === 'json') {
-                currentJsonFiles.add(fileName);
+            const ok = await window.saveImageToDisk(img);
+            if (ok) {
+                img.hasFile = true;
+                created++;
             }
         }
     }
@@ -347,7 +348,7 @@ window.startBatchTagging = async function() {
     }
     
     const reviewModeToggleEl = document.getElementById('review-mode-toggle');
-    const reviewModeActive = !!(mode === 'tags' && reviewModeToggleEl && reviewModeToggleEl.checked);
+    const reviewModeActive = !!(reviewModeToggleEl && reviewModeToggleEl.checked);
 
     window.isBatchCancelled = false;
     const btn = document.getElementById('btn-start-batch'); btn.disabled = true;
@@ -370,7 +371,6 @@ window.startBatchTagging = async function() {
             const prefix = document.getElementById('prefix').value.trim();
             const excludeStr = document.getElementById('exclude') ? document.getElementById('exclude').value.trim() : '';
             const excludeArray = excludeStr.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
-            const reviewMode = reviewModeActive;
 
             const select = document.getElementById('model-select');
             const selectedModelObj = availableModelsObjects[select.value];
@@ -413,7 +413,7 @@ window.startBatchTagging = async function() {
                 }
 
                 const imgObj = targetFiles[idx];
-                if (imgObj.hidden) continue; // Evita alterar fotos marcadas em Hide
+                if (imgObj.hidden) continue;
                 const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
                 
                 const canvas = await preprocessImage(imgObj.url);
@@ -449,7 +449,7 @@ window.startBatchTagging = async function() {
                     finalTags = [...prefixArray, ...finalTags.filter(t => !prefixArray.includes(t))];
                 }
                 
-                if (reviewMode) {
+                if (reviewModeActive) {
                     const existingTags = (imgObj.content || '').split(',').map(t => t.trim()).filter(t => t);
                     const existingSet = new Set(existingTags);
                     imgObj.pendingAdd = finalTags.filter(t => !existingSet.has(t));
@@ -473,19 +473,11 @@ window.startBatchTagging = async function() {
                 imgObj.type = 'tags';
                 imgObj.hasFile = true;
                 imgObj.ext = format; 
+                imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
                 
-                const fileName = format === 'json' ? baseName + '.json' : baseName + '.txt';
-                const contentStr = format === 'json' ? JSON.stringify({ tags: finalContent }, null, 2) : finalContent;
-                
-                const actualHandle = imgObj.parentDirHandle || targetHandle;
-                const fileHandle = await actualHandle.getFileHandle(fileName, { create: true });
-                const writable = await fileHandle.createWritable();
-                const blob = new Blob([contentStr], { type: "text/plain;charset=utf-8" });
-                await writable.write(blob);
-                await writable.close();
+                await window.saveImageToDisk(imgObj);
                 
                 if(window.masterTagSet) finalTags.forEach(t => masterTagSet.add(t));
-                if(typeof currentJsonFiles !== 'undefined' && format === 'json') currentJsonFiles.add(fileName);
                 
                 processed++;
                 progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
@@ -500,16 +492,17 @@ window.startBatchTagging = async function() {
             const modelIdLower = vlmModelId.toLowerCase();
             const isFlorence = modelIdLower.includes('florence');
             const isSmolVLM = modelIdLower.includes('smolvlm');
+            const isJoyAPI = modelIdLower.includes('joycaption');
             let processed = 0;
 
-            if (!isFlorence && !isSmolVLM) {
-                if(window.showAlert) window.showAlert("Este modelo VLM ainda não está implementado nesta versão.", "error");
+            if (!isFlorence && !isSmolVLM && !isJoyAPI) {
+                if(window.showAlert) window.showAlert("This VLM model is not yet implemented in this version.", "error");
                 throw new Error("Selected VLM is not yet implemented.");
             }
 
             const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
 
-            if (!florencePipeline || currentVlmSession !== vlmModelId) {
+            if (!isJoyAPI && (!florencePipeline || currentVlmSession !== vlmModelId)) {
                 if(window.showAlert) window.showAlert(`Loading ${vlmModelId.split('/').pop()}... First run requires a download.`, "info");
 
                 const importedModule = await import(TRANSFORMERS_CDN);
@@ -540,17 +533,17 @@ window.startBatchTagging = async function() {
                 try {
                     florencePipeline = await loadModel(deviceTarget);
                     currentVlmSession = vlmModelId;
-                    if(window.showAlert) window.showAlert(`${vlmModelId.split('/').pop()} carregado com sucesso!`, "success");
+                    if(window.showAlert) window.showAlert(`${vlmModelId.split('/').pop()} loaded successfully!`, "success");
                 } catch(e) {
                     if (deviceTarget === 'webgpu') {
                         console.warn("WebGPU failed with default config, trying again without graph optimization:", e);
                         try {
                             florencePipeline = await loadModel('webgpu', { graphOptimizationLevel: 'disabled' });
                             currentVlmSession = vlmModelId;
-                            if(window.showAlert) window.showAlert("Modelo carregado na GPU (sem otimização de grafo)!", "success");
+                            if(window.showAlert) window.showAlert("Model loaded on GPU (without graph optimization)!", "success");
                         } catch (e2) {
-                            console.error("WebGPU falhou mesmo sem otimização de grafo, caindo para CPU WASM:", e2);
-                            if(window.showAlert) window.showAlert("WebGPU incompatível com este modelo. Usando CPU WASM.", "warn");
+                            console.error("WebGPU failed even without graph optimization, falling back to CPU WASM:", e2);
+                            if(window.showAlert) window.showAlert("WebGPU is incompatible with this model. Using CPU WASM.", "warn");
                             florencePipeline = await loadModel('wasm');
                             currentVlmSession = vlmModelId;
                         }
@@ -560,7 +553,12 @@ window.startBatchTagging = async function() {
                 }
             }
 
-            const { load_image } = await import(TRANSFORMERS_CDN);
+            // O carregamento do load_image só é necessário se não for API
+            let load_image = null;
+            if (!isJoyAPI) {
+                const module = await import(TRANSFORMERS_CDN);
+                load_image = module.load_image;
+            }
 
             for (let idx = 0; idx < targetFiles.length; idx++) {
                 if (window.isBatchCancelled) {
@@ -569,7 +567,7 @@ window.startBatchTagging = async function() {
                 }
 
                 const imgObj = targetFiles[idx];
-                if (imgObj.hidden) continue; // Ignora fotos em Hide
+                if (imgObj.hidden) continue;
                 const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
                 let finalContent = "";
 
@@ -585,12 +583,18 @@ window.startBatchTagging = async function() {
 
                     const generatedText = florencePipeline.processor.batch_decode(generated_ids, { skip_special_tokens: false })[0];
                     const parsed = florencePipeline.processor.post_process_generation(generatedText, promptPrefix, image.size);
-                    finalContent = parsed[promptPrefix] || "";
+                    finalContent = parsed[promptPrefix];
 
-                    if (typeof finalContent === 'string' && finalContent.startsWith(promptPrefix)) {
-                        finalContent = finalContent.replace(promptPrefix, '').trim();
+                    if (typeof finalContent === 'string') {
+                        if (finalContent.startsWith(promptPrefix)) {
+                            finalContent = finalContent.replace(promptPrefix, '').trim();
+                        }
+                        finalContent = finalContent.trim();
+                    } else {
+                        // Tasks like <OD> / <DENSE_REGION_CAPTION> return structured data (bboxes + labels),
+                        // not plain text — not supported as a caption/tag in this version.
+                        finalContent = "Error: this Florence-2 task returns structured data (not text) and is not supported.";
                     }
-                    finalContent = (finalContent || "").trim();
 
                 } else if (isSmolVLM) {
                     const instruction = promptPrefix.startsWith('<') ? 'Describe this image in detail.' : promptPrefix;
@@ -609,29 +613,83 @@ window.startBatchTagging = async function() {
                         { skip_special_tokens: true }
                     );
                     finalContent = (generated_texts[0] || "").trim();
+                    
+                } else if (isJoyAPI) {
+                    try {
+                        const response = await fetch(imgObj.url);
+                        const blob = await response.blob();
+                        const base64 = await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                            reader.readAsDataURL(blob);
+                        });
+
+                        // Calls the local Ollama API on port 11434
+                        const apiRes = await fetch('http://127.0.0.1:11434/api/generate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                model: "user-v4/joycaption-beta",
+                                prompt: promptPrefix,
+                                images: [base64],
+                                stream: false,
+                                options: { temperature: 0.1 }
+                            })
+                        });
+                        
+                        if (!apiRes.ok) throw new Error("Ollama did not respond correctly.");
+                        const data = await apiRes.json();
+                        finalContent = data.response ? data.response.trim() : ""; 
+                    } catch (err) {
+                        console.error("Error in JoyCaption via Ollama:", err);
+                        finalContent = "Error in JoyCaption. Check that Ollama is running and the model has been downloaded.";
+                    }
                 }
 
+                // GHOST MODE PARA LINGUAGEM NATURAL E VLM
+                if (reviewModeActive) {
+                    if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
+                    // Escapa vírgulas reais para não quebrar o parser de tags (split por ',')
+                    // e envolve em "NL:" para que, ao ser aceita, vire uma tag híbrida de linguagem natural.
+                    const nlSuggestion = 'NL:' + finalContent.replace(/,/g, '，');
+                    const existingTagsList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()) : [];
+                    
+                    if (!existingTagsList.includes(nlSuggestion) && !imgObj.pendingAdd.includes(nlSuggestion) && !finalContent.includes("Erro")) {
+                        imgObj.pendingAdd.push(nlSuggestion);
+                        if (typeof pendingTagsStore !== 'undefined') {
+                            pendingTagsStore[baseName] = imgObj.pendingAdd;
+                        }
+                    }
+                    
+                    processed++;
+                    progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
+                    progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
+                    continue;
+                }
+
+                // LÓGICA DE SALVAMENTO DIRETO (Modo Híbrido)
+                // O caption gerado pelo VLM vira uma tag "NL:" dentro do sistema unificado de tags.
+                let existingTags = imgObj.content ? imgObj.content.trim() : "";
+
+                if (!finalContent.includes("Erro")) {
+                    const nlTag = 'NL:' + finalContent.replace(/,/g, '，');
+                    finalContent = existingTags ? `${nlTag}, ${existingTags}` : nlTag;
+                }
+
+                imgObj.type = 'tags';
                 imgObj.content = finalContent;
-                imgObj.type = 'nl';
                 imgObj.hasFile = true;
                 imgObj.ext = format;
+                imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
 
-                const fileName = format === 'json' ? baseName + '.json' : baseName + '.txt';
-                const contentStr = format === 'json' ? JSON.stringify({ caption: finalContent }, null, 2) : finalContent;
-                
-                const actualHandle = imgObj.parentDirHandle || targetHandle;
-                const fileHandle = await actualHandle.getFileHandle(fileName, { create: true });
-                const writable = await fileHandle.createWritable();
-                const blob = new Blob([contentStr], { type: "text/plain;charset=utf-8" });
-                await writable.write(blob);
-                await writable.close();
-
-                if(typeof currentJsonFiles !== 'undefined' && format === 'json') currentJsonFiles.add(fileName);
+                await window.saveImageToDisk(imgObj);
 
                 processed++;
                 progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
                 progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
             }
+
+            if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle);
         }
         
         if (!window.isBatchCancelled && !reviewModeActive) {

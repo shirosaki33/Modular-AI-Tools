@@ -14,7 +14,6 @@
     <script src="tools/tagmanager_custom_conflicts.js"></script>
     <script src="tools/tagmanager_batch_tagger.js"></script>
     <script src="tools/tagmanager_caption_tag.js"></script>
-    <script src="tools/tagmanager_nl_editor.js"></script>
 
     <style>
         :root {
@@ -110,8 +109,6 @@
         .list-item.is-nl .list-item-status { color: #b890ff; }
 
         #editor-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        #nl-editor-container { display: none; flex: 1; flex-direction: column; padding: 15px; }
-        #nl-textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none; font-size: var(--editor-font-size); line-height: 1.5; padding: 1em; background: #0d0d0d; border-radius: 8px;}
         #tags-editor-container { display: flex; flex: 1; flex-direction: column; background: #111; overflow: hidden; }
         #tag-list-vertical { flex: 1; overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 20px;}
         
@@ -207,7 +204,7 @@
         </select>
         
         <button id="btn-refresh" onclick="window.refreshDataset()" style="display:none; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c;" title="Refresh Folder">🔄</button>
-        <button id="btn-remove" onclick="window.removeDirectory()" style="display:none; background: #4a1118; color: #ffb6c0; border-color: #7a222c;" title="Remove from saved list">Remove</button>
+        <button id="btn-remove" onclick="window.removeDirectory()" style="display:none; background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c;" title="Remove from saved list">Remove</button>
     </div>
     
     <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
@@ -217,10 +214,6 @@
     </div>
     
     <div class="topbar-section right" id="topbar-right">
-        <select id="topbar-system-type" style="margin-right: 5px; width: 90px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()">
-            <option value="tags">🏷️ Tags</option>
-            <option value="nl">📝 NL</option>
-        </select>
         <select id="topbar-save-format" style="margin-right: 15px; width: 80px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()">
             <option value="txt">.txt</option>
             <option value="json">.json</option>
@@ -239,7 +232,7 @@
 
 <div id="settings-dropdown" class="settings-dropdown">
     <label><input type="checkbox" id="toggle-last-edited" onchange="window.toggleLastEdited()" checked> Show Last Edited Time</label>
-    <label><input type="checkbox" id="toggle-type-select" onchange="window.toggleTypeSelect()"> Show Type Selector (Tag/NL)</label>
+    <label><input type="checkbox" id="toggle-unsaved-alert" onchange="window.toggleUnsavedAlert()" checked> Show Unsaved Changes Alert</label>
     <label><input type="checkbox" id="toggle-format-select" onchange="window.toggleFormatSelect()"> Show Format Selector (.txt/.json)</label>
     <label><input type="checkbox" id="toggle-conflict-warnings" onchange="window.toggleConflictWarnings()" checked> Enable Tag Conflict Warnings</label>
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
@@ -273,6 +266,8 @@
     </div>
 </div>
 
+<div id="unsaved-changes-alert" style="display:none; margin: 12px 20px 0 20px; padding: 10px 14px; border-left: 3px solid #ffd040; border-right: 3px solid #ffd040; background: #101723; color: #f5f5f5; border-radius: 7px; font-size: 13.5px; line-height: 1.45; text-align: center; box-sizing: border-box; flex-shrink: 0;"></div>
+
 <div id="workspace">
     <div id="view-editor" class="view-layer active">
         
@@ -284,9 +279,10 @@
                 </div>
                 
                 <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
+                    <button class="btn-save-local" id="btn-img-filter-sel" style="background:#151515; border-color:#555; color:#aaa; padding: 2px 6px; font-size: 14px;" onclick="window.cycleImageFilter()" title="Filter Images by Type">🎨 All</button>
+                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
                     <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
                     <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
-                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
                     <button class="btn-save-local" style="background:#2a0000; border-color:#aa0000; color:#ff6060; padding: 2px 6px; font-size: 14px;" onclick="window.deleteSelectedImages()" title="Delete Selected">🗑️</button>
                 </div>
@@ -316,24 +312,26 @@
                     <button id="btn-filter-active-ghosts" class="btn-save-local" onclick="window.toggleActiveGhostFilter()" style="display:none; background:transparent; border: 1px solid #00aa66; color:#00ff99;" title="Show Only Ghost Tags">💡</button>
                     <button id="btn-discard-active-suggestions" class="btn-save-local" onclick="window.discardActiveSuggestions()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;" title="Discard pending ghost tag suggestions for the selected image(s)">🗑️</button>
                     <button id="btn-save-active" class="btn-save-local" onclick="window.saveActiveSelectedImages()" style="display:none;">💾 Save Selected</button>
+                    <button id="btn-active-tag-filter" class="btn-save-local" onclick="window.cycleActiveTagFilter()" style="background:#151515; border-color:#555; color:#aaa; display:none; margin-left: 5px;" title="Filter Tags by Type">🏷️ All</button>
                 </div>
             </div>
             <div id="active-selection-actions" class="selection-actions">
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('active')">🔄 Replace</button>
+                <button class="btn-multi btn-nl-edit" onclick="window.convertToCustomNL()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">🪄 Convert to NL</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedActiveTags()">🗑️ Remove Selected</button>
                 <button class="btn-multi" style="background: #333; color: #aaa; border-color: #444;" onclick="clearActiveSelection()">Cancel</button>
             </div>
 
             <div id="editor-content">
                 <div id="tags-editor-container"><div id="tag-list-vertical"></div></div>
-                <div id="nl-editor-container"><textarea id="nl-textarea" placeholder="Type natural language caption here..."></textarea></div>
             </div>
 
             <div class="inline-add-box" id="active-add-container">
                 <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="active-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)">                
+                <input type="text" id="active-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">                
                 <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
 				<select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+                <button class="btn-inline-add" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff;" onclick="window.addEmptyNLTag()" title="Create Empty NL Tag">📝 Add NL</button>
             </div>
         </div>
 
@@ -389,6 +387,7 @@
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('selected')">➕ Add</button>
                 <button class="btn-multi btn-add-all" onclick="addSelectedMasterTagsTo('all')">➕ Add to All</button>
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('master')">🔄 Replace</button>
+                <button class="btn-multi btn-nl-edit" onclick="window.openNLEditTag('master')">📝 NL Edit</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedMasterTags()">🗑️ Remove</button>
             </div>
             
@@ -396,7 +395,7 @@
             
             <div class="inline-add-box">
                 <button id="btn-master-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('master')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="master-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)">                
+                <input type="text" id="master-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('master'); }">                
                 <button class="btn-inline-add" onclick="inlineAdd('master')">Add</button>
 				<select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
             </div>
@@ -451,14 +450,10 @@
                 <label class="meta-label">Exclude Tags (Comma separated)</label>
                 <input type="text" id="exclude" placeholder="Ex: simple background, white background" style="width: 100%;">
             </div>
-            <div style="display:flex; align-items:center; gap:10px; background:#0d1f13; border:1px solid #1a5c3a; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
-                <input type="checkbox" id="review-mode-toggle" style="width:auto; margin:0;">
-                <label for="review-mode-toggle" style="font-size:12px; color:#66ffaa; font-weight:bold; cursor:pointer; user-select:none;">💡 Review Mode — only suggest new tags (ghost), don't overwrite or save to disk</label>
-            </div>
         </div>
 
         <div id="batch-vlm-settings" style="display: none;">
-            <div style="background: #1a1500; border: 1px solid #aa8800; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #ffcc66; font-size: 12px; line-height: 1.5;">
+            <div id="vlm-download-warning" style="background: #1a1500; border: 1px solid #aa8800; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #ffcc66; font-size: 12px; line-height: 1.5;">
                 <b>⚠️ Offline Model Download:</b> Upon running for the first time, it will automatically download the selected Vision Model to your browser's internal cache.
                 <div id="vlm-dl-container" style="display:none; margin-top: 10px;">
                     <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:bold;">
@@ -469,25 +464,35 @@
                     </div>
                 </div>
             </div>
+            <div id="vlm-ollama-info" style="display:none; background: #001a2a; border: 1px solid #0066aa; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #66ccff; font-size: 12px; line-height: 1.5;">
+                <b>ℹ️ Runs via local Ollama:</b> JoyCaption does not download anything to the browser. It requires <a href="https://ollama.com" target="_blank" style="color:#9ecfff;">Ollama</a> running locally with the <code>user-v4/joycaption-beta</code> model already pulled (<code>ollama pull user-v4/joycaption-beta</code>), listening on <code>http://127.0.0.1:11434</code>.
+            </div>
             <div style="margin-bottom: 15px;">
                 <label class="meta-label">Select Vision Language Model (VLM)</label>
                 <select id="vlm-model-select" onchange="window.updateVlmPromptDefault()" style="width: 100%; box-sizing: border-box;">
                     <option value="HuggingFaceTB/SmolVLM-256M-Instruct">SmolVLM 256M Instruct (~200MB) - Fast, great with GPU (WebGPU)</option>
                     <option value="HuggingFaceTB/SmolVLM-500M-Instruct">SmolVLM 500M Instruct (~450MB) - Better quality, GPU (WebGPU)</option>
                     <option value="onnx-community/Florence-2-base-ft">Florence-2 Base FT (~300MB) - Excellent for Captioning, unstable WebGPU</option>
+                    <option value="api/joycaption">JoyCaption Beta (Via Ollama Local) - Best for Concept Art</option>
                 </select>
             </div>
-            <div style="margin-bottom: 15px;">
+            <div id="vlm-clear-cache-container" style="margin-bottom: 15px;">
                 <button type="button" onclick="window.clearVlmModelCache()" style="width: 100%; background: #2a1a00; color: #ffcc66; border: 1px solid #aa6600;" title="Deletes the downloaded model from the browser cache">🧹 Clear Model Cache (VLM)</button>
             </div>
             <div style="margin-bottom: 15px;">
                 <label class="meta-label">Task Prompt (Model Input)</label>
                 <textarea id="batch-vlm-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
-                <span id="vlm-prompt-help" style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
+                <span id="vlm-prompt-help" style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM/JoyCaption: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
             </div>
         </div>
 
         <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0 20px 0;">
+        
+        <div style="display:flex; align-items:center; gap:10px; background:#0d1f13; border:1px solid #1a5c3a; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
+            <input type="checkbox" id="review-mode-toggle" style="width:auto; margin:0;">
+            <label for="review-mode-toggle" style="font-size:12px; color:#66ffaa; font-weight:bold; cursor:pointer; user-select:none;">💡 Review Mode — only suggest text/tags (ghost), don't overwrite or save to disk</label>
+        </div>
+
         <div style="margin-bottom: 15px;">
             <label class="meta-label">Batch Save Format</label>
             <select id="save-format" style="width: 100%; box-sizing: border-box;">
@@ -538,12 +543,13 @@
                 <li style="margin-bottom: 8px;">In the "Auto Captioner" tab, click <b>"📁 Set Directory"</b> and select that folder.</li>
             </ol>
             <h4 style="color: #b890ff; margin-bottom: 5px; margin-top: 15px;">Natural Language (Offline VLMs)</h4>
-            <p style="margin-top: 0; margin-bottom: 10px;">Generates natural English descriptions directly in your browser without requiring external APIs or Python installation:</p>
+            <p style="margin-top: 0; margin-bottom: 10px;">Generates natural English descriptions. SmolVLM and Florence-2 run fully offline inside your browser; JoyCaption runs via a local Ollama server instead:</p>
             <ul style="padding-left: 20px; margin-bottom: 15px;">
                 <li style="margin-bottom: 8px;"><b>SmolVLM (recommended for GPU):</b> lightweight Hugging Face model, with stable WebGPU support. Use natural language instructions in the prompt field.</li>
                 <li style="margin-bottom: 8px;"><b>Florence-2:</b> great for captions, but WebGPU support may be unstable depending on driver/browser (in that case, falls back to CPU automatically).</li>
-                <li style="margin-bottom: 8px;"><b>100% Offline:</b> The model is downloaded directly from HuggingFace into your browser cache on the first run.</li>
-                <li style="margin-bottom: 8px;"><b>WebGPU Accelerated:</b> Utilizes your graphics card for rapid processing. If unavailable, it falls back to Local CPU WASM.</li>
+                <li style="margin-bottom: 8px;"><b>100% Offline (SmolVLM/Florence-2):</b> the model is downloaded directly from HuggingFace into your browser cache on the first run.</li>
+                <li style="margin-bottom: 8px;"><b>WebGPU Accelerated (SmolVLM/Florence-2):</b> utilizes your graphics card for rapid processing. If unavailable, it falls back to Local CPU WASM.</li>
+                <li style="margin-bottom: 8px;"><b>JoyCaption Beta (via local Ollama):</b> best for concept art, but doesn't run in the browser — it sends each image to <a href="https://ollama.com" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 Ollama</a> running on your machine. Setup: install Ollama, run <code>ollama pull user-v4/joycaption-beta</code>, and leave Ollama running (listening on <code>http://127.0.0.1:11434</code>) before starting the batch. Nothing is downloaded/cached by the browser for this model, so the "Clear Model Cache" button doesn't apply to it.</li>
             </ul>
             
             <h4 style="color: #ff6060; margin-bottom: 5px; margin-top: 15px;">⚠️ Performance & Execution Mode</h4>

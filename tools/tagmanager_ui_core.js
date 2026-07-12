@@ -33,6 +33,20 @@ window.activeSearchMode = true;
 window.masterSearchMode = true;
 window.presetSearchMode = true;
 
+window.imageFilterMode = 'ALL'; // ALL, TAGS, NL
+window.cycleImageFilter = function() {
+    const states = ['ALL', 'TAGS', 'NL'];
+    const labels = { 'ALL': '🎨 All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
+    let idx = states.indexOf(window.imageFilterMode);
+    idx = (idx + 1) % states.length;
+    window.imageFilterMode = states[idx];
+    
+    const btn1 = document.getElementById('btn-img-filter-sel');
+    if (btn1) btn1.textContent = labels[window.imageFilterMode];
+
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+};
+
 window.toggleSearchMode = function(context) {
     if (context === 'active') {
         window.activeSearchMode = !window.activeSearchMode;
@@ -152,7 +166,7 @@ window.getSetting = async function(id, defaultValue) {
 window.loadSettings = async function() {
     // 1. Carrega Toggle Checkboxes
     const lastEdited = await window.getSetting('toggle-last-edited', true);
-    const typeSelect = await window.getSetting('toggle-type-select', false);
+    const unsavedAlert = await window.getSetting('toggle-unsaved-alert', true);
     const formatSelect = await window.getSetting('toggle-format-select', false);
     const conflictWarn = await window.getSetting('toggle-conflict-warnings', true);
     const helpBtn = await window.getSetting('toggle-help-btn', true);
@@ -168,7 +182,7 @@ window.loadSettings = async function() {
 
     // Aplica Checkboxes
     if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
-    if (document.getElementById('toggle-type-select')) document.getElementById('toggle-type-select').checked = typeSelect;
+    if (document.getElementById('toggle-unsaved-alert')) document.getElementById('toggle-unsaved-alert').checked = unsavedAlert;
     if (document.getElementById('toggle-format-select')) document.getElementById('toggle-format-select').checked = formatSelect;
     if (document.getElementById('toggle-conflict-warnings')) document.getElementById('toggle-conflict-warnings').checked = conflictWarn;
     if (document.getElementById('toggle-help-btn')) document.getElementById('toggle-help-btn').checked = helpBtn;
@@ -190,9 +204,10 @@ window.loadSettings = async function() {
     // Dispara as funções visuais silenciosamente
     window.enableConflictWarnings = conflictWarn;
     window.toggleLastEdited(true);
-    window.toggleTypeSelect(true);
+    window.unsavedAlertEnabled = unsavedAlert;
     window.toggleFormatSelect(true);
     window.toggleHelpBtn(true);
+    if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 };
 
 /* === ON LOAD === */
@@ -320,10 +335,69 @@ function setupResizers() {
 /* === MODALS, UI TOGGLES E LAST EDITED TIME === */
 window.toggleSettings = () => document.getElementById('settings-dropdown').classList.toggle('open');
 
-window.toggleTypeSelect = (skipSave = false) => {
-    const isChecked = document.getElementById('toggle-type-select').checked;
-    document.getElementById('topbar-system-type').style.display = isChecked ? 'inline-block' : 'none';
-    if (!skipSave) window.saveSetting('toggle-type-select', isChecked);
+window.unsavedAlertEnabled = true;
+window.toggleUnsavedAlert = (skipSave = false) => {
+    const checkbox = document.getElementById('toggle-unsaved-alert');
+    if (checkbox) {
+        window.unsavedAlertEnabled = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-unsaved-alert', checkbox.checked);
+    }
+    if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
+};
+
+/* === UNSAVED CHANGES TRACKING ===
+   Marks images as dirty whenever their content is modified without being written to disk yet,
+   and drives the yellow "Changes without saving files (N)" banner above the 3 main panels. */
+window.markDirty = function(imgs) {
+    const arr = Array.isArray(imgs) ? imgs : [imgs];
+    let changed = false;
+    arr.forEach(img => { if (img && !img.dirty) { img.dirty = true; changed = true; } });
+    if (changed) window.updateUnsavedChangesUI();
+};
+
+window.markClean = function(imgs) {
+    const arr = Array.isArray(imgs) ? imgs : [imgs];
+    let changed = false;
+    arr.forEach(img => { if (img && img.dirty) { img.dirty = false; changed = true; } });
+    if (changed) window.updateUnsavedChangesUI();
+};
+
+window.updateUnsavedChangesUI = function() {
+    const bar = document.getElementById('unsaved-changes-alert');
+    if (!bar) return;
+    const hasUnsaved = (typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty && !img.hidden);
+    if (!window.unsavedAlertEnabled || !hasUnsaved) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = 'block';
+    bar.innerHTML = `<span style="color:#ffd040;margin:0 6px;font-size:14px;line-height:1;">⚠️</span> You have unsaved changes — remember to save <span style="color:#ffd040;margin:0 6px;font-size:14px;line-height:1;">⚠️</span>`;
+};
+
+/* === SHARED FILE WRITE UTILITY ===
+   Single place that actually writes an image's tag/caption content to disk (.txt or .json),
+   used by every feature that saves (replace tag, NL edit, convert to NL, save selected/all, batch tagger). */
+window.saveImageToDisk = async function(img) {
+    if (!img || !img.parentDirHandle) return false;
+    try {
+        const formatToUse = img.ext || 'txt';
+        const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
+        const contentToSave = formatToUse === 'json'
+            ? JSON.stringify({ tags: img.content }, null, 2)
+            : img.content;
+
+        const fileHandle = await img.parentDirHandle.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(contentToSave);
+        await writable.close();
+
+        if (typeof currentJsonFiles !== 'undefined' && formatToUse === 'json') currentJsonFiles.add(fileName);
+        window.markClean(img);
+        return true;
+    } catch (e) {
+        console.error("Failed to save", img.name, e);
+        return false;
+    }
 };
 
 window.toggleFormatSelect = (skipSave = false) => {
@@ -721,16 +795,26 @@ async function processSingleImage(entry, parentHandle, configNeedsSave) {
         ext = datasetConfig[baseName].ext || ext; 
     } else {
         type = detectFormat(content);
-        datasetConfig[baseName] = { type: type, ext: ext };
         configNeedsSave = true; 
     }
+
+    // Native NL mode has been removed: any legacy pure-NL caption becomes a hybrid "NL:" tag,
+    // and every image is now handled through the unified (hybrid) tags editor.
+    if (type === 'nl') {
+        if (content && content.trim()) {
+            content = 'NL:' + content.trim().replace(/\n/g, ' ').replace(/,/g, '，');
+        }
+        type = 'tags';
+        configNeedsSave = true; // persist the migration so it only runs once per image
+    }
+    datasetConfig[baseName] = { type: type, ext: ext };
 
     if (type === 'tags' && content.trim()) {
         content.split(',').forEach(t => { if(t.trim()) masterTagSet.add(t.trim()); });
     }
     
     const isHidden = window.hiddenImagesStore.has(baseName);
-    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden });
+    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden, dirty: false });
     return configNeedsSave;
 }
 
@@ -744,14 +828,19 @@ function finishLoading() {
     window.renderImageList(); 
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.checkBatchReadyState === "function") window.checkBatchReadyState();
+    if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
     
     if (imageFiles.length > 0) { 
         document.getElementById('btn-save-all').style.display = 'inline-block';
         document.getElementById('btn-save-active').style.display = 'inline-block';
+        const activeFilter = document.getElementById('btn-active-tag-filter');
+        if (activeFilter) activeFilter.style.display = 'inline-block';
         window.handleListClick(0, false, false); 
     } else {
         document.getElementById('btn-save-all').style.display = 'none';
         document.getElementById('btn-save-active').style.display = 'none';
+        const activeFilter = document.getElementById('btn-active-tag-filter');
+        if (activeFilter) activeFilter.style.display = 'none';
         if (typeof window.renderEditor === 'function') window.renderEditor();
     }
 }
@@ -804,16 +893,18 @@ window.savePendingTagsStore = savePendingTagsStore;
 window.updateSelectedConfig = async function() {
     if (selectedIndices.size === 0) return;
     
-    const newType = document.getElementById('topbar-system-type').value;
     const newExt = document.getElementById('topbar-save-format').value;
+    const changedImages = [];
 
     selectedIndices.forEach(idx => {
         const img = imageFiles[idx];
-        img.type = newType;
+        if (img.ext !== newExt) changedImages.push(img);
+        img.type = 'tags';
         img.ext = newExt;
-        datasetConfig[img.baseName] = { type: newType, ext: newExt };
+        datasetConfig[img.baseName] = { type: 'tags', ext: newExt };
     });
 
+    if (changedImages.length > 0) window.markDirty(changedImages);
     window.markDatasetEdited();
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     window.refreshListStatus();
@@ -827,7 +918,7 @@ window.updateTagsDatalist = function() {
     const datalist = document.getElementById('all-tags-list');
     if(!datalist) return;
     datalist.innerHTML = '';
-    Array.from(masterTagSet).sort().forEach(tag => {
+    Array.from(masterTagSet).filter(tag => !tag.startsWith('NL:')).sort().forEach(tag => {
         const opt = document.createElement('option');
         opt.value = tag; datalist.appendChild(opt);
     });
@@ -1119,20 +1210,7 @@ window.confirmReplaceTag = async function() {
         }
     } catch(e) { console.error("Render refresh failed:", e); }
 
-    const savePromises = modifiedFiles.map(async (img) => {
-        try {
-            const formatToUse = img.ext || 'txt';
-            const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
-            let contentToSave = img.content;
-            if(formatToUse === 'json') {
-                contentToSave = img.type === 'tags' ? JSON.stringify({ tags: img.content }, null, 2) : JSON.stringify({ caption: img.content.replace(/\n/g, ' ') }, null, 2);
-            }
-            const fileHandle = await img.parentDirHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(contentToSave);
-            await writable.close();
-        } catch(e) { console.error("Failed to save", img.name, e); }
-    });
+    const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
     
     await Promise.all(savePromises);
     if(replacedCount > 0) window.markDatasetEdited();
@@ -1377,44 +1455,28 @@ window.saveActiveSelectedImages = async function(silent = false) {
     let savedCount = 0;
     const promises = Array.from(selectedIndices).map(async (idx) => {
         const img = imageFiles[idx];
-        if (img.hasFile) {
-            const formatToUse = img.ext || 'txt';
-            const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
-            let contentToSave = img.content;
-            if(formatToUse === 'json') {
-                contentToSave = img.type === 'tags' ? JSON.stringify({ tags: img.content }, null, 2) : JSON.stringify({ caption: img.content.replace(/\n/g, ' ') }, null, 2);
-            }
-            const fileHandle = await img.parentDirHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(contentToSave); await writable.close(); 
-            savedCount++;
+        if (img.hasFile && img.dirty) {
+            const ok = await window.saveImageToDisk(img);
+            if (ok) savedCount++;
         }
     });
     await Promise.all(promises);
     if(savedCount > 0) window.markDatasetEdited();
-    if(!silent) window.showAlert(`Saved ${savedCount} active files.`);
+    if(!silent) window.showAlert(savedCount > 0 ? `Saved ${savedCount} file(s) with pending changes.` : `No pending changes to save in the current selection.`);
 }
 
 window.saveAllImages = async function(silent = false) {
     if (!window.currentImagesHandle && !window.rootHandle || imageFiles.length === 0) return;
     let savedCount = 0;
     const promises = imageFiles.map(async (img) => {
-        if (img.hasFile && !img.hidden) {
-            const formatToUse = img.ext || 'txt';
-            const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
-            let contentToSave = img.content;
-            if(formatToUse === 'json') {
-                contentToSave = img.type === 'tags' ? JSON.stringify({ tags: img.content }, null, 2) : JSON.stringify({ caption: img.content.replace(/\n/g, ' ') }, null, 2);
-            }
-            const fileHandle = await img.parentDirHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(contentToSave); await writable.close(); 
-            savedCount++;
+        if (img.hasFile && !img.hidden && img.dirty) {
+            const ok = await window.saveImageToDisk(img);
+            if (ok) savedCount++;
         }
     });
     await Promise.all(promises);
     if(savedCount > 0) window.markDatasetEdited();
-    if(!silent) window.showAlert(`Saved all ${savedCount} modified files in the dataset.`);
+    if(!silent) window.showAlert(savedCount > 0 ? `Saved ${savedCount} file(s) with pending changes.` : `No pending changes to save.`);
 }
 
 /* === USER PRESET TAGS SYSTEM (INDEXEDDB COM DRAG & DROP E MULTI-SELEÇÃO) === */
@@ -1559,6 +1621,7 @@ window.addSelectedPresetTagsTo = function(target) {
             if(!imageFiles[idx].ext) imageFiles[idx].ext = globalExt;
         }
     });
+    window.markDirty(targets.map(idx => imageFiles[idx]));
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
