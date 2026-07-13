@@ -71,14 +71,17 @@ window.toggleSearchMode = function(context) {
         window.activeSearchMode = !window.activeSearchMode;
         document.getElementById('btn-active-search-toggle').classList.toggle('active', window.activeSearchMode);
         window.filterActiveTagsByName(window.activeSearchMode ? document.getElementById('active-add-input').value : '');
+        window.saveSetting('search-mode-active', window.activeSearchMode);
     } else if (context === 'master') {
         window.masterSearchMode = !window.masterSearchMode;
         document.getElementById('btn-master-search-toggle').classList.toggle('active', window.masterSearchMode);
         window.filterMasterTagsByName(window.masterSearchMode ? document.getElementById('master-add-input').value : '');
+        window.saveSetting('search-mode-master', window.masterSearchMode);
     } else if (context === 'preset') {
         window.presetSearchMode = !window.presetSearchMode;
         document.getElementById('btn-preset-search-toggle').classList.toggle('active', window.presetSearchMode);
         window.filterPresetTagsByName(window.presetSearchMode ? document.getElementById('preset-add-input').value : '');
+        window.saveSetting('search-mode-preset', window.presetSearchMode);
     }
 };
 
@@ -199,6 +202,14 @@ window.loadSettings = async function() {
     const colToolsWidth = await window.getSetting('col-tools-width', '350px');
     const colPresetsWidth = await window.getSetting('col-presets-width', '250px');
 
+    // 4. Carrega Toggles de Busca (Lupa) e de Autocomplete (Planeta/Caixa)
+    const searchModeActive = await window.getSetting('search-mode-active', true);
+    const searchModeMaster = await window.getSetting('search-mode-master', true);
+    const searchModePreset = await window.getSetting('search-mode-preset', true);
+    const autocompleteActive = await window.getSetting('autocomplete-used-only-active', false);
+    const autocompleteMaster = await window.getSetting('autocomplete-used-only-master', false);
+    const autocompleteReplace = await window.getSetting('autocomplete-used-only-replace', false);
+
     // Aplica Checkboxes
     if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
     if (document.getElementById('toggle-unsaved-alert')) document.getElementById('toggle-unsaved-alert').checked = unsavedAlert;
@@ -227,6 +238,26 @@ window.loadSettings = async function() {
     window.toggleFormatSelect(true);
     window.toggleHelpBtn(true);
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
+
+    // Aplica Toggles de Busca (Lupa)
+    window.activeSearchMode = searchModeActive;
+    window.masterSearchMode = searchModeMaster;
+    window.presetSearchMode = searchModePreset;
+    if (document.getElementById('btn-active-search-toggle')) document.getElementById('btn-active-search-toggle').classList.toggle('active', searchModeActive);
+    if (document.getElementById('btn-master-search-toggle')) document.getElementById('btn-master-search-toggle').classList.toggle('active', searchModeMaster);
+    if (document.getElementById('btn-preset-search-toggle')) document.getElementById('btn-preset-search-toggle').classList.toggle('active', searchModePreset);
+
+    // Aplica Toggles de Autocomplete (Planeta / Caixa de Usados)
+    if (window.autocompleteUsedOnly) {
+        window.autocompleteUsedOnly.active = autocompleteActive;
+        window.autocompleteUsedOnly.master = autocompleteMaster;
+        window.autocompleteUsedOnly.replace = autocompleteReplace;
+    }
+    if (typeof window.applyAutocompleteButtonState === 'function') {
+        window.applyAutocompleteButtonState('active');
+        window.applyAutocompleteButtonState('master');
+        window.applyAutocompleteButtonState('replace');
+    }
 };
 
 /* === ON LOAD === */

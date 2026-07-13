@@ -22,6 +22,7 @@ style.innerHTML = `
     .btn-nl-edit-cancel:hover { background: #333; color: #fff; }
 
     .db-autocomplete { position: absolute; bottom: 100%; top: auto; left: 0; background: #111; border: 1px solid #333; z-index: 100; border-radius: 6px 6px 0 0; max-height: 200px; overflow-y: auto; width: 100%; box-shadow: 0 -4px 12px rgba(0,0,0,0.8); margin-bottom: 4px; }
+    .db-autocomplete.direction-down { bottom: auto; top: 100%; border-radius: 0 0 6px 6px; margin-bottom: 0; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.8); }
     .db-sugg-item { padding: 8px 10px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
     .db-sugg-item:hover { background: #222; }
     
@@ -45,11 +46,59 @@ window.addEventListener('DOMContentLoaded', () => {
     setupDanbooruAutocomplete('active-add-input');
     setupDanbooruAutocomplete('master-add-input');
     setupDanbooruAutocomplete('preset-add-input');
+    setupDanbooruAutocomplete('replace-new-tag', 'down');
 });
 
 const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
 
-function setupDanbooruAutocomplete(inputId) {
+/* Toggle for the Active Image and All Dataset Tags rows: when ON for a given scope,
+   the autocomplete suggests only tags already used somewhere in the currently loaded
+   dataset (with usage counts), instead of querying the Danbooru API.
+   Default is OFF for both (full online list, as before). */
+window.autocompleteUsedOnly = { active: false, master: false, replace: false };
+
+const AUTOCOMPLETE_SCOPE_BY_INPUT = { 'active-add-input': 'active', 'master-add-input': 'master', 'replace-new-tag': 'replace' };
+
+window.applyAutocompleteButtonState = function(scope) {
+    const btn = document.getElementById(`btn-${scope}-autocomplete-mode`);
+    if (!btn) return;
+    if (window.autocompleteUsedOnly[scope]) {
+        btn.textContent = '📦';
+        btn.classList.add('active');
+        btn.title = 'Autocomplete: showing only tags already used in this dataset (click to show full Danbooru list)';
+    } else {
+        btn.textContent = '🌐';
+        btn.classList.remove('active');
+        btn.title = 'Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)';
+    }
+};
+
+window.toggleAutocompleteMode = function(scope) {
+    window.autocompleteUsedOnly[scope] = !window.autocompleteUsedOnly[scope];
+    window.applyAutocompleteButtonState(scope);
+    if (typeof window.saveSetting === 'function') window.saveSetting('autocomplete-used-only-' + scope, window.autocompleteUsedOnly[scope]);
+};
+// Kept for backward compatibility with any leftover references.
+window.toggleActiveAutocompleteMode = function() { window.toggleAutocompleteMode('active'); };
+
+function getUsedTagSuggestions(query) {
+    const counts = new Map();
+    const files = (typeof imageFiles !== 'undefined') ? imageFiles : [];
+    files.forEach(img => {
+        if (img.hidden || img.type !== 'tags' || !img.content) return;
+        img.content.split(',').forEach(t => {
+            const cleanTag = t.trim();
+            if (!cleanTag || cleanTag.startsWith('NL:')) return;
+            counts.set(cleanTag, (counts.get(cleanTag) || 0) + 1);
+        });
+    });
+    return Array.from(counts.entries())
+        .filter(([tag]) => tag.toLowerCase().includes(query))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+}
+
+function setupDanbooruAutocomplete(inputId, direction = 'up') {
     const input = document.getElementById(inputId);
     if(!input) return;
     
@@ -61,16 +110,45 @@ function setupDanbooruAutocomplete(inputId) {
     wrapper.appendChild(input);
     
     const suggBox = document.createElement('div');
-    suggBox.className = 'db-autocomplete';
+    suggBox.className = direction === 'down' ? 'db-autocomplete direction-down' : 'db-autocomplete';
     suggBox.style.display = 'none';
     wrapper.appendChild(suggBox);
+
+    function renderUsedOnlySuggestions(query) {
+        const matches = getUsedTagSuggestions(query);
+        suggBox.innerHTML = '';
+        if (matches.length === 0) { suggBox.style.display = 'none'; return; }
+
+        matches.forEach(([tag, count]) => {
+            const div = document.createElement('div');
+            div.className = 'db-sugg-item';
+            div.innerHTML = `
+                <span style="color:#00ff99; font-weight:bold;">${tag}</span>
+                <span style="color:#666;">${count}</span>
+            `;
+            div.onclick = () => {
+                input.value = tag;
+                suggBox.style.display = 'none';
+                input.focus();
+            };
+            suggBox.appendChild(div);
+        });
+        suggBox.style.display = 'block';
+    }
 
     let timeout = null;
     input.addEventListener('input', (e) => {
         clearTimeout(timeout);
-        const val = e.target.value.trim().toLowerCase().replace(/ /g, '_');
-        if(val.length < 2) { suggBox.style.display = 'none'; return; }
-        
+        const rawVal = e.target.value.trim().toLowerCase();
+        if(rawVal.length < 2) { suggBox.style.display = 'none'; return; }
+
+        const scope = AUTOCOMPLETE_SCOPE_BY_INPUT[inputId];
+        if (scope && window.autocompleteUsedOnly[scope]) {
+            renderUsedOnlySuggestions(rawVal);
+            return;
+        }
+
+        const val = rawVal.replace(/ /g, '_');
         timeout = setTimeout(async () => {
             try {
                 const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);

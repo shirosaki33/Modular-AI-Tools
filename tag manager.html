@@ -241,7 +241,11 @@
 <div id="replace-dropdown" class="settings-dropdown" style="right: auto; left: 50%; transform: translateX(-50%); top: 60px; width: 260px; position: fixed;">
     <span style="color:#aaa; font-weight:bold; font-size: 13px;">Replace Tag (<span id="replace-scope"></span>):</span>
     <input type="text" id="replace-old-tag" readonly style="background: #222; color: #888; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
-    <input type="text" id="replace-new-tag" placeholder="New tag..." list="all-tags-list" onkeydown="if(event.key === 'Enter') window.confirmReplaceTag()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+        <span style="color:#aaa; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.5px;">Suggestions</span>
+        <button id="btn-replace-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('replace')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)" style="font-size:15px;">🌐</button>
+    </div>
+    <input type="text" id="replace-new-tag" placeholder="New tag..." autocomplete="off" onkeydown="if(event.key === 'Enter') window.confirmReplaceTag()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
     <div style="display: flex; gap: 5px;">
         <button onclick="window.confirmReplaceTag()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Replace</button>
         <button onclick="document.getElementById('replace-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
@@ -327,8 +331,9 @@
             </div>
 
             <div class="inline-add-box" id="active-add-container">
+                <button id="btn-active-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('active')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
                 <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="active-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">                
+                <input type="text" id="active-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">                
                 <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
 				<select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
                 <button class="btn-inline-add" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff;" onclick="window.addEmptyNLTag()" title="Create Empty NL Tag">📝 Add NL</button>
@@ -393,8 +398,9 @@
             <div class="tools-content"><div id="master-tag-list"></div></div>
             
             <div class="inline-add-box">
+                <button id="btn-master-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('master')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
                 <button id="btn-master-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('master')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="master-add-input" placeholder="Search or Add tag..." list="all-tags-list" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('master'); }">                
+                <input type="text" id="master-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('master'); }">                
                 <button class="btn-inline-add" onclick="inlineAdd('master')">Add</button>
 				<select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
             </div>
