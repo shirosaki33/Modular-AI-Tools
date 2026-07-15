@@ -101,7 +101,7 @@
         .list-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #222; cursor: pointer; user-select: none; transition: 0.1s;}
         .list-item:hover { background: #222; }
         .list-item.selected { background: #0a3a5c; border-left: 3px solid #4db8ff; padding-left: 9px; }
-        .list-item img { width: var(--thumb-size); height: var(--thumb-size); object-fit: cover; border-radius: 4px; pointer-events: none; border: 1px solid #333;}
+        .list-item img { width: var(--thumb-size); height: auto; display: block; border-radius: 4px; pointer-events: none; border: 1px solid #333;}
         .list-item-info { flex: 1; overflow: hidden; pointer-events: none; }
         .list-item-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .list-item-status { font-size: 10px; color: #888; margin-top: 4px; }
@@ -292,8 +292,10 @@
                 </div>
             </div>
             
-            <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0;">
-                <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 10px;">
+            <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0; display:flex; gap:6px; align-items:center;">
+                <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="flex:1; min-width:0; box-sizing:border-box; font-size:12px; padding:6px 10px;">
+                <button id="btn-toggle-compact-view" title="Switch to Compact View (grouped by prefix)" style="flex-shrink:0; padding:6px 10px; font-size:14px;">🗂️</button>
+                <button id="btn-compact-group-depth" title="Set how many starting characters define each group" style="display:none; flex-shrink:0; padding:6px 10px; font-size:11px;">Grp: 1</button>
             </div>
 
             <div id="image-list"></div>
@@ -575,6 +577,9 @@
 
 <script src="tools/quick_links.js"></script>
 <script src="tools/tagmanager_ui_core.js"></script>
+<script src="tools/tagmanager_pin_image.js"></script>
+<script src="tools/tagmanager_compact_view.js"></script>
+<script src="tools/tagmanager_custom_rules.js"></script>
 
 </body>
 </html>

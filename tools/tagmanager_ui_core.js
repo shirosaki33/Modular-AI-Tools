@@ -305,8 +305,18 @@ window.initSystem = function() {
 };
 
 /* === IMAGE SLIDER SIZE === */
+let _thumbSizeRAF = null;
 window.updateThumbSize = function(val, skipSave = false) {
-    document.documentElement.style.setProperty('--thumb-size', val + 'px');
+    // Throttle via requestAnimationFrame: arrastar o slider dispara muitos eventos
+    // 'input' seguidos, e cada um agora recalcula a altura (proporção real) de várias
+    // imagens da lista — isso pode atrasar o navegador, que só repinta a bolinha do
+    // slider depois do reflow. Aplicando no máximo 1 atualização por frame, o slider
+    // acompanha o mouse sem "voltar" sozinho.
+    if (_thumbSizeRAF) cancelAnimationFrame(_thumbSizeRAF);
+    _thumbSizeRAF = requestAnimationFrame(() => {
+        document.documentElement.style.setProperty('--thumb-size', val + 'px');
+        _thumbSizeRAF = null;
+    });
     if (!skipSave) window.saveSetting('thumb-size', val);
 };
 
@@ -317,11 +327,18 @@ window.updateEditorFontSize = function(val, skipSave = false) {
 };
 
 /* === RESIZER OPTIMIZATION (4 COLUMNS SUPPORT) === */
+/* === RESIZER OPTIMIZATION (4 COLUMNS SUPPORT) === */
 function setupResizers() {
     let isDraggingLeft = false;
     let isDraggingRight = false;
     let isDraggingPresets = false;
     let rafPending = false;
+
+    // 1. Variáveis para capturar o estado inicial no momento do clique (mousedown)
+    let startX = 0;
+    let startWidthList = 0;
+    let startWidthTools = 0;
+    let startWidthPresets = 0;
 
     const resizerLeft = document.getElementById('resizer-left');
     const resizerRight = document.getElementById('resizer-right');
@@ -331,14 +348,30 @@ function setupResizers() {
     const colTools = document.getElementById('col-tools');
     const colPresets = document.getElementById('col-presets');
 
+    // 2. Modificando os listeners de clique para gravar de onde o mouse e o painel estão partindo
     if(resizerLeft) {
-        resizerLeft.addEventListener('mousedown', () => { isDraggingLeft = true; document.body.classList.add('is-resizing'); });
+        resizerLeft.addEventListener('mousedown', (e) => { 
+            isDraggingLeft = true; 
+            startX = e.clientX;
+            startWidthList = colList.getBoundingClientRect().width;
+            document.body.classList.add('is-resizing'); 
+        });
     }
     if(resizerRight) {
-        resizerRight.addEventListener('mousedown', () => { isDraggingRight = true; document.body.classList.add('is-resizing'); });
+        resizerRight.addEventListener('mousedown', (e) => { 
+            isDraggingRight = true; 
+            startX = e.clientX;
+            startWidthTools = colTools.getBoundingClientRect().width;
+            document.body.classList.add('is-resizing'); 
+        });
     }
     if(resizerPresets) {
-        resizerPresets.addEventListener('mousedown', () => { isDraggingPresets = true; document.body.classList.add('is-resizing'); });
+        resizerPresets.addEventListener('mousedown', (e) => { 
+            isDraggingPresets = true; 
+            startX = e.clientX;
+            startWidthPresets = colPresets.getBoundingClientRect().width;
+            document.body.classList.add('is-resizing'); 
+        });
     }
 
     document.addEventListener('mousemove', (e) => {
@@ -347,19 +380,24 @@ function setupResizers() {
         
         rafPending = true;
         requestAnimationFrame(() => {
+            // 3. Calculando o Delta (a diferença exata entre a posição atual do mouse e a inicial)
+            const deltaX = e.clientX - startX;
+
             if (isDraggingLeft && colList) {
-                let newWidth = e.clientX;
+                // Aplica o movimento em cima da largura que o painel já tinha
+                let newWidth = startWidthList + deltaX;
                 if (newWidth < 200) newWidth = 200;
                 if (newWidth > window.innerWidth * 0.45) newWidth = window.innerWidth * 0.45;
                 colList.style.width = newWidth + 'px';
             }
             if (isDraggingRight && colTools) {
-                let newWidth = window.innerWidth - e.clientX;
+                // Na direita, arrastar para a esquerda (movimento negativo) aumenta o painel
+                let newWidth = startWidthTools - deltaX;
                 if (newWidth < 200) newWidth = 200;
                 colTools.style.width = newWidth + 'px';
             }
             if (isDraggingPresets && colPresets && colTools) {
-                let newWidth = window.innerWidth - e.clientX - colTools.offsetWidth - 14; 
+                let newWidth = startWidthPresets - deltaX;
                 if (newWidth < 150) newWidth = 150;
                 colPresets.style.width = newWidth + 'px';
             }
@@ -368,7 +406,6 @@ function setupResizers() {
     });
 
     document.addEventListener('mouseup', () => {
-        // Ao soltar o clique, salva as larguras no IndexedDB
         if (isDraggingLeft || isDraggingRight || isDraggingPresets) {
             if (colList && colList.style.width) window.saveSetting('col-list-width', colList.style.width);
             if (colTools && colTools.style.width) window.saveSetting('col-tools-width', colTools.style.width);
@@ -428,8 +465,26 @@ window.updateUnsavedChangesUI = function() {
    Single place that actually writes an image's tag/caption content to disk (.txt or .json),
    used by every feature that saves (replace tag, NL edit, convert to NL, save selected/all, batch tagger). */
 window.saveImageToDisk = async function(img) {
-    if (!img || !img.parentDirHandle) return false;
+    if (!img || !img.parentDirHandle) {
+        console.error("saveImageToDisk: missing image or parentDirHandle", img);
+        if (window.showAlert) window.showAlert(`❌ Could not save "${img && img.name ? img.name : 'file'}": no folder handle available.`, 'error');
+        return false;
+    }
     try {
+        // BUGFIX: writes were attempted without re-checking permission. Browsers can silently
+        // revoke a directory's readwrite permission mid-session (tab backgrounded, long idle,
+        // etc.), which made getFileHandle()/createWritable() throw and the whole save fail
+        // with nothing but a console.error — invisible to the user, looking like a random
+        // "edit sometimes fails". We now re-request permission first, and always alert on failure.
+        if ((await img.parentDirHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+            const granted = await img.parentDirHandle.requestPermission({ mode: 'readwrite' });
+            if (granted !== 'granted') {
+                console.error("Write permission denied while saving", img.name);
+                if (window.showAlert) window.showAlert(`❌ Write permission denied for "${img.name}". The edit was NOT saved to disk.`, 'error');
+                return false;
+            }
+        }
+
         const formatToUse = img.ext || 'txt';
         const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
         const contentToSave = formatToUse === 'json'
@@ -446,6 +501,7 @@ window.saveImageToDisk = async function(img) {
         return true;
     } catch (e) {
         console.error("Failed to save", img.name, e);
+        if (window.showAlert) window.showAlert(`❌ Failed to save "${img.name}" (${e.message || 'unknown error'}). Check console.`, 'error');
         return false;
     }
 };
@@ -1349,6 +1405,12 @@ window.renderImageList = function() {
         img.element = div; listDiv.appendChild(div);
     });
     
+    // BUGFIX: this function rebuilds every .list-item element from scratch, which wipes out
+    // the 'selected' class that was on the old elements. Any tag edit (add/remove/replace/etc.)
+    // calls renderImageList() to refresh statuses, and without this line the currently active
+    // image visually loses its blue highlight (and the selection toolbar hides) even though
+    // `selectedIndices` itself was never touched — looking exactly like an accidental deselect.
+    window.updateListSelectionVisuals();
     if (typeof window.applyFilters === 'function') window.applyFilters();
     window.updateSuggestFilterVisibility();
 }

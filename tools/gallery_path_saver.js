@@ -24,36 +24,9 @@ async function getPathFromDB(folderName) {
     }); 
 }
 
-// Intercepta as funções originais do seu gallery holder.html
-// para que as pastas funcionem em harmonia com os textos salvos
-window.getHandles = async function() { 
-    const db = await initDB(); 
-    return new Promise(r => { 
-        const tx = db.transaction(storeName, 'readonly'); 
-        const store = tx.objectStore(storeName); 
-        const keysReq = store.getAllKeys(); 
-        const valsReq = store.getAll(); 
-        tx.oncomplete = () => { 
-            const result = []; 
-            for (let i = 0; i < keysReq.result.length; i++) { 
-                const name = keysReq.result[i]; 
-                if (String(name).startsWith('path_')) continue; 
-                result.push({ name, handle: valsReq.result[i] }); 
-            } 
-            r(result); 
-        }; 
-    }); 
-};
-
-window.deleteHandle = async function(n) { 
-    const db = await initDB(); 
-    return new Promise(r => { 
-        const tx = db.transaction(storeName, 'readwrite'); 
-        tx.objectStore(storeName).delete(n); 
-        tx.objectStore(storeName).delete('path_' + n); 
-        tx.oncomplete = r; 
-    }); 
-};
+// NOTA: getHandles() e deleteHandle() já são definidas em gallery_holder.html
+// (e já ignoram as chaves 'path_*' e '__app_settings__'), então não precisam
+// ser reimplementadas aqui.
 
 // 2. Controle de UI (O balão de digitação)
 function togglePathMode() {
