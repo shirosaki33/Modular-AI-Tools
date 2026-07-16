@@ -5,13 +5,6 @@
 
 window.showGhostTagsInList = false;
 
-/* Hidden-images state is scoped PER FOLDER (keyed by that folder's directory handle),
-   instead of a single global set keyed only by the image's base filename.
-   Previously, hiding an image in one dataset would also hide any image with the same
-   base filename in a different dataset/subfolder (very common with numbered filenames
-   like "0001.png"), and calling "Unhide All" while inside one folder wiped hidden state
-   that belonged to a different folder entirely — which is why unhide could appear to
-   "not bring images back". Each folder now gets its own independent hidden-images Set. */
 window._hiddenImagesStoreMap = new Map();
 window._defaultHiddenSet = new Set();
 function getHiddenSetForHandle(handle) {
@@ -24,7 +17,7 @@ Object.defineProperty(window, 'hiddenImagesStore', {
     configurable: true
 });
 
-window.sortedActiveTags = window.sortedActiveTags || []; // Previne erros globais
+window.sortedActiveTags = window.sortedActiveTags || [];
 
 window.rootHandle = null;
 window.sub1Handles = new Map();
@@ -43,7 +36,6 @@ let datasetConfig = {};
 let pendingTagsStore = {}; 
 window.filterMode = 'NONE'; 
 
-/* === VARIAVEIS DA LUPA DE BUSCA UNIFICADA === */
 window.imageNameFilter = '';
 window.tagNameFilter = '';
 window.presetTagNameFilter = '';
@@ -52,7 +44,7 @@ window.activeSearchMode = true;
 window.masterSearchMode = true;
 window.presetSearchMode = true;
 
-window.imageFilterMode = 'ALL'; // ALL, TAGS, NL
+window.imageFilterMode = 'ALL';
 window.cycleImageFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
     const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
@@ -85,7 +77,6 @@ window.toggleSearchMode = function(context) {
     }
 };
 
-/* === INDEXEDDB (GALLERY HOLDER COMPATIBILITY) === */
 const dbName = 'GalleryDB';
 const storeName = 'directories';
 
@@ -143,7 +134,6 @@ window.deleteHandle = async function(n) {
     } catch (e) {}
 }
 
-/* === INDEXEDDB PARA CONFIGURAÇÕES DA INTERFACE (SETTINGS) === */
 const settingsDbName = 'SettingsDB';
 const settingsStoreName = 'settings';
 
@@ -186,23 +176,20 @@ window.getSetting = async function(id, defaultValue) {
 };
 
 window.loadSettings = async function() {
-    // 1. Carrega Toggle Checkboxes
     const lastEdited = await window.getSetting('toggle-last-edited', true);
     const unsavedAlert = await window.getSetting('toggle-unsaved-alert', true);
     const formatSelect = await window.getSetting('toggle-format-select', false);
     const conflictWarn = await window.getSetting('toggle-conflict-warnings', true);
     const helpBtn = await window.getSetting('toggle-help-btn', true);
+    const favHighlight = await window.getSetting('toggle-fav-highlight', true);
 
-    // 2. Carrega Sliders de Tamanho
     const thumbSize = await window.getSetting('thumb-size', 70);
     const fontSize = await window.getSetting('font-size', 13);
     
-    // 3. Carrega Larguras dos Painéis
     const colListWidth = await window.getSetting('col-list-width', '350px');
     const colToolsWidth = await window.getSetting('col-tools-width', '350px');
     const colPresetsWidth = await window.getSetting('col-presets-width', '250px');
 
-    // 4. Carrega Toggles de Busca (Lupa) e de Autocomplete (Planeta/Caixa)
     const searchModeActive = await window.getSetting('search-mode-active', true);
     const searchModeMaster = await window.getSetting('search-mode-master', true);
     const searchModePreset = await window.getSetting('search-mode-preset', true);
@@ -210,20 +197,18 @@ window.loadSettings = async function() {
     const autocompleteMaster = await window.getSetting('autocomplete-used-only-master', false);
     const autocompleteReplace = await window.getSetting('autocomplete-used-only-replace', false);
 
-    // Aplica Checkboxes
     if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
     if (document.getElementById('toggle-unsaved-alert')) document.getElementById('toggle-unsaved-alert').checked = unsavedAlert;
     if (document.getElementById('toggle-format-select')) document.getElementById('toggle-format-select').checked = formatSelect;
     if (document.getElementById('toggle-conflict-warnings')) document.getElementById('toggle-conflict-warnings').checked = conflictWarn;
     if (document.getElementById('toggle-help-btn')) document.getElementById('toggle-help-btn').checked = helpBtn;
+    if (document.getElementById('toggle-fav-highlight')) document.getElementById('toggle-fav-highlight').checked = favHighlight;
 
-    // Aplica Sliders
     if (document.getElementById('thumb-slider')) document.getElementById('thumb-slider').value = thumbSize;
     if (document.getElementById('font-slider')) document.getElementById('font-slider').value = fontSize;
     window.updateThumbSize(thumbSize, true);
     window.updateEditorFontSize(fontSize, true);
 
-    // Aplica Larguras
     const colList = document.getElementById('col-list');
     const colTools = document.getElementById('col-tools');
     const colPresets = document.getElementById('col-presets');
@@ -231,15 +216,14 @@ window.loadSettings = async function() {
     if (colTools) colTools.style.width = colToolsWidth;
     if (colPresets) colPresets.style.width = colPresetsWidth;
 
-    // Dispara as funções visuais silenciosamente
     window.enableConflictWarnings = conflictWarn;
     window.toggleLastEdited(true);
     window.unsavedAlertEnabled = unsavedAlert;
     window.toggleFormatSelect(true);
     window.toggleHelpBtn(true);
+    window.toggleFavHighlight(true);
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 
-    // Aplica Toggles de Busca (Lupa)
     window.activeSearchMode = searchModeActive;
     window.masterSearchMode = searchModeMaster;
     window.presetSearchMode = searchModePreset;
@@ -247,7 +231,6 @@ window.loadSettings = async function() {
     if (document.getElementById('btn-master-search-toggle')) document.getElementById('btn-master-search-toggle').classList.toggle('active', searchModeMaster);
     if (document.getElementById('btn-preset-search-toggle')) document.getElementById('btn-preset-search-toggle').classList.toggle('active', searchModePreset);
 
-    // Aplica Toggles de Autocomplete (Planeta / Caixa de Usados)
     if (window.autocompleteUsedOnly) {
         window.autocompleteUsedOnly.active = autocompleteActive;
         window.autocompleteUsedOnly.master = autocompleteMaster;
@@ -260,7 +243,6 @@ window.loadSettings = async function() {
     }
 };
 
-/* === ON LOAD === */
 window.addEventListener('DOMContentLoaded', async () => {
     try {
         await window.loadSettings(); 
@@ -293,7 +275,6 @@ window.showAlert = function(msg, type = 'success') {
     setTimeout(() => { bar.className = ''; bar.style.display = 'none'; }, 3500);
 };
 
-/* === INITIALIZATION === */
 window.initSystem = function() {
     if(typeof window.updateBatchUI === 'function') window.updateBatchUI(); 
     setupResizers();
@@ -304,14 +285,8 @@ window.initSystem = function() {
     }
 };
 
-/* === IMAGE SLIDER SIZE === */
 let _thumbSizeRAF = null;
 window.updateThumbSize = function(val, skipSave = false) {
-    // Throttle via requestAnimationFrame: arrastar o slider dispara muitos eventos
-    // 'input' seguidos, e cada um agora recalcula a altura (proporção real) de várias
-    // imagens da lista — isso pode atrasar o navegador, que só repinta a bolinha do
-    // slider depois do reflow. Aplicando no máximo 1 atualização por frame, o slider
-    // acompanha o mouse sem "voltar" sozinho.
     if (_thumbSizeRAF) cancelAnimationFrame(_thumbSizeRAF);
     _thumbSizeRAF = requestAnimationFrame(() => {
         document.documentElement.style.setProperty('--thumb-size', val + 'px');
@@ -320,21 +295,17 @@ window.updateThumbSize = function(val, skipSave = false) {
     if (!skipSave) window.saveSetting('thumb-size', val);
 };
 
-/* === EDITOR (TAGS/NL) FONT SIZE SLIDER === */
 window.updateEditorFontSize = function(val, skipSave = false) {
     document.documentElement.style.setProperty('--editor-font-size', val + 'px');
     if (!skipSave) window.saveSetting('font-size', val);
 };
 
-/* === RESIZER OPTIMIZATION (4 COLUMNS SUPPORT) === */
-/* === RESIZER OPTIMIZATION (4 COLUMNS SUPPORT) === */
 function setupResizers() {
     let isDraggingLeft = false;
     let isDraggingRight = false;
     let isDraggingPresets = false;
     let rafPending = false;
 
-    // 1. Variáveis para capturar o estado inicial no momento do clique (mousedown)
     let startX = 0;
     let startWidthList = 0;
     let startWidthTools = 0;
@@ -348,7 +319,6 @@ function setupResizers() {
     const colTools = document.getElementById('col-tools');
     const colPresets = document.getElementById('col-presets');
 
-    // 2. Modificando os listeners de clique para gravar de onde o mouse e o painel estão partindo
     if(resizerLeft) {
         resizerLeft.addEventListener('mousedown', (e) => { 
             isDraggingLeft = true; 
@@ -380,18 +350,15 @@ function setupResizers() {
         
         rafPending = true;
         requestAnimationFrame(() => {
-            // 3. Calculando o Delta (a diferença exata entre a posição atual do mouse e a inicial)
             const deltaX = e.clientX - startX;
 
             if (isDraggingLeft && colList) {
-                // Aplica o movimento em cima da largura que o painel já tinha
                 let newWidth = startWidthList + deltaX;
                 if (newWidth < 200) newWidth = 200;
                 if (newWidth > window.innerWidth * 0.45) newWidth = window.innerWidth * 0.45;
                 colList.style.width = newWidth + 'px';
             }
             if (isDraggingRight && colTools) {
-                // Na direita, arrastar para a esquerda (movimento negativo) aumenta o painel
                 let newWidth = startWidthTools - deltaX;
                 if (newWidth < 200) newWidth = 200;
                 colTools.style.width = newWidth + 'px';
@@ -419,7 +386,6 @@ function setupResizers() {
     });
 }
 
-/* === MODALS, UI TOGGLES E LAST EDITED TIME === */
 window.toggleSettings = () => document.getElementById('settings-dropdown').classList.toggle('open');
 
 window.unsavedAlertEnabled = true;
@@ -432,9 +398,6 @@ window.toggleUnsavedAlert = (skipSave = false) => {
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 };
 
-/* === UNSAVED CHANGES TRACKING ===
-   Marks images as dirty whenever their content is modified without being written to disk yet,
-   and drives the yellow "Changes without saving files (N)" banner above the 3 main panels. */
 window.markDirty = function(imgs) {
     const arr = Array.isArray(imgs) ? imgs : [imgs];
     let changed = false;
@@ -461,9 +424,6 @@ window.updateUnsavedChangesUI = function() {
     bar.innerHTML = `<span style="color:#ffd040;margin:0 6px;font-size:14px;line-height:1;">⚠️</span> You have unsaved changes — remember to save <span style="color:#ffd040;margin:0 6px;font-size:14px;line-height:1;">⚠️</span>`;
 };
 
-/* === SHARED FILE WRITE UTILITY ===
-   Single place that actually writes an image's tag/caption content to disk (.txt or .json),
-   used by every feature that saves (replace tag, NL edit, convert to NL, save selected/all, batch tagger). */
 window.saveImageToDisk = async function(img) {
     if (!img || !img.parentDirHandle) {
         console.error("saveImageToDisk: missing image or parentDirHandle", img);
@@ -471,11 +431,6 @@ window.saveImageToDisk = async function(img) {
         return false;
     }
     try {
-        // BUGFIX: writes were attempted without re-checking permission. Browsers can silently
-        // revoke a directory's readwrite permission mid-session (tab backgrounded, long idle,
-        // etc.), which made getFileHandle()/createWritable() throw and the whole save fail
-        // with nothing but a console.error — invisible to the user, looking like a random
-        // "edit sometimes fails". We now re-request permission first, and always alert on failure.
         if ((await img.parentDirHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
             const granted = await img.parentDirHandle.requestPermission({ mode: 'readwrite' });
             if (granted !== 'granted') {
@@ -510,6 +465,19 @@ window.toggleFormatSelect = (skipSave = false) => {
     const isChecked = document.getElementById('toggle-format-select').checked;
     document.getElementById('topbar-save-format').style.display = isChecked ? 'inline-block' : 'none';
     if (!skipSave) window.saveSetting('toggle-format-select', isChecked);
+};
+
+window.enableFavHighlight = true;
+window.toggleFavHighlight = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-fav-highlight');
+    if (checkbox) {
+        window.enableFavHighlight = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-fav-highlight', checkbox.checked);
+    }
+    if (!skipSave) {
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    }
 };
 
 window.toggleHelpBtn = (skipSave = false) => {
@@ -564,7 +532,6 @@ window.openModal = function(id) {
     if (id === 'modal-image' && typeof window.resetImageZoom === 'function') window.resetImageZoom();
 };
 
-/* === IMAGE POPOUT ZOOM & PAN === */
 (function() {
     let scale = 1, tx = 0, ty = 0;
     let isPanning = false, panStartX = 0, panStartY = 0;
@@ -664,9 +631,6 @@ window.updateBatchUI = function() {
     if(typeof window.checkBatchReadyState === 'function') window.checkBatchReadyState();
 }
 
-
-/* === DIRECTORY SELECTION SYSTEM === */
-
 window.updateSelect = async function() {
     const list = document.getElementById('dir-list'); 
     if (!list) return;
@@ -736,8 +700,6 @@ window.loadSelectedDirectory = async function() {
         window.loadGallery(h); 
     }
 }
-
-/* === MULTI-LEVEL DIRECTORY LOADING (NON-RECURSIVE) === */
 
 window.refreshDataset = async function() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
@@ -867,7 +829,6 @@ window.loadSubDir2 = async function() {
     finishLoading();
 };
 
-/* === FILE PROCESSING UTILS === */
 function detectFormat(text) {
     if (!text) return 'tags';
     if (text.includes('\n')) return 'nl';
@@ -904,14 +865,12 @@ async function processSingleImage(entry, parentHandle, configNeedsSave) {
         configNeedsSave = true; 
     }
 
-    // Native NL mode has been removed: any legacy pure-NL caption becomes a hybrid "NL:" tag,
-    // and every image is now handled through the unified (hybrid) tags editor.
     if (type === 'nl') {
         if (content && content.trim()) {
             content = 'NL:' + content.trim().replace(/\n/g, ' ').replace(/,/g, '，');
         }
         type = 'tags';
-        configNeedsSave = true; // persist the migration so it only runs once per image
+        configNeedsSave = true;
     }
     datasetConfig[baseName] = { type: type, ext: ext };
 
@@ -1030,7 +989,6 @@ window.updateTagsDatalist = function() {
     });
 };
 
-/* === IMAGE HIDING SYSTEM === */
 window.hideSelectedImages = function() {
     if (selectedIndices.size === 0) return;
 
@@ -1068,9 +1026,6 @@ window.unhideAllImages = function() {
         if (typeof window.applyFilters === 'function') window.applyFilters();
         window.updateListSelectionVisuals();
 
-        // If hiding earlier left nothing selected, the selection-actions toolbar (and its icons)
-        // stayed invisible even after unhiding. Auto-select the first image so it reappears
-        // immediately instead of requiring a manual refresh.
         if (selectedIndices.size === 0 && imageFiles.length > 0) {
             window.handleListClick(0, false, false);
         }
@@ -1083,7 +1038,6 @@ window.updateUnhideButton = function() {
     if (btn) btn.style.display = hasHidden ? 'inline-block' : 'none';
 };
 
-/* === FOCUS MODE (INVERSE OF HIDE) === */
 window.enterFocusMode = function() {
     if (selectedIndices.size === 0) { window.showAlert("Select at least one image first!", "warn"); return; }
 
@@ -1109,7 +1063,6 @@ window.enterFocusMode = function() {
     window.showAlert(`Focus mode: hid ${hiddenCount} other image(s). Use 👁️‍🗨️ Unhide to restore.`, "success");
 };
 
-/* === MULTI RENAME SYSTEM === */
 window.openRenameModal = function() {
     if(selectedIndices.size === 0) return;
     const idx = Array.from(selectedIndices)[0];
@@ -1189,7 +1142,6 @@ window.confirmRename = async function() {
     }
 }
 
-/* === CLONE SYSTEM === */
 window.openCloneModal = function() {
     if (selectedIndices.size === 0) { window.showAlert("Select at least one image first!", "warn"); return; }
     document.getElementById('clone-count-input').value = 1;
@@ -1261,7 +1213,6 @@ window.confirmClone = async function() {
     }
 }
 
-/* === REPLACE TAG SYSTEM === */
 let replaceScope = 'active';
 
 window.openReplaceTagModal = function(scope) {
@@ -1335,7 +1286,6 @@ window.confirmReplaceTag = async function() {
     if(replacedCount > 0) window.markDatasetEdited();
 }
 
-/* === FILTERS === */
 window.setLogic = function(mode) {
     const btn = document.getElementById('btn-logic-' + mode);
     
@@ -1351,7 +1301,6 @@ window.setLogic = function(mode) {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 };
 
-/* === IMAGE LIST RENDERING E SELEÇÃO === */
 let lastSelectedIndex = 0;
 
 window.handleListClick = function(index, shiftKey, ctrlKey) {
@@ -1405,17 +1354,11 @@ window.renderImageList = function() {
         img.element = div; listDiv.appendChild(div);
     });
     
-    // BUGFIX: this function rebuilds every .list-item element from scratch, which wipes out
-    // the 'selected' class that was on the old elements. Any tag edit (add/remove/replace/etc.)
-    // calls renderImageList() to refresh statuses, and without this line the currently active
-    // image visually loses its blue highlight (and the selection toolbar hides) even though
-    // `selectedIndices` itself was never touched — looking exactly like an accidental deselect.
     window.updateListSelectionVisuals();
     if (typeof window.applyFilters === 'function') window.applyFilters();
     window.updateSuggestFilterVisibility();
 }
 
-/* === TYPABLE SEARCH FILTERS (IMAGES & ALL TAGS) === */
 window.filterImagesByName = function(val) {
     window.imageNameFilter = (val || '').trim().toLowerCase();
     if (typeof window.applyFilters === 'function') window.applyFilters();
@@ -1436,7 +1379,6 @@ window.filterMasterTagsByName = function(val) {
     applyTagNameFilterToDOM();
 };
 
-/* GHOST TAGS (BUTTON LOGIC) */
 window.toggleSuggestFilterImg = function() {
     window.showGhostTagsInList = !window.showGhostTagsInList;
     
@@ -1608,7 +1550,6 @@ window.saveAllImages = async function(silent = false) {
     if(!silent) window.showAlert(savedCount > 0 ? `Saved ${savedCount} file(s) with pending changes.` : `No pending changes to save.`);
 }
 
-/* === USER PRESET TAGS SYSTEM (INDEXEDDB COM DRAG & DROP E MULTI-SELEÇÃO) === */
 const presetDbName = 'PresetTagsDB';
 const presetStoreName = 'presets';
 let presetSelectedTags = new Set();
@@ -1833,7 +1774,6 @@ window.renderPresetTags = async function() {
             let conflictsForThisTag = [];
             let similarsForThisTag = [];
 
-            // ALERTA DE CONFLITO/SIMILARIDADE (SE ATIVADO NAS CONFIGURAÇÕES)
             if (isSelected && window.enableConflictWarnings) {
                 item.classList.add('selected-master');
                 if (typeof window.checkTagStatusWithActive === 'function') {
@@ -1870,7 +1810,6 @@ window.renderPresetTags = async function() {
                 </div>
             `;
 
-            // EFEITO HOVER CONSULTANDO A ACTIVE LIST
             if (conflictsForThisTag.length > 0) {
                 const warningSpan = item.querySelector('.conflict-warning');
                 if(warningSpan) {

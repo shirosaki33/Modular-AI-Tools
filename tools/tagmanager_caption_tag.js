@@ -39,6 +39,9 @@ style.innerHTML = `
     .similar-warning { margin-left: 12px; font-size: 10px; color: #ffeeaa; background: #332200; padding: 2px 8px; border-radius: 12px; border: 1px solid #ffcc00; cursor: help; transition: 0.2s; white-space: nowrap; user-select: none; display: inline-block;}
     .similar-warning:hover { background: #664400; color: #fff; box-shadow: 0 0 8px #ffcc00; }
     .tag-row.glow-similar { background: rgba(255, 170, 0, 0.4) !important; box-shadow: inset 0 0 12px #ffcc00 !important; border-left: 3px solid #ffeedd !important; transition: 0.1s; }
+
+    /* ESTILOS DE FAVORITO PERMANENTE (VERDE ESCURO) */
+    .tag-row.glow-favorite, .master-tag-item.glow-favorite { background: rgba(0, 80, 40, 0.4) !important; border-left: 3px solid #00ff99 !important; transition: 0.1s; }
 `;
 document.head.appendChild(style);
 
@@ -51,12 +54,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
 
-/* Toggle for the Active Image and All Dataset Tags rows: when ON for a given scope,
-   the autocomplete suggests only tags already used somewhere in the currently loaded
-   dataset (with usage counts), instead of querying the Danbooru API.
-   Default is OFF for both (full online list, as before). */
 window.autocompleteUsedOnly = { active: false, master: false, replace: false };
-
 const AUTOCOMPLETE_SCOPE_BY_INPUT = { 'active-add-input': 'active', 'master-add-input': 'master', 'replace-new-tag': 'replace' };
 
 window.applyAutocompleteButtonState = function(scope) {
@@ -78,7 +76,6 @@ window.toggleAutocompleteMode = function(scope) {
     window.applyAutocompleteButtonState(scope);
     if (typeof window.saveSetting === 'function') window.saveSetting('autocomplete-used-only-' + scope, window.autocompleteUsedOnly[scope]);
 };
-// Kept for backward compatibility with any leftover references.
 window.toggleActiveAutocompleteMode = function() { window.toggleAutocompleteMode('active'); };
 
 function getUsedTagSuggestions(query) {
@@ -181,14 +178,12 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
     });
 }
 
-/* === FUNÇÃO GLOBAL PARA CHECAR CONFLITOS E SIMILARIDADES ANTES DE ADICIONAR === */
 window.checkTagStatusWithActive = function(tag) {
     if (!window.sortedActiveTags || !window.sortedActiveTags.length) return { conflicts: [], similars: [] };
     const tagLower = tag.toLowerCase();
     let conflicts = [];
     let similars = [];
     
-    // Checa conflitos vermelhos
     (window.tagConflicts || []).forEach(group => {
         const groupLower = group.map(g => g.toLowerCase());
         if (groupLower.includes(tagLower)) {
@@ -198,7 +193,6 @@ window.checkTagStatusWithActive = function(tag) {
         }
     });
 
-    // Checa redundâncias amarelas
     (window.tagSimilar || []).forEach(group => {
         const groupLower = group.map(g => g.toLowerCase());
         if (groupLower.includes(tagLower)) {
@@ -214,8 +208,7 @@ window.checkTagStatusWithActive = function(tag) {
     };
 };
 
-/* === NL EDIT INLINE PARA TAGS (Active / Master) === */
-window.nlEditTarget = null; // { scope: 'active'|'master', tag: string }
+window.nlEditTarget = null; 
 
 window.openNLEditTag = function(scope) {
     let targetTag = '';
@@ -272,7 +265,6 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
         return;
     }
 
-    // ESCAPA vírgulas reais para não quebrar o parser de tags (split por ',')
     const isCustomNL = oldTag.startsWith('NL:');
     if (isCustomNL) {
         newText = 'NL:' + newText.replace(/,/g, '，');
@@ -327,7 +319,6 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
     if (replacedCount > 0) window.markDatasetEdited();
 };
 
-/* === GERENCIADOR GERAL DO PAINEL CENTRAL === */
 window.showOnlyActiveGhosts = false;
 window.toggleActiveGhostFilter = function() {
     window.showOnlyActiveGhosts = !window.showOnlyActiveGhosts;
@@ -391,8 +382,6 @@ function renderEditor() {
     const activeAddContainer = document.getElementById('active-add-container');
     const activeActions = document.getElementById('active-selection-actions');
 
-    // Native NL mode has been removed: every image is now edited through the unified
-    // (hybrid) comma-tags editor. Free-text captions live inline as "NL:" tags.
     badge.textContent = 'Comma Tags'; 
     tagsContainer.style.display = 'flex'; 
     
@@ -414,8 +403,6 @@ function renderEditor() {
     window.sortedActiveTags = Array.from(fusedTags); 
     sortedActiveTags = window.sortedActiveTags;
 
-    // NL EDIT MODE (ACTIVE): instead of an inline box under the tag, the editor takes over
-    // the whole Active Tags panel — pinned to the top, filling all available space.
     if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
         activeAddContainer.style.display = 'none';
         activeActions.style.display = 'none';
@@ -437,7 +424,6 @@ function renderEditor() {
             const isFav = favTags.has(tag);
             const isCustomNL = tag.startsWith('NL:');
             
-            // Verificação do Filtro no Active Tag (All / Tags / NL)
             if (window.activeTagFilterMode === 'TAGS' && isCustomNL) return;
             if (window.activeTagFilterMode === 'NL' && !isCustomNL) return;
             
@@ -473,7 +459,7 @@ function renderEditor() {
             row.setAttribute('data-tag-name', tagLower); 
             
             if (activeSelectedTags.has(tag)) row.classList.add('selected-active');
-            
+            if (isFav && window.enableFavHighlight !== false) row.classList.add('glow-favorite');
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
             
             let statusHtml = '';
@@ -523,6 +509,11 @@ function renderEditor() {
                     starEl.textContent = currentlyFav ? '☆' : '⭐';
                     starEl.style.color = currentlyFav ? '#444' : '#00ff99';
                     
+                    if (window.enableFavHighlight !== false) {
+                        if (currentlyFav) row.classList.remove('glow-favorite');
+                        else row.classList.add('glow-favorite');
+                    }
+                    
                     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
                 };
 
@@ -549,7 +540,6 @@ function renderEditor() {
                 row.ondrop = (e) => { e.preventDefault(); if (draggedTagIndex !== null && draggedTagIndex !== i) reorderTags(draggedTagIndex, i); };
             }
 
-            // EFEITO DE HOVER NOS AVISOS (Brilha as outras tags envolvidas)
             if (conflictsForThisTag.length > 0) {
                 const warningSpan = row.querySelector('.conflict-warning');
                 if(warningSpan) {
@@ -838,14 +828,11 @@ function inlineAdd(source) {
 
     let tagsToAdd = [];
 
-    // Conta o número de palavras (separando por espaços)
     const wordCount = rawText.split(/\s+/).length;
 
-    // FILTRO INTELIGENTE DIRETO: Tem vírgula ou mais de 4 palavras? Vira NL automático.
     if (rawText.includes(',') || wordCount > 4) {
         tagsToAdd.push('NL:' + rawText.replace(/,/g, '，'));
     } else {
-        // Não tem vírgula e é curto? É uma tag padrão isolada.
         tagsToAdd.push(rawText);
     }
 
@@ -862,7 +849,6 @@ function inlineAdd(source) {
     if (source === 'master' && window.masterSearchMode) window.filterMasterTagsByName('');
 }
 
-/* === COL 3: MASTER LIST & FILTERS === */
 window.showOnlyFavoriteTags = false;
 
 window.toggleFavTagsFilter = function() {
@@ -902,7 +888,7 @@ function renderMasterTagList() {
     
     if (!window.showGhostTagsInList) {
         sortedMasterTags.forEach((tag, index) => {
-            if (tag.startsWith('NL:')) return; // OCULTA AS TAGS NL
+            if (tag.startsWith('NL:')) return;
             
             const count = tagCounts.get(tag) || 0;
             if (count === 0) return;
@@ -911,13 +897,14 @@ function renderMasterTagList() {
             if (window.showOnlyFavoriteTags && !isFav) return;
 
             const item = document.createElement('div'); item.className = 'master-tag-item';
+            item.setAttribute('data-tag-name', tag.toLowerCase());
+            if (isFav && window.enableFavHighlight !== false) item.classList.add('glow-favorite');
             
             let isSelected = masterSelectedTags.has(tag);
             let statusHtml = '';
             let conflictsForThisTag = [];
             let similarsForThisTag = [];
 
-            // ALERTA DE CONFLITO/SIMILARIDADE (CONSULTANDO A ACTIVE IMAGE)
             if (isSelected) {
                 item.classList.add('selected-master');
                 if (window.enableConflictWarnings && typeof window.checkTagStatusWithActive === 'function') {
@@ -946,7 +933,6 @@ function renderMasterTagList() {
                 <span class="tag-remove" title="Global Remove">&times;</span>
             `;
 
-            // EFEITO HOVER CONSULTANDO A ACTIVE LIST
             if (conflictsForThisTag.length > 0) {
                 const warningSpan = item.querySelector('.conflict-warning');
                 if(warningSpan) {
@@ -997,6 +983,10 @@ function renderMasterTagList() {
                 } else {
                     starEl.textContent = currentlyFav ? '☆' : '⭐';
                     starEl.style.color = currentlyFav ? '#444' : '#00ff99';
+                    if (window.enableFavHighlight !== false && !window.showOnlyFavoriteTags) {
+                        if (currentlyFav) item.classList.remove('glow-favorite');
+                        else item.classList.add('glow-favorite');
+                    }
                 }
                 
                 if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
@@ -1062,7 +1052,7 @@ function renderMasterTagList() {
         container.appendChild(label);
 
         sortedGhostTags.forEach((tag, gIndex) => {
-            if (tag.startsWith('NL:')) return; // NL captions are per-image; accept them from the Active Image panel instead
+            if (tag.startsWith('NL:')) return;
 
             const count = pendingCounts.get(tag);
             const item = document.createElement('div');
@@ -1158,7 +1148,6 @@ function applyFilters() {
         let visible = true;
         const totalSelected = masterSelectedTags.size + masterSelectedGhostTags.size;
         
-        // NOVO: Image Type Filter
         if (window.imageFilterMode !== 'ALL') {
             let hasTag = false;
             let hasNL = false;
@@ -1272,7 +1261,6 @@ function globalRemoveTags(tagsToRemove) {
     showAlert(`Globally removed tags from ${changed} images. Press Ctrl+S to save to disk.`, 'success');
 }
 
-/* === ACTIVE TAG TEXT FILTER === */
 window.filterActiveTagsByName = function(val) {
     window.activeTagNameFilter = (val || '').trim().toLowerCase();
     applyActiveTagNameFilterToDOM();
@@ -1298,7 +1286,6 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-/* === CUSTOM/NL CONVERSION AND TRANSLATION === */
 window.convertToCustomNL = async function() {
     if (activeSelectedTags.size === 0) return;
     let changedCount = 0;
