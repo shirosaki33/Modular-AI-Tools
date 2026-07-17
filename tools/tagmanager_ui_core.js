@@ -415,7 +415,7 @@ window.markClean = function(imgs) {
 window.updateUnsavedChangesUI = function() {
     const bar = document.getElementById('unsaved-changes-alert');
     if (!bar) return;
-    const hasUnsaved = (typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty && !img.hidden);
+    const hasUnsaved = (typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty);
     if (!window.unsavedAlertEnabled || !hasUnsaved) {
         bar.style.display = 'none';
         return;
@@ -723,6 +723,10 @@ window.refreshDataset = async function() {
 };
 
 window.loadGallery = async function(dirHandle) {
+    // Salva qualquer edição pendente ANTES de descartar o imageFiles atual,
+    // evitando perder tags digitadas mas ainda não salvas ao trocar de pasta.
+    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+
     window.rootHandle = dirHandle;
     window.currentImagesHandle = dirHandle;
     window.sub1Handles.clear();
@@ -771,6 +775,9 @@ window.loadSubDir1 = async function() {
         return;
     }
 
+    // Salva qualquer edição pendente ANTES de descartar o imageFiles atual.
+    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+
     window.currentImagesHandle = window.sub1Handles.get(val); 
     window.sub2Handles.clear();
     sel2.style.display = 'none';
@@ -809,6 +816,9 @@ window.loadSubDir2 = async function() {
         await window.loadSubDir1();
         return;
     }
+
+    // Salva qualquer edição pendente ANTES de descartar o imageFiles atual.
+    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
 
     const targetHandle = window.sub2Handles.get(val);
     window.currentImagesHandle = targetHandle;
@@ -1368,6 +1378,8 @@ function applyTagNameFilterToDOM() {
     const container = document.getElementById('master-tag-list');
     if (!container) return;
     container.querySelectorAll('.master-tag-item').forEach(item => {
+        // A tag fixada (📌) fica sempre visível, mesmo com um filtro de busca ativo.
+        if (item.classList.contains('pinned-master-tag-row')) { item.style.display = 'flex'; return; }
         const nameEl = item.querySelector('.tag-name');
         const text = (nameEl ? nameEl.textContent : item.textContent).toLowerCase();
         item.style.display = (!window.tagNameFilter || text.includes(window.tagNameFilter)) ? 'flex' : 'none';
@@ -1540,7 +1552,7 @@ window.saveAllImages = async function(silent = false) {
     if (!window.currentImagesHandle && !window.rootHandle || imageFiles.length === 0) return;
     let savedCount = 0;
     const promises = imageFiles.map(async (img) => {
-        if (img.hasFile && !img.hidden && img.dirty) {
+        if (img.hasFile && img.dirty) {
             const ok = await window.saveImageToDisk(img);
             if (ok) savedCount++;
         }

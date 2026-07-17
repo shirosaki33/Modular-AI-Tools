@@ -21,6 +21,10 @@ style.innerHTML = `
     .btn-nl-edit-cancel { background: transparent; color: #aaa; border: 1px solid #444; padding: 6px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; }
     .btn-nl-edit-cancel:hover { background: #333; color: #fff; }
 
+    .tag-pin:hover { transform: scale(1.15); }
+    .tag-pin.active { text-shadow: 0 0 6px rgba(77,184,255,0.7); }
+    .pinned-master-tag-row:hover { background: #0d2438 !important; }
+
     .db-autocomplete { position: absolute; bottom: 100%; top: auto; left: 0; background: #111; border: 1px solid #333; z-index: 100; border-radius: 6px 6px 0 0; max-height: 200px; overflow-y: auto; width: 100%; box-shadow: 0 -4px 12px rgba(0,0,0,0.8); margin-bottom: 4px; }
     .db-autocomplete.direction-down { bottom: auto; top: 100%; border-radius: 0 0 6px 6px; margin-bottom: 0; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.8); }
     .db-sugg-item { padding: 8px 10px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
@@ -42,6 +46,13 @@ style.innerHTML = `
 
     /* ESTILOS DE FAVORITO PERMANENTE (VERDE ESCURO) */
     .tag-row.glow-favorite, .master-tag-item.glow-favorite { background: rgba(0, 80, 40, 0.4) !important; border-left: 3px solid #00ff99 !important; transition: 0.1s; }
+
+    /* Quando a tag está SELECIONADA (azul), isso tem prioridade sobre o brilho
+       verde de favorita — senão fica impossível saber se está selecionada. */
+    .tag-row.selected-active.glow-favorite, .master-tag-item.selected-master.glow-favorite {
+        background: #0a3a5c !important;
+        border-left: 3px solid #4db8ff !important;
+    }
 `;
 document.head.appendChild(style);
 
@@ -828,12 +839,19 @@ function inlineAdd(source) {
 
     let tagsToAdd = [];
 
-    const wordCount = rawText.split(/\s+/).length;
-
-    if (rawText.includes(',') || wordCount > 4) {
-        tagsToAdd.push('NL:' + rawText.replace(/,/g, '，'));
+    if (rawText.includes(',')) {
+        // Texto com vírgula(s) = múltiplas tags normais separadas por vírgula
+        // (fluxo padrão Danbooru: "red hair, blue eyes, standing").
+        // ANTES isso virava uma única tag "NL:" gigante, corrompendo o caption.
+        tagsToAdd = rawText.split(',').map(t => t.trim()).filter(t => t);
     } else {
-        tagsToAdd.push(rawText);
+        const wordCount = rawText.split(/\s+/).length;
+        if (wordCount > 4) {
+            // Frase longa sem vírgula nenhuma: trata como texto narrativo (NL).
+            tagsToAdd.push('NL:' + rawText);
+        } else {
+            tagsToAdd.push(rawText);
+        }
     }
 
     if(tagsToAdd.length === 0) return;
@@ -866,6 +884,23 @@ window.toggleFavTagsFilter = function() {
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 };
 
+/* ---------- PIN DE TAG (ALL DATASET TAGS) ----------
+   Fixa 1 tag no topo da lista "All Dataset Tags" como um filtro obrigatório
+   (igual a um "AND" de 1 tag só), somado ao que estiver selecionado no
+   AND/OR/XOR/NOT normal — permitindo 2 filtros diferentes ao mesmo tempo.
+   Fica visível até ser desfixada (clicando de novo no 📌 ou trocando o pin). */
+window.pinnedMasterTag = window.pinnedMasterTag || null;
+
+window.toggleMasterTagPin = function(tag) {
+    if (window.pinnedMasterTag === tag) {
+        window.pinnedMasterTag = null;
+    } else {
+        window.pinnedMasterTag = tag;
+    }
+    if (typeof renderMasterTagList === 'function') renderMasterTagList();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+};
+
 function renderMasterTagList() {
     const container = document.getElementById('master-tag-list'); container.innerHTML = '';
     
@@ -885,6 +920,26 @@ function renderMasterTagList() {
 
     let favTags = new Set(datasetConfig.favoriteTags || []);
     sortedMasterTags = Array.from(masterTagSet).sort();
+
+    /* ---------- TAG PINADA (fica grudada visualmente no topo da lista,
+       descendo junto com o scroll, até ser desfixada) ---------- */
+    if (window.pinnedMasterTag) {
+        const pTag = window.pinnedMasterTag;
+        const pCount = tagCounts.get(pTag) || 0;
+
+        const pItem = document.createElement('div');
+        pItem.className = 'master-tag-item pinned-master-tag-row';
+        pItem.style.cssText = 'position:sticky; top:0; z-index:5; border-left:3px solid #4db8ff; background:#0d1b2a;';
+        pItem.innerHTML = `
+            <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
+                <span class="tag-pin active" style="color:#4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Unpin this tag">📌</span>
+                <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${pCount}</span>
+                <span class="tag-name" style="color:#4db8ff; font-weight:bold;">${pTag}</span>
+            </div>
+        `;
+        pItem.querySelector('.tag-pin').onclick = (e) => { e.stopPropagation(); window.toggleMasterTagPin(pTag); };
+        container.appendChild(pItem);
+    }
     
     if (!window.showGhostTagsInList) {
         sortedMasterTags.forEach((tag, index) => {
@@ -922,8 +977,10 @@ function renderMasterTagList() {
                 }
             }
             
+            const isPinned = window.pinnedMasterTag === tag;
             item.innerHTML = `
                 <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
+                    <span class="tag-pin${isPinned ? ' active' : ''}" style="color: ${isPinned ? '#4db8ff' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Pin as a mandatory filter (like AND for this tag only)">📌</span>
                     <span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>
                     <span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>
                     <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
@@ -969,6 +1026,14 @@ function renderMasterTagList() {
                 }
             }
             
+            const pinEl = item.querySelector('.tag-pin');
+            if (pinEl) {
+                pinEl.onclick = (e) => {
+                    e.stopPropagation();
+                    window.toggleMasterTagPin(tag);
+                };
+            }
+
             const starEl = item.querySelector('.tag-star');
             starEl.onclick = async (e) => {
                 e.stopPropagation();
@@ -1006,7 +1071,7 @@ function renderMasterTagList() {
             item.ondblclick = (e) => { e.stopPropagation(); addTagToSelected(tag, document.getElementById('master-add-pos').value); };
             
             item.onclick = (e) => {
-                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) { 
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); globalRemoveTags([tag]); }
                     return; 
                 }
@@ -1146,9 +1211,28 @@ function applyFilters() {
         }
 
         let visible = true;
+
+        // FILTRO DE TEXTO POR NOME (estava sendo salvo em window.imageNameFilter
+        // mas nunca era realmente checado aqui — por isso não fazia nada).
+        if (visible && window.imageNameFilter) {
+            const nameLower = (img.name || '').toLowerCase();
+            if (!nameLower.includes(window.imageNameFilter)) visible = false;
+        }
+
+        // TAG FIXADA (PIN) — funciona como um "AND" obrigatório de 1 tag,
+        // independente e somado ao filtro normal (AND/OR/XOR/NOT) abaixo.
+        if (visible && window.pinnedMasterTag) {
+            if (img.type === 'tags' && img.content) {
+                const tags = img.content.split(',').map(t => t.trim());
+                if (!tags.includes(window.pinnedMasterTag)) visible = false;
+            } else {
+                visible = false;
+            }
+        }
+
         const totalSelected = masterSelectedTags.size + masterSelectedGhostTags.size;
         
-        if (window.imageFilterMode !== 'ALL') {
+        if (visible && window.imageFilterMode !== 'ALL') {
             let hasTag = false;
             let hasNL = false;
             if (img.type === 'nl') {
