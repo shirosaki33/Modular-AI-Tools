@@ -1,178 +1,25 @@
 /* =========================================================================
-   UI CORE & SYSTEM LOGIC - TAG MANAGER (NON-RECURSIVE, LIST SAVE)
-   Handles resizers, modals, list rendering, renaming, replacing, and filters.
+   UI CORE & SYSTEM LOGIC
+   Handles initialization, settings, resizers, file loading, modals.
 ========================================================================= */
-
-window.showGhostTagsInList = false;
-
-window._hiddenImagesStoreMap = new Map();
-window._defaultHiddenSet = new Set();
-function getHiddenSetForHandle(handle) {
-    if (!handle) return window._defaultHiddenSet;
-    if (!window._hiddenImagesStoreMap.has(handle)) window._hiddenImagesStoreMap.set(handle, new Set());
-    return window._hiddenImagesStoreMap.get(handle);
-}
-Object.defineProperty(window, 'hiddenImagesStore', {
-    get() { return getHiddenSetForHandle(window.currentImagesHandle); },
-    configurable: true
-});
-
-window.sortedActiveTags = window.sortedActiveTags || [];
-
-window.rootHandle = null;
-window.sub1Handles = new Map();
-window.sub2Handles = new Map();
-window.currentImagesHandle = null;
-
-let imageFiles = []; 
-let selectedIndices = new Set();
-
-let masterTagSet = new Set(); 
-let masterSelectedTags = new Set(); 
-let masterSelectedGhostTags = new Set();
-let activeSelectedTags = new Set();
-
-let datasetConfig = {}; 
-let pendingTagsStore = {}; 
-window.filterMode = 'NONE'; 
-
-window.imageNameFilter = '';
-window.tagNameFilter = '';
-window.presetTagNameFilter = '';
-
-window.activeSearchMode = true;
-window.masterSearchMode = true;
-window.presetSearchMode = true;
-
-window.imageFilterMode = 'ALL';
-window.cycleImageFilter = function() {
-    const states = ['ALL', 'TAGS', 'NL'];
-    const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
-    let idx = states.indexOf(window.imageFilterMode);
-    idx = (idx + 1) % states.length;
-    window.imageFilterMode = states[idx];
-    
-    const btn1 = document.getElementById('btn-img-filter-sel');
-    if (btn1) btn1.textContent = labels[window.imageFilterMode];
-
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-};
 
 window.toggleSearchMode = function(context) {
     if (context === 'active') {
         window.activeSearchMode = !window.activeSearchMode;
         document.getElementById('btn-active-search-toggle').classList.toggle('active', window.activeSearchMode);
-        window.filterActiveTagsByName(window.activeSearchMode ? document.getElementById('active-add-input').value : '');
+        if(typeof window.filterActiveTagsByName === 'function') window.filterActiveTagsByName(window.activeSearchMode ? document.getElementById('active-add-input').value : '');
         window.saveSetting('search-mode-active', window.activeSearchMode);
     } else if (context === 'master') {
         window.masterSearchMode = !window.masterSearchMode;
         document.getElementById('btn-master-search-toggle').classList.toggle('active', window.masterSearchMode);
-        window.filterMasterTagsByName(window.masterSearchMode ? document.getElementById('master-add-input').value : '');
+        if(typeof window.filterMasterTagsByName === 'function') window.filterMasterTagsByName(window.masterSearchMode ? document.getElementById('master-add-input').value : '');
         window.saveSetting('search-mode-master', window.masterSearchMode);
     } else if (context === 'preset') {
         window.presetSearchMode = !window.presetSearchMode;
         document.getElementById('btn-preset-search-toggle').classList.toggle('active', window.presetSearchMode);
-        window.filterPresetTagsByName(window.presetSearchMode ? document.getElementById('preset-add-input').value : '');
+        if(typeof window.filterPresetTagsByName === 'function') window.filterPresetTagsByName(window.presetSearchMode ? document.getElementById('preset-add-input').value : '');
         window.saveSetting('search-mode-preset', window.presetSearchMode);
     }
-};
-
-const dbName = 'GalleryDB';
-const storeName = 'directories';
-
-window.initDB = function() { 
-    return new Promise((res, rej) => { 
-        try {
-            const req = indexedDB.open(dbName, 1); 
-            req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); 
-            req.onsuccess = e => res(e.target.result); 
-            req.onerror = e => rej(e.target.error); 
-        } catch (err) { rej(err); }
-    }); 
-}
-
-window.saveHandle = async function(n, h) { 
-    try {
-        const db = await window.initDB(); 
-        return new Promise(r => { 
-            const tx = db.transaction(storeName, 'readwrite'); 
-            tx.objectStore(storeName).put(h, n); 
-            tx.oncomplete = r; 
-        }); 
-    } catch (e) {}
-}
-
-window.getHandles = async function() { 
-    try {
-        const db = await window.initDB(); 
-        return new Promise(r => { 
-            const tx = db.transaction(storeName, 'readonly'); 
-            const store = tx.objectStore(storeName); 
-            const keysReq = store.getAllKeys(); 
-            const valsReq = store.getAll(); 
-            tx.oncomplete = () => { 
-                const result = []; 
-                for (let i = 0; i < keysReq.result.length; i++) { 
-                    const name = keysReq.result[i]; 
-                    if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] }); 
-                } 
-                r(result); 
-            }; 
-        }); 
-    } catch (e) { return []; }
-}
-
-window.deleteHandle = async function(n) { 
-    try {
-        const db = await window.initDB(); 
-        return new Promise(r => { 
-            const tx = db.transaction(storeName, 'readwrite'); 
-            tx.objectStore(storeName).delete(n); 
-            tx.objectStore(storeName).delete('path_' + n); 
-            tx.oncomplete = r; 
-        }); 
-    } catch (e) {}
-}
-
-const settingsDbName = 'SettingsDB';
-const settingsStoreName = 'settings';
-
-window.initSettingsDB = function() {
-    return new Promise((res, rej) => {
-        try {
-            const req = indexedDB.open(settingsDbName, 1);
-            req.onupgradeneeded = e => {
-                if (!e.target.result.objectStoreNames.contains(settingsStoreName)) {
-                    e.target.result.createObjectStore(settingsStoreName, { keyPath: 'id' });
-                }
-            };
-            req.onsuccess = e => res(e.target.result);
-            req.onerror = e => rej(e.target.error);
-        } catch (err) { rej(err); }
-    });
-};
-
-window.saveSetting = async function(id, value) {
-    try {
-        const db = await window.initSettingsDB();
-        return new Promise(r => {
-            const tx = db.transaction(settingsStoreName, 'readwrite');
-            tx.objectStore(settingsStoreName).put({ id: id, value: value });
-            tx.oncomplete = () => r();
-        });
-    } catch (e) {}
-};
-
-window.getSetting = async function(id, defaultValue) {
-    try {
-        const db = await window.initSettingsDB();
-        return new Promise(r => {
-            const tx = db.transaction(settingsStoreName, 'readonly');
-            const req = tx.objectStore(settingsStoreName).get(id);
-            req.onsuccess = () => r(req.result !== undefined ? req.result.value : defaultValue);
-            req.onerror = () => r(defaultValue);
-        });
-    } catch (e) { return defaultValue; }
 };
 
 window.loadSettings = async function() {
@@ -196,6 +43,11 @@ window.loadSettings = async function() {
     const autocompleteActive = await window.getSetting('autocomplete-used-only-active', false);
     const autocompleteMaster = await window.getSetting('autocomplete-used-only-master', false);
     const autocompleteReplace = await window.getSetting('autocomplete-used-only-replace', false);
+
+    window.danbooruCache = await window.getSetting('danbooru_tag_cache', {});
+    const danbooruCounts = await window.getSetting('toggle-danbooru-counts', false);
+    window.showDanbooruCounts = danbooruCounts;
+    if (document.getElementById('toggle-danbooru-counts')) document.getElementById('toggle-danbooru-counts').checked = danbooruCounts;
 
     if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
     if (document.getElementById('toggle-unsaved-alert')) document.getElementById('toggle-unsaved-alert').checked = unsavedAlert;
@@ -243,10 +95,95 @@ window.loadSettings = async function() {
     }
 };
 
+window.toggleDanbooruCounts = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-danbooru-counts');
+    if (checkbox) {
+        window.showDanbooruCounts = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-danbooru-counts', checkbox.checked);
+    }
+    
+    if (window.showDanbooruCounts && masterTagSet.size > 0) {
+        window.syncDanbooruTags(Array.from(masterTagSet));
+    } else {
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    }
+};
+
+window.manualDanbooruSync = function() {
+    if (!window.showDanbooruCounts) {
+        window.showAlert("Enable Danbooru counts in settings first.", "warn");
+        return;
+    }
+    window.syncDanbooruTags(Array.from(masterTagSet), true);
+};
+
+let _danbooruSyncActive = false;
+window.syncDanbooruTags = async function(tags, force = false) {
+    if (!window.showDanbooruCounts || _danbooruSyncActive) return;
+    _danbooruSyncActive = true;
+    
+    const now = Date.now();
+    const fifteenDays = 15 * 24 * 60 * 60 * 1000;
+    
+    let tagsToFetch = tags.filter(t => {
+        if (t.startsWith('NL:')) return false;
+        if (force) return true;
+        const cached = window.danbooruCache[t];
+        if (!cached) return true;
+        if (now - cached.ts > fifteenDays) return true;
+        return false;
+    });
+
+    if (tagsToFetch.length === 0) {
+        if (force) window.showAlert("All dataset tags are up to date in cache!", "info");
+        _danbooruSyncActive = false;
+        return;
+    }
+
+    const chunkSize = 50;
+    let cacheUpdated = false;
+
+    for (let i = 0; i < tagsToFetch.length; i += chunkSize) {
+        if (!window.showDanbooruCounts) break;
+        
+        const chunk = tagsToFetch.slice(i, i + chunkSize);
+        const query = chunk.map(t => encodeURIComponent(t.replace(/ /g, '_'))).join(',');
+        
+        try {
+            const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name_comma]=${query}`);
+            if (res.ok) {
+                const data = await res.json();
+                
+                chunk.forEach(t => {
+                    window.danbooruCache[t] = { count: 0, ts: now };
+                });
+
+                data.forEach(dt => {
+                    const tName = dt.name.replace(/_/g, ' ');
+                    if(window.danbooruCache[tName]) {
+                        window.danbooruCache[tName].count = parseInt(dt.post_count) || 0;
+                    }
+                });
+
+                cacheUpdated = true;
+                await window.saveSetting('danbooru_tag_cache', window.danbooruCache);
+                
+                if (typeof window.renderEditor === 'function') window.renderEditor();
+                if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+            }
+        } catch(e) {}
+        
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    
+    _danbooruSyncActive = false;
+};
+
 window.addEventListener('DOMContentLoaded', async () => {
     try {
         await window.loadSettings(); 
-        window.renderPresetTags();
+        if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
         await window.updateSelect();
         const handles = await window.getHandles();
         if (handles.length > 0) {
@@ -264,7 +201,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 window.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); window.saveAllImages(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { 
+        e.preventDefault(); 
+        if (typeof window.saveAllImages === 'function') window.saveAllImages(); 
+    }
 });
 
 window.showAlert = function(msg, type = 'success') {
@@ -285,12 +225,11 @@ window.initSystem = function() {
     }
 };
 
-let _thumbSizeRAF = null;
 window.updateThumbSize = function(val, skipSave = false) {
-    if (_thumbSizeRAF) cancelAnimationFrame(_thumbSizeRAF);
-    _thumbSizeRAF = requestAnimationFrame(() => {
+    if (window._thumbSizeRAF) cancelAnimationFrame(window._thumbSizeRAF);
+    window._thumbSizeRAF = requestAnimationFrame(() => {
         document.documentElement.style.setProperty('--thumb-size', val + 'px');
-        _thumbSizeRAF = null;
+        window._thumbSizeRAF = null;
     });
     if (!skipSave) window.saveSetting('thumb-size', val);
 };
@@ -402,14 +341,14 @@ window.markDirty = function(imgs) {
     const arr = Array.isArray(imgs) ? imgs : [imgs];
     let changed = false;
     arr.forEach(img => { if (img && !img.dirty) { img.dirty = true; changed = true; } });
-    if (changed) window.updateUnsavedChangesUI();
+    if (changed && typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 };
 
 window.markClean = function(imgs) {
     const arr = Array.isArray(imgs) ? imgs : [imgs];
     let changed = false;
     arr.forEach(img => { if (img && img.dirty) { img.dirty = false; changed = true; } });
-    if (changed) window.updateUnsavedChangesUI();
+    if (changed && typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 };
 
 window.updateUnsavedChangesUI = function() {
@@ -519,7 +458,7 @@ window.markDatasetEdited = function() {
     datasetConfig.lastEdited = new Date().toLocaleString();
     window.updateLastEditedUI();
     const handle = window.currentImagesHandle || window.rootHandle;
-    if (handle) saveDatasetConfig(handle);
+    if (handle) window.saveDatasetConfig(handle);
 };
 
 window.showHelp = () => document.getElementById('modal-help').classList.add('active');
@@ -717,14 +656,12 @@ window.refreshDataset = async function() {
     }
 
     imageFiles.forEach((img, i) => { if (selectedBaseNames.includes(img.baseName)) selectedIndices.add(i); });
-    window.updateListSelectionVisuals();
+    if(typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
     if(selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
     window.showAlert(`Refreshed! ${imageFiles.length} images loaded.`);
 };
 
 window.loadGallery = async function(dirHandle) {
-    // Salva qualquer edição pendente ANTES de descartar o imageFiles atual,
-    // evitando perder tags digitadas mas ainda não salvas ao trocar de pasta.
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
 
     window.rootHandle = dirHandle;
@@ -739,21 +676,21 @@ window.loadGallery = async function(dirHandle) {
     sel1.style.display = 'none';
     sel2.style.display = 'none';
 
-    await loadDatasetConfig(dirHandle);
-    await loadPendingTagsStore(dirHandle);
+    await window.loadDatasetConfig(dirHandle);
+    await window.loadPendingTagsStore(dirHandle);
 
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
 
     for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await processSingleImage(entry, dirHandle, configNeedsSave);
+            configNeedsSave = await window.processSingleImage(entry, dirHandle, configNeedsSave);
         } else if (entry.kind === 'directory') {
             window.sub1Handles.set(entry.name, entry);
         }
     }
 
-    if (configNeedsSave) await saveDatasetConfig(dirHandle);
+    if (configNeedsSave) await window.saveDatasetConfig(dirHandle);
 
     if (window.sub1Handles.size > 0) {
         sel1.style.display = 'inline-block';
@@ -763,7 +700,7 @@ window.loadGallery = async function(dirHandle) {
         }
     }
 
-    finishLoading();
+    window.finishLoading();
 };
 
 window.loadSubDir1 = async function() {
@@ -775,7 +712,6 @@ window.loadSubDir1 = async function() {
         return;
     }
 
-    // Salva qualquer edição pendente ANTES de descartar o imageFiles atual.
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
 
     window.currentImagesHandle = window.sub1Handles.get(val); 
@@ -783,21 +719,21 @@ window.loadSubDir1 = async function() {
     sel2.style.display = 'none';
     sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
 
-    await loadDatasetConfig(window.currentImagesHandle);
-    await loadPendingTagsStore(window.currentImagesHandle);
+    await window.loadDatasetConfig(window.currentImagesHandle);
+    await window.loadPendingTagsStore(window.currentImagesHandle);
 
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
 
     for await (const entry of window.currentImagesHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await processSingleImage(entry, window.currentImagesHandle, configNeedsSave);
+            configNeedsSave = await window.processSingleImage(entry, window.currentImagesHandle, configNeedsSave);
         } else if (entry.kind === 'directory') {
             window.sub2Handles.set(entry.name, entry);
         }
     }
 
-    if (configNeedsSave) await saveDatasetConfig(window.currentImagesHandle);
+    if (configNeedsSave) await window.saveDatasetConfig(window.currentImagesHandle);
 
     if (window.sub2Handles.size > 0) {
         sel2.style.display = 'inline-block';
@@ -806,7 +742,7 @@ window.loadSubDir1 = async function() {
         }
     }
 
-    finishLoading();
+    window.finishLoading();
 };
 
 window.loadSubDir2 = async function() {
@@ -817,29 +753,28 @@ window.loadSubDir2 = async function() {
         return;
     }
 
-    // Salva qualquer edição pendente ANTES de descartar o imageFiles atual.
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
 
     const targetHandle = window.sub2Handles.get(val);
     window.currentImagesHandle = targetHandle;
 
-    await loadDatasetConfig(targetHandle);
-    await loadPendingTagsStore(targetHandle);
+    await window.loadDatasetConfig(targetHandle);
+    await window.loadPendingTagsStore(targetHandle);
 
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
     
     for await (const entry of targetHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await processSingleImage(entry, targetHandle, configNeedsSave);
+            configNeedsSave = await window.processSingleImage(entry, targetHandle, configNeedsSave);
         }
     }
 
-    if (configNeedsSave) await saveDatasetConfig(targetHandle);
-    finishLoading();
+    if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+    window.finishLoading();
 };
 
-function detectFormat(text) {
+window.detectFormat = function(text) {
     if (!text) return 'tags';
     if (text.includes('\n')) return 'nl';
     if ((text.match(/\./g) || []).length > 0 && (text.match(/,/g) || []).length < (text.match(/\./g) || []).length * 2) return 'nl';
@@ -847,7 +782,7 @@ function detectFormat(text) {
     return 'tags';
 }
 
-async function processSingleImage(entry, parentHandle, configNeedsSave) {
+window.processSingleImage = async function(entry, parentHandle, configNeedsSave) {
     const file = await entry.getFile();
     const baseName = entry.name.substring(0, entry.name.lastIndexOf('.'));
     let content = ""; let hasFile = false; let ext = "txt"; 
@@ -871,7 +806,7 @@ async function processSingleImage(entry, parentHandle, configNeedsSave) {
         type = datasetConfig[baseName].type || "tags";
         ext = datasetConfig[baseName].ext || ext; 
     } else {
-        type = detectFormat(content);
+        type = window.detectFormat(content);
         configNeedsSave = true; 
     }
 
@@ -893,14 +828,14 @@ async function processSingleImage(entry, parentHandle, configNeedsSave) {
     return configNeedsSave;
 }
 
-function finishLoading() {
+window.finishLoading = function() {
     imageFiles.sort((a,b) => a.name.localeCompare(b.name));
     document.getElementById('list-count').textContent = imageFiles.length;
     
     window.updateLastEditedUI();
     window.updateTagsDatalist();
-    window.updateUnhideButton();
-    window.renderImageList(); 
+    if(typeof window.updateUnhideButton === 'function') window.updateUnhideButton();
+    if(typeof window.renderImageList === 'function') window.renderImageList(); 
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.checkBatchReadyState === "function") window.checkBatchReadyState();
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
@@ -910,7 +845,7 @@ function finishLoading() {
         document.getElementById('btn-save-active').style.display = 'inline-block';
         const activeFilter = document.getElementById('btn-active-tag-filter');
         if (activeFilter) activeFilter.style.display = 'inline-block';
-        window.handleListClick(0, false, false); 
+        if(typeof window.handleListClick === 'function') window.handleListClick(0, false, false); 
     } else {
         document.getElementById('btn-save-all').style.display = 'none';
         document.getElementById('btn-save-active').style.display = 'none';
@@ -918,9 +853,13 @@ function finishLoading() {
         if (activeFilter) activeFilter.style.display = 'none';
         if (typeof window.renderEditor === 'function') window.renderEditor();
     }
+
+    if (window.showDanbooruCounts && masterTagSet.size > 0) {
+        window.syncDanbooruTags(Array.from(masterTagSet));
+    }
 }
 
-async function loadDatasetConfig(dirHandle) {
+window.loadDatasetConfig = async function(dirHandle) {
     try {
         const configHandle = await dirHandle.getFileHandle('_tagger_config.json');
         const file = await configHandle.getFile();
@@ -929,7 +868,7 @@ async function loadDatasetConfig(dirHandle) {
     window.updateLastEditedUI();
 }
 
-async function saveDatasetConfig(dirHandle) {
+window.saveDatasetConfig = async function(dirHandle) {
     if (!dirHandle) return;
     try {
         const configHandle = await dirHandle.getFileHandle('_tagger_config.json', { create: true });
@@ -939,7 +878,7 @@ async function saveDatasetConfig(dirHandle) {
     } catch(e) {}
 }
 
-async function loadPendingTagsStore(dirHandle) {
+window.loadPendingTagsStore = async function(dirHandle) {
     try {
         const h = await dirHandle.getFileHandle('_pending_tags.json');
         const file = await h.getFile();
@@ -947,7 +886,7 @@ async function loadPendingTagsStore(dirHandle) {
     } catch(e) { pendingTagsStore = {}; }
 }
 
-async function savePendingTagsStore(dirHandle) {
+window.savePendingTagsStore = async function(dirHandle) {
     if (!dirHandle) return;
     try {
         Object.keys(pendingTagsStore).forEach(k => {
@@ -963,7 +902,6 @@ async function savePendingTagsStore(dirHandle) {
         await writable.close();
     } catch(e) {}
 }
-window.savePendingTagsStore = savePendingTagsStore;
 
 window.updateSelectedConfig = async function() {
     if (selectedIndices.size === 0) return;
@@ -981,8 +919,8 @@ window.updateSelectedConfig = async function() {
 
     if (changedImages.length > 0) window.markDirty(changedImages);
     window.markDatasetEdited();
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    window.refreshListStatus();
+    window.updateTagsDatalist();
+    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
@@ -998,232 +936,6 @@ window.updateTagsDatalist = function() {
         opt.value = tag; datalist.appendChild(opt);
     });
 };
-
-window.hideSelectedImages = function() {
-    if (selectedIndices.size === 0) return;
-
-    let hiddenCount = 0;
-    selectedIndices.forEach(idx => {
-        const img = imageFiles[idx];
-        if (!img.hidden) {
-            img.hidden = true;
-            window.hiddenImagesStore.add(img.baseName);
-            if (img.element) img.element.classList.remove('selected');
-            hiddenCount++;
-        }
-    });
-
-    window.updateUnhideButton();
-    window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-    window.updateListSelectionVisuals();
-
-    window.showAlert(`Hid ${hiddenCount} image(s). Use 👁️‍🗨️ Unhide to restore.`, "success");
-};
-
-window.unhideAllImages = function() {
-    let changed = false;
-    imageFiles.forEach(img => {
-        if (img.hidden) { img.hidden = false; changed = true; }
-    });
-    window.hiddenImagesStore.clear(); 
-    if (changed) {
-        window.updateUnhideButton();
-        window.renderImageList();
-        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-        if (typeof window.applyFilters === 'function') window.applyFilters();
-        window.updateListSelectionVisuals();
-
-        if (selectedIndices.size === 0 && imageFiles.length > 0) {
-            window.handleListClick(0, false, false);
-        }
-    }
-};
-
-window.updateUnhideButton = function() {
-    const btn = document.getElementById('btn-unhide-all');
-    const hasHidden = window.hiddenImagesStore.size > 0 || imageFiles.some(img => img.hidden);
-    if (btn) btn.style.display = hasHidden ? 'inline-block' : 'none';
-};
-
-window.enterFocusMode = function() {
-    if (selectedIndices.size === 0) { window.showAlert("Select at least one image first!", "warn"); return; }
-
-    const keepVisible = new Set(Array.from(selectedIndices).map(i => imageFiles[i].baseName));
-    let hiddenCount = 0;
-
-    imageFiles.forEach(img => {
-        if (!keepVisible.has(img.baseName) && !img.hidden) {
-            img.hidden = true;
-            window.hiddenImagesStore.add(img.baseName);
-            if (img.element) img.element.classList.remove('selected');
-            hiddenCount++;
-        }
-    });
-
-    window.updateUnhideButton();
-    window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-    window.updateListSelectionVisuals();
-
-    window.showAlert(`Focus mode: hid ${hiddenCount} other image(s). Use 👁️‍🗨️ Unhide to restore.`, "success");
-};
-
-window.openRenameModal = function() {
-    if(selectedIndices.size === 0) return;
-    const idx = Array.from(selectedIndices)[0];
-    document.getElementById('rename-input').value = imageFiles[idx].baseName;
-    document.getElementById('rename-dropdown').classList.add('open');
-    document.getElementById('rename-input').focus();
-}
-
-window.confirmRename = async function() {
-    if(selectedIndices.size === 0) return;
-    const newBaseName = document.getElementById('rename-input').value.trim();
-    if (!newBaseName) { document.getElementById('rename-dropdown').classList.remove('open'); return; }
-
-    document.getElementById('rename-dropdown').classList.remove('open');
-    const indices = Array.from(selectedIndices).sort((a,b) => a - b);
-    const isMulti = indices.length > 1;
-    let count = 1; let renamedCount = 0;
-
-    for (let idx of indices) {
-        const img = imageFiles[idx];
-        const oldName = img.name;
-        const oldExt = oldName.split('.').pop();
-        
-        const finalBaseName = isMulti ? `${newBaseName}_${count}` : newBaseName;
-        const newName = `${finalBaseName}.${oldExt}`;
-
-        if (oldName === newName) { count++; continue; }
-
-        try {
-            const oldImgHandle = await img.parentDirHandle.getFileHandle(oldName);
-            const oldImgFile = await oldImgHandle.getFile();
-            const newImgHandle = await img.parentDirHandle.getFileHandle(newName, {create: true});
-            const writableImg = await newImgHandle.createWritable();
-            await writableImg.write(await oldImgFile.arrayBuffer());
-            await writableImg.close();
-            await img.parentDirHandle.removeEntry(oldName);
-
-            const textFormat = img.ext || 'txt';
-            const oldTextName = `${img.baseName}.${textFormat}`;
-            const newTextName = `${finalBaseName}.${textFormat}`;
-            
-            if (img.hasFile) {
-                try {
-                    const oldTextHandle = await img.parentDirHandle.getFileHandle(oldTextName);
-                    const oldTextFile = await oldTextHandle.getFile();
-                    const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, {create: true});
-                    const writableText = await newTextHandle.createWritable();
-                    await writableText.write(await oldTextFile.arrayBuffer());
-                    await writableText.close();
-                    await img.parentDirHandle.removeEntry(oldTextName);
-                } catch(e) {}
-            }
-
-            if (datasetConfig[img.baseName]) {
-                datasetConfig[finalBaseName] = datasetConfig[img.baseName];
-                delete datasetConfig[img.baseName];
-            }
-            if (pendingTagsStore[img.baseName]) {
-                pendingTagsStore[finalBaseName] = pendingTagsStore[img.baseName];
-                delete pendingTagsStore[img.baseName];
-            }
-            if (window.hiddenImagesStore.has(img.baseName)) {
-                window.hiddenImagesStore.delete(img.baseName);
-                window.hiddenImagesStore.add(finalBaseName);
-            }
-            img.name = newName; img.baseName = finalBaseName;
-            renamedCount++;
-        } catch(e) { console.error("Rename Error:", e); }
-        count++;
-    }
-
-    if(renamedCount > 0) {
-        window.markDatasetEdited();
-        await savePendingTagsStore(window.currentImagesHandle);
-        window.showAlert(`Renamed ${renamedCount} files!`, "success");
-        await window.refreshDataset(); 
-    }
-}
-
-window.openCloneModal = function() {
-    if (selectedIndices.size === 0) { window.showAlert("Select at least one image first!", "warn"); return; }
-    document.getElementById('clone-count-input').value = 1;
-    document.getElementById('clone-dropdown').classList.add('open');
-    document.getElementById('clone-count-input').focus();
-    document.getElementById('clone-count-input').select();
-}
-
-window.confirmClone = async function() {
-    if (selectedIndices.size === 0) { document.getElementById('clone-dropdown').classList.remove('open'); return; }
-
-    const count = parseInt(document.getElementById('clone-count-input').value, 10);
-    document.getElementById('clone-dropdown').classList.remove('open');
-    if (!count || count < 1) return;
-
-    const indices = Array.from(selectedIndices);
-    let clonedCount = 0;
-
-    const existingBaseNames = new Set(imageFiles.map(f => f.baseName));
-
-    for (let idx of indices) {
-        const img = imageFiles[idx];
-        const oldExt = img.name.substring(img.name.lastIndexOf('.') + 1);
-
-        for (let n = 1; n <= count; n++) {
-            let newBaseName = `${img.baseName}_${n}`;
-            let bump = 1;
-            while (existingBaseNames.has(newBaseName)) {
-                bump++;
-                newBaseName = `${img.baseName}_${n}_${bump}`;
-            }
-            existingBaseNames.add(newBaseName);
-            const newImgName = `${newBaseName}.${oldExt}`;
-
-            try {
-                const imgFile = await img.handle.getFile();
-                const newImgHandle = await img.parentDirHandle.getFileHandle(newImgName, { create: true });
-                const writableImg = await newImgHandle.createWritable();
-                await writableImg.write(await imgFile.arrayBuffer());
-                await writableImg.close();
-
-                if (img.hasFile) {
-                    const textFormat = img.ext || 'txt';
-                    const oldTextName = `${img.baseName}.${textFormat}`;
-                    const newTextName = `${newBaseName}.${textFormat}`;
-                    try {
-                        const oldTextHandle = await img.parentDirHandle.getFileHandle(oldTextName);
-                        const oldTextFile = await oldTextHandle.getFile();
-                        const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, { create: true });
-                        const writableText = await newTextHandle.createWritable();
-                        await writableText.write(await oldTextFile.arrayBuffer());
-                        await writableText.close();
-                    } catch (e) {}
-                }
-
-                if (datasetConfig[img.baseName]) {
-                    datasetConfig[newBaseName] = { ...datasetConfig[img.baseName] };
-                }
-                clonedCount++;
-            } catch (e) { console.error("Clone Error:", e); }
-        }
-    }
-
-    if (clonedCount > 0) {
-        await saveDatasetConfig(window.currentImagesHandle || window.rootHandle);
-        window.markDatasetEdited();
-        window.showAlert(`Cloned ${clonedCount} file(s)!`, "success");
-        await window.refreshDataset();
-    }
-}
-
-let replaceScope = 'active';
 
 window.openReplaceTagModal = function(scope) {
     replaceScope = scope;
@@ -1283,7 +995,7 @@ window.confirmReplaceTag = async function() {
 
     try {
         if (replacedCount > 0) {
-            window.renderImageList();
+            if(typeof window.renderImageList === 'function') window.renderImageList();
             if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
             if (typeof window.renderEditor === 'function') window.renderEditor();
             if (typeof window.applyFilters === 'function') window.applyFilters();
@@ -1311,74 +1023,10 @@ window.setLogic = function(mode) {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 };
 
-let lastSelectedIndex = 0;
-
-window.handleListClick = function(index, shiftKey, ctrlKey) {
-    if (shiftKey && selectedIndices.size > 0) {
-        const start = Math.min(lastSelectedIndex, index), end = Math.max(lastSelectedIndex, index);
-        selectedIndices.clear(); 
-        for (let i = start; i <= end; i++) {
-            if (imageFiles[i].element && imageFiles[i].element.style.display !== 'none') {
-                selectedIndices.add(i);
-            }
-        }
-    } else if (ctrlKey) {
-        if (selectedIndices.has(index)) selectedIndices.delete(index); else selectedIndices.add(index);
-        lastSelectedIndex = index;
-    } else {
-        if (selectedIndices.has(index) && selectedIndices.size === 1) {
-            selectedIndices.clear();
-        } else {
-            selectedIndices.clear(); selectedIndices.add(index); lastSelectedIndex = index;
-        }
-    }
-    activeSelectedTags.clear(); 
-    window.updateListSelectionVisuals(); 
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-}
-
-window.renderImageList = function() {
-    const listDiv = document.getElementById('image-list'); listDiv.innerHTML = '';
-    imageFiles.forEach((img, index) => {
-        if (img.hidden) {
-            if (img.element) img.element.style.display = 'none';
-            return;
-        }
-
-        const div = document.createElement('div');
-        let currentExt = img.ext || 'txt';
-        let typeBadge = img.hasFile ? (img.type === 'nl' ? `📝 NL (.${currentExt})` : `🏷️ Tags (.${currentExt})`) : 'Empty';
-        const suggestCount = (img.pendingAdd && img.pendingAdd.length) ? img.pendingAdd.length : 0;
-        const suggestBadge = suggestCount > 0 ? `<span class="suggest-badge">💡${suggestCount}</span>` : '';
-        
-        div.className = `list-item ${img.hasFile ? (img.type === 'nl' ? 'is-nl' : 'has-data') : ''}`;
-        div.innerHTML = `
-            <img src="${img.url}">
-            <div class="list-item-info">
-                <div class="list-item-name">${img.name}</div>
-                <div class="list-item-status">${typeBadge}${suggestBadge}</div>
-            </div>
-        `;
-        div.onclick = (e) => window.handleListClick(index, e.shiftKey, e.ctrlKey || e.metaKey);
-        div.ondblclick = () => { document.getElementById('image-popout').src = img.url; window.openModal('modal-image'); };
-        img.element = div; listDiv.appendChild(div);
-    });
-    
-    window.updateListSelectionVisuals();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-    window.updateSuggestFilterVisibility();
-}
-
-window.filterImagesByName = function(val) {
-    window.imageNameFilter = (val || '').trim().toLowerCase();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-};
-
-function applyTagNameFilterToDOM() {
+window.applyTagNameFilterToDOM = function() {
     const container = document.getElementById('master-tag-list');
     if (!container) return;
     container.querySelectorAll('.master-tag-item').forEach(item => {
-        // A tag fixada (📌) fica sempre visível, mesmo com um filtro de busca ativo.
         if (item.classList.contains('pinned-master-tag-row')) { item.style.display = 'flex'; return; }
         const nameEl = item.querySelector('.tag-name');
         const text = (nameEl ? nameEl.textContent : item.textContent).toLowerCase();
@@ -1388,7 +1036,7 @@ function applyTagNameFilterToDOM() {
 
 window.filterMasterTagsByName = function(val) {
     window.tagNameFilter = (val || '').trim().toLowerCase();
-    applyTagNameFilterToDOM();
+    window.applyTagNameFilterToDOM();
 };
 
 window.toggleSuggestFilterImg = function() {
@@ -1453,450 +1101,13 @@ window.discardAllSuggestions = async function() {
     masterSelectedGhostTags.clear();
 
     const handle = window.currentImagesHandle || window.rootHandle;
-    await savePendingTagsStore(handle);
+    if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
 
     window.showGhostTagsInList = false;
     if (typeof window.renderImageList === 'function') window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
+    if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 
     window.showAlert("All pending suggestions discarded.", "success");
-};
-
-window.updateListSelectionVisuals = function() {
-    imageFiles.forEach((img, i) => {
-        if (selectedIndices.has(i)) {
-            if (img.element) img.element.classList.add('selected'); 
-        } else {
-            if (img.element) img.element.classList.remove('selected');
-        }
-    });
-    const listActions = document.getElementById('list-selection-actions');
-    if(listActions) listActions.style.display = selectedIndices.size > 0 ? 'flex' : 'none';
-}
-
-window.refreshListStatus = function() {
-    imageFiles.forEach(img => {
-        if(img.hasFile && img.element) {
-            img.element.className = img.type === 'nl' ? 'list-item is-nl' : 'list-item has-data';
-            img.element.querySelector('.list-item-status').textContent = img.type === 'nl' ? `📝 NL (.${img.ext})` : `🏷️ Tags (.${img.ext})`;
-        }
-    });
-    window.updateListSelectionVisuals();
-}
-
-window.deleteSingleImage = async function(e, index) {
-    e.stopPropagation();
-    if(!confirm(`Delete this image and its text data permanently from disk?`)) return;
-    try {
-        const img = imageFiles[index];
-        await img.parentDirHandle.removeEntry(img.name);
-        try { await img.parentDirHandle.removeEntry(img.baseName + '.txt'); } catch(err){}
-        try { await img.parentDirHandle.removeEntry(img.baseName + '.json'); } catch(err){}
-        
-        if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
-        if (pendingTagsStore[img.baseName]) { delete pendingTagsStore[img.baseName]; await savePendingTagsStore(window.currentImagesHandle); }
-        if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
-        
-        window.markDatasetEdited();
-        window.showAlert(`Deleted file.`, 'success');
-        await window.refreshDataset();
-    } catch(err) { window.showAlert("Error deleting file.", "error"); }
-}
-
-window.deleteSelectedImages = async function() {
-    if(selectedIndices.size === 0) return;
-    if(!confirm(`Delete ${selectedIndices.size} image(s) and text data permanently from disk?`)) return;
-    
-    const indices = Array.from(selectedIndices).sort((a,b) => b - a);
-    let deletedCount = 0;
-    
-    for(let i of indices) {
-        const img = imageFiles[i];
-        try {
-            await img.parentDirHandle.removeEntry(img.name);
-            try { await img.parentDirHandle.removeEntry(img.baseName + '.txt'); } catch(err){}
-            try { await img.parentDirHandle.removeEntry(img.baseName + '.json'); } catch(err){}
-            if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
-            if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
-            if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
-            deletedCount++;
-        } catch(e) {}
-    }
-    
-    if(deletedCount > 0) {
-        window.markDatasetEdited();
-        await savePendingTagsStore(window.currentImagesHandle);
-        window.showAlert(`Deleted ${deletedCount} files.`, 'success');
-        await window.refreshDataset();
-    }
-}
-
-window.saveActiveSelectedImages = async function(silent = false) {
-    if (!window.currentImagesHandle && !window.rootHandle || selectedIndices.size === 0) return;
-    let savedCount = 0;
-    const promises = Array.from(selectedIndices).map(async (idx) => {
-        const img = imageFiles[idx];
-        if (img.hasFile && img.dirty) {
-            const ok = await window.saveImageToDisk(img);
-            if (ok) savedCount++;
-        }
-    });
-    await Promise.all(promises);
-    if(savedCount > 0) window.markDatasetEdited();
-    if(!silent) window.showAlert(savedCount > 0 ? `Saved ${savedCount} file(s) with pending changes.` : `No pending changes to save in the current selection.`);
-}
-
-window.saveAllImages = async function(silent = false) {
-    if (!window.currentImagesHandle && !window.rootHandle || imageFiles.length === 0) return;
-    let savedCount = 0;
-    const promises = imageFiles.map(async (img) => {
-        if (img.hasFile && img.dirty) {
-            const ok = await window.saveImageToDisk(img);
-            if (ok) savedCount++;
-        }
-    });
-    await Promise.all(promises);
-    if(savedCount > 0) window.markDatasetEdited();
-    if(!silent) window.showAlert(savedCount > 0 ? `Saved ${savedCount} file(s) with pending changes.` : `No pending changes to save.`);
-}
-
-const presetDbName = 'PresetTagsDB';
-const presetStoreName = 'presets';
-let presetSelectedTags = new Set();
-let lastSelectedPresetIndex = 0;
-
-window.initPresetDB = function() {
-    return new Promise((res, rej) => {
-        try {
-            const req = indexedDB.open(presetDbName, 1);
-            req.onupgradeneeded = e => {
-                if (!e.target.result.objectStoreNames.contains(presetStoreName)) {
-                    e.target.result.createObjectStore(presetStoreName, { keyPath: 'tag' });
-                }
-            };
-            req.onsuccess = e => res(e.target.result);
-            req.onerror = e => rej(e.target.error);
-        } catch (err) { rej(err); }
-    });
-};
-
-window.getPresetTags = async function() {
-    try {
-        const db = await window.initPresetDB();
-        return new Promise(r => {
-            const tx = db.transaction(presetStoreName, 'readonly');
-            const store = tx.objectStore(presetStoreName);
-            const req = store.getAll();
-            tx.oncomplete = () => r(req.result.map(item => ({ tag: item.tag, category: item.category || 'Uncategorized' })));
-        });
-    } catch (e) { return []; }
-};
-
-window.savePresetTag = async function(tag, category = 'Uncategorized') {
-    if (!tag) return;
-    try {
-        const db = await window.initPresetDB();
-        return new Promise(r => {
-            const tx = db.transaction(presetStoreName, 'readwrite');
-            const req = tx.objectStore(presetStoreName).get(tag);
-            req.onsuccess = () => {
-                const existing = req.result;
-                const finalCat = category !== 'Uncategorized' ? category : (existing ? existing.category || 'Uncategorized' : 'Uncategorized');
-                tx.objectStore(presetStoreName).put({ tag: tag, category: finalCat });
-            };
-            tx.oncomplete = () => { r(); window.renderPresetTags(); };
-        });
-    } catch (e) {}
-};
-
-window.deletePresetTag = async function(tag) {
-    try {
-        const db = await window.initPresetDB();
-        return new Promise(r => {
-            const tx = db.transaction(presetStoreName, 'readwrite');
-            tx.objectStore(presetStoreName).delete(tag);
-            tx.oncomplete = () => { r(); window.renderPresetTags(); };
-        });
-    } catch (e) {}
-};
-
-window.createPresetCategory = function() {
-    const catName = prompt("Name the new category:");
-    if (catName && catName.trim()) {
-        window.savePresetTag(`_sys_cat_${catName.trim()}`, catName.trim());
-    }
-};
-
-window.togglePresetPanel = function() {
-    const panel = document.getElementById('col-presets');
-    const resizer = document.getElementById('resizer-presets');
-    const btn = document.getElementById('btn-toggle-presets');
-    
-    if (panel.style.display === 'none' || panel.style.display === '') {
-        panel.style.display = 'flex';
-        if(resizer) resizer.style.display = 'flex';
-        btn.style.background = '#00aa66';
-        btn.style.color = '#000';
-        window.renderPresetTags();
-    } else {
-        panel.style.display = 'none';
-        if(resizer) resizer.style.display = 'none';
-        btn.style.background = 'transparent';
-        btn.style.color = '#00ff99';
-    }
-
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-};
-
-window.filterPresetTagsByName = function(val) {
-    window.presetTagNameFilter = (val || '').trim().toLowerCase();
-    const container = document.getElementById('preset-tag-list');
-    if (!container) return;
-    container.querySelectorAll('.master-tag-item').forEach(item => {
-        const nameEl = item.querySelector('.tag-name');
-        if (nameEl) {
-            const text = nameEl.textContent.toLowerCase();
-            item.style.display = (!window.presetTagNameFilter || text.includes(window.presetTagNameFilter)) ? 'flex' : 'none';
-        }
-    });
-};
-
-window.updatePresetSelectionActions = function() {
-    const bar = document.getElementById('preset-selection-actions');
-    if (bar) bar.style.display = presetSelectedTags.size > 0 ? 'flex' : 'none';
-};
-
-window.removeSelectedPresetTags = function() {
-    if (presetSelectedTags.size === 0) return;
-    if (confirm(`Remove ${presetSelectedTags.size} tags from presets?`)) {
-        presetSelectedTags.forEach(tag => window.deletePresetTag(tag));
-        presetSelectedTags.clear();
-        window.updatePresetSelectionActions();
-    }
-};
-
-window.addSelectedPresetTagsTo = function(target) {
-    if (presetSelectedTags.size === 0) return;
-    const tagsToAdd = Array.from(presetSelectedTags);
-    const globalExt = document.getElementById('topbar-save-format').value;
-    
-    let targets = [];
-    if (target === 'selected') {
-        targets = Array.from(selectedIndices);
-        if(targets.length === 0) { window.showAlert("No images selected on the left list.", "error"); return; }
-    } else if (target === 'all') {
-        targets = imageFiles.map((_, i) => i).filter(i => !imageFiles[i].hidden);
-    }
-    
-    targets.forEach(idx => {
-        if (imageFiles[idx].type === 'tags' || !imageFiles[idx].hasFile) {
-            let currentTags = imageFiles[idx].content ? imageFiles[idx].content.split(',').map(t=>t.trim()).filter(t=>t) : [];
-            tagsToAdd.forEach(tag => {
-                if (!currentTags.includes(tag)) currentTags.push(tag);
-            });
-            imageFiles[idx].content = currentTags.join(', ');
-            imageFiles[idx].hasFile = true;
-            imageFiles[idx].type = 'tags';
-            if(!imageFiles[idx].ext) imageFiles[idx].ext = globalExt;
-        }
-    });
-    window.markDirty(targets.map(idx => imageFiles[idx]));
-    
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-    window.showAlert(`Added ${tagsToAdd.length} preset tags to ${targets.length} images.`);
-};
-
-window.renderPresetTags = async function() {
-    const container = document.getElementById('preset-tag-list');
-    if (!container) return;
-    container.innerHTML = '';
-    
-    const items = await window.getPresetTags();
-    
-    const btnContainer = document.createElement('div');
-    btnContainer.innerHTML = `<button onclick="window.createPresetCategory()" style="width: 100%; margin-bottom: 10px; background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c;">➕ New Category</button>`;
-    btnContainer.style.padding = '10px 10px 0 10px';
-    container.appendChild(btnContainer);
-
-    if (items.length === 0) {
-        container.innerHTML += '<div style="padding: 15px; text-align: center; color: #555; font-size: 11px;">No presets saved yet.</div>';
-        return;
-    }
-    
-    const categories = {};
-    items.forEach(item => {
-        if (!categories[item.category]) categories[item.category] = [];
-        categories[item.category].push(item.tag);
-    });
-    
-    let globalIndex = 0;
-    let renderedPresetTags = [];
-    
-    Object.keys(categories).sort().forEach(cat => {
-        const catDiv = document.createElement('div');
-        catDiv.style.marginBottom = '5px';
-        
-        const header = document.createElement('div');
-        header.innerHTML = `<span>📁 ${cat}</span> <span class="toggle-icon" style="font-size:10px;">▼</span>`;
-        header.style.cssText = 'background: #222; padding: 8px 10px; font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; border-top: 1px solid #333; border-bottom: 1px solid #111; color: #aaa; transition: 0.2s;';
-        
-        header.onclick = () => {
-            const list = catDiv.querySelector('.preset-list');
-            const isHidden = list.style.display === 'none';
-            list.style.display = isHidden ? 'block' : 'none';
-            header.querySelector('.toggle-icon').textContent = isHidden ? '▼' : '▶';
-        };
-
-        header.ondragover = (e) => { e.preventDefault(); header.style.background = '#0a3a5c'; header.style.color = '#fff'; };
-        header.ondragleave = (e) => { header.style.background = '#222'; header.style.color = '#aaa'; };
-        header.ondrop = async (e) => {
-            e.preventDefault();
-            header.style.background = '#222';
-            header.style.color = '#aaa';
-            const tagToMove = e.dataTransfer.getData('text/plain');
-            if (tagToMove) {
-                await window.savePresetTag(tagToMove, cat);
-            }
-        };
-
-        catDiv.appendChild(header);
-        
-        const listDiv = document.createElement('div');
-        listDiv.className = 'preset-list';
-        listDiv.style.display = 'block';
-
-        categories[cat].sort().forEach(tag => {
-            if (tag.startsWith('_sys_cat_')) return;
-
-            const currentIndex = globalIndex++;
-            renderedPresetTags.push(tag);
-
-            const item = document.createElement('div');
-            item.className = 'master-tag-item';
-            
-            let isSelected = presetSelectedTags.has(tag);
-            let statusHtml = '';
-            let conflictsForThisTag = [];
-            let similarsForThisTag = [];
-
-            if (isSelected && window.enableConflictWarnings) {
-                item.classList.add('selected-master');
-                if (typeof window.checkTagStatusWithActive === 'function') {
-                    const status = window.checkTagStatusWithActive(tag);
-                    conflictsForThisTag = status.conflicts;
-                    similarsForThisTag = status.similars;
-
-                    if (conflictsForThisTag.length > 0) {
-                        item.classList.add('conflict');
-                        statusHtml += `<span class="conflict-warning" title="Conflict with: ${conflictsForThisTag.join(', ')}">⚠️ Conflict: ${conflictsForThisTag.join(', ')}</span>`;
-                    } else if (similarsForThisTag.length > 0) {
-                        item.classList.add('similar');
-                        statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${similarsForThisTag.join(', ')}">🟨 Similar: ${similarsForThisTag.join(', ')}</span>`;
-                    }
-                }
-            } else if (isSelected) {
-                item.classList.add('selected-master');
-            }
-
-            item.draggable = true;
-            
-            item.ondragstart = (e) => { 
-                e.dataTransfer.setData('text/plain', tag); 
-                item.style.opacity = '0.4';
-            };
-            item.ondragend = (e) => { 
-                item.style.opacity = '1';
-            };
-            
-            item.innerHTML = `
-                <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
-                    <span class="tag-name" style="color: #00ff99; font-weight: bold;">${tag}</span>
-                    ${statusHtml}
-                </div>
-            `;
-
-            if (conflictsForThisTag.length > 0) {
-                const warningSpan = item.querySelector('.conflict-warning');
-                if(warningSpan) {
-                    warningSpan.onmouseenter = () => {
-                        conflictsForThisTag.forEach(ct => {
-                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
-                            if (targetRow) targetRow.classList.add('glow-conflict');
-                        });
-                    };
-                    warningSpan.onmouseleave = () => {
-                        conflictsForThisTag.forEach(ct => {
-                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
-                            if (targetRow) targetRow.classList.remove('glow-conflict');
-                        });
-                    };
-                }
-            }
-
-            if (similarsForThisTag.length > 0) {
-                const simSpan = item.querySelector('.similar-warning');
-                if(simSpan) {
-                    simSpan.onmouseenter = () => {
-                        similarsForThisTag.forEach(ct => {
-                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
-                            if (targetRow) targetRow.classList.add('glow-similar');
-                        });
-                    };
-                    simSpan.onmouseleave = () => {
-                        similarsForThisTag.forEach(ct => {
-                            const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`);
-                            if (targetRow) targetRow.classList.remove('glow-similar');
-                        });
-                    };
-                }
-            }
-            
-            item.onclick = (e) => {
-                if (e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) return; 
-
-                if (e.shiftKey && presetSelectedTags.size > 0) {
-                    const start = Math.min(lastSelectedPresetIndex, currentIndex), end = Math.max(lastSelectedPresetIndex, currentIndex);
-                    presetSelectedTags.clear(); 
-                    for (let i = start; i <= end; i++) presetSelectedTags.add(renderedPresetTags[i]);
-                } else if (e.ctrlKey || e.metaKey) {
-                    if (presetSelectedTags.has(tag)) presetSelectedTags.delete(tag); else presetSelectedTags.add(tag);
-                    lastSelectedPresetIndex = currentIndex;
-                } else {
-                    if (presetSelectedTags.has(tag) && presetSelectedTags.size === 1) {
-                        presetSelectedTags.clear();
-                    } else {
-                        presetSelectedTags.clear(); presetSelectedTags.add(tag); lastSelectedPresetIndex = currentIndex;
-                    }
-                }
-                window.renderPresetTags(); 
-                window.updatePresetSelectionActions();
-            };
-
-            listDiv.appendChild(item);
-        });
-
-        catDiv.appendChild(listDiv);
-        container.appendChild(catDiv);
-    });
-
-    if (window.presetSearchMode) window.filterPresetTagsByName(document.getElementById('preset-add-input').value);
-};
-
-window.addPresetTagFromInput = function() {
-    const input = document.getElementById('preset-add-input');
-    if(!input) return;
-    const tagString = input.value.trim();
-    
-    if (tagString) {
-        const tags = tagString.split(',').map(t => t.trim()).filter(t => t);
-        tags.forEach(t => window.savePresetTag(t, 'Uncategorized'));
-        input.value = '';
-    }
 };

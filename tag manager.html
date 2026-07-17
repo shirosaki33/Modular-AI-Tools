@@ -10,11 +10,6 @@
     
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.min.js"></script>
     
-    <!-- Módulos da Ferramenta -->
-    <script src="tools/tagmanager_custom_conflicts.js"></script>
-    <script src="tools/tagmanager_batch_tagger.js"></script>
-    <script src="tools/tagmanager_caption_tag.js"></script>
-
     <style>
         :root {
             --thumb-size: 70px;
@@ -65,7 +60,6 @@
         .panel { background: #1b1b1b; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #222; transition: 0.2s ease-in-out;}
         .panel-header { background: #222; padding: 10px 15px; font-size: 13px; font-weight: bold; color: #aaa; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;}
         
-        /* BOTÃO LUPA (SEARCH/ADD TOGGLE) */
         .search-toggle-btn { background: transparent; border: none; font-size: 16px; cursor: pointer; filter: grayscale(1) opacity(0.4); padding: 0 6px; transition: 0.2s; user-select: none; }
         .search-toggle-btn.active { filter: none; opacity: 1; text-shadow: 0 0 8px rgba(0,255,153,0.5); }
         .search-toggle-btn:hover { transform: scale(1.1); }
@@ -237,6 +231,23 @@
     <label><input type="checkbox" id="toggle-conflict-warnings" onchange="window.toggleConflictWarnings()" checked> Enable Tag Conflict Warnings</label>
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
     <label><input type="checkbox" id="toggle-fav-highlight" onchange="window.toggleFavHighlight()" checked> Enable Favorite Tags Highlight</label>
+    
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+    
+    <label><input type="checkbox" id="toggle-danbooru-counts" onchange="window.toggleDanbooruCounts()"> 🌐 Show Danbooru Counts</label>
+    <button onclick="window.manualDanbooruSync()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; font-size: 11px; width: 100%; margin-top: 5px;" title="Manually fetches missing tag counts from Danbooru for the current dataset.">🔄 Sync Danbooru (Dataset)</button>
+    
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+    
+    <label><input type="checkbox" id="toggle-e621" onchange="window.toggleE621()"> 🦊 Enable e621 (Furry) Suggestions</label>
+    <label style="margin-left: 15px;"><input type="checkbox" id="toggle-e621-sfw" onchange="window.toggleE621Sfw()"> 🛡️ Force Safe-for-Work (e926)</label>
+    
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+    
+    <div style="display: flex; gap: 5px;">
+        <button onclick="window.exportBackup()" style="background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; font-size: 11px; flex: 1;" title="Export all presets and settings to a JSON file.">💾 Export Backup</button>
+        <button onclick="window.importBackup()" style="background: #2a1a00; color: #ffcc66; border: 1px solid #aa6600; font-size: 11px; flex: 1;" title="Import presets and settings from a JSON backup.">📂 Import</button>
+    </div>
 </div>
 
 <div id="replace-dropdown" class="settings-dropdown" style="right: auto; left: 50%; transform: translateX(-50%); top: 60px; width: 260px; position: fixed;">
@@ -303,7 +314,7 @@
             
             <div style="padding: 10px; background: #151515; border-top: 1px solid #222; flex-shrink: 0; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 11px; color: #555;">🔍</span>
-                <input type="range" id="thumb-slider" min="70" max="250" value="70" style="flex: 1; accent-color: #00ff99;" oninput="window.updateThumbSize(this.value)">
+                <input type="range" id="thumb-slider" min="70" max="500" value="70" style="flex: 1; accent-color: #00ff99;" oninput="window.updateThumbSize(this.value)">
                 <span style="font-size: 14px; color: #555;">🖼️</span>
             </div>
         </div>
@@ -345,7 +356,6 @@
 
         <div class="resizer vertical" id="resizer-presets" style="display: none;"></div>
 
-        <!-- 4ª COLUNA: USER PRESETS (Oculta por padrão) -->
         <div class="panel" id="col-presets" style="display: none;">
             <div class="panel-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
@@ -354,7 +364,6 @@
             </div>
             
             <div id="preset-tag-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111;">
-                <!-- Itens inseridos via JS -->
             </div>
 
             <div id="preset-selection-actions" class="selection-actions">
@@ -411,7 +420,6 @@
     </div>
 </div>
 
-<!-- MODALS -->
 <div id="view-auto" class="modal-overlay" onclick="window.closeModal('view-auto')">
     <div class="auto-panel" onclick="event.stopPropagation()">
         <div id="file-protocol-warning" style="display: none; background: #2a0000; border: 1px solid #aa0000; padding: 12px; border-radius: 8px; margin-bottom: 20px; color: #ff6060; font-size: 13px; line-height: 1.5;">
@@ -576,11 +584,17 @@
 
 <canvas id="offscreen-canvas" width="448" height="448" style="display:none;"></canvas>
 
-<script src="tools/quick_links.js"></script>
-<script src="tools/tagmanager_ui_core.js"></script>
-<script src="tools/tagmanager_pin_image.js"></script>
-<script src="tools/tagmanager_compact_view.js"></script>
-<script src="tools/tagmanager_custom_rules.js"></script>
+	<script src="tools/quick_links.js"></script>
+	<script src="tools/tagmanager_globals.js"></script>
+	<script src="tools/tagmanager_batch_tagger.js"></script>
+	<script src="tools/tagmanager_caption_tag.js"></script>	
+	<script src="tools/tagmanager_db.js"></script>
+	<script src="tools/tagmanager_ui_presets.js"></script>
+	<script src="tools/tagmanager_ui_list.js"></script>
+	<script src="tools/tagmanager_ui_core.js"></script>
+	<script src="tools/tagmanager_pin_image.js"></script>
+	<script src="tools/tagmanager_compact_view.js"></script>
+	<script src="tools/tagmanager_custom_conflicts.js"></script>
 
 </body>
 </html>

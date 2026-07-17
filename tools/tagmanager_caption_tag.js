@@ -11,8 +11,6 @@ style.innerHTML = `
     .tag-nl-edit-box { display: flex; flex-direction: column; gap: 8px; padding: 10px 15px; background: #0d0d0d; border-bottom: 1px solid #222; border-left: 3px solid #00aa66; }
     .tag-nl-edit-textarea { width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical; font-size: var(--editor-font-size); line-height: 1.5; padding: 10px; background: #111; color: #eee; border: 1px solid #00aa66; border-radius: 6px; font-family: inherit; }
 
-    /* Full-panel takeover mode: pins the NL edit box to the top and fills the whole Active Tags area,
-       mirroring the look of the old native NL editor. */
     .tag-nl-edit-box.tag-nl-edit-fullscreen { flex: 1; height: 100%; padding: 15px; border-left: none; background: #0d0d0d; }
     .tag-nl-edit-box.tag-nl-edit-fullscreen .tag-nl-edit-textarea { flex: 1; min-height: 200px; resize: none; }
     .tag-nl-edit-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -30,25 +28,20 @@ style.innerHTML = `
     .db-sugg-item { padding: 8px 10px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
     .db-sugg-item:hover { background: #222; }
     
-    /* ESTILOS DE CONFLITO (VERMELHO) */
     .tag-row.conflict, .master-tag-item.conflict { background: rgba(200, 40, 40, 0.3) !important; border-left: 3px solid #ff4444 !important; }
     .tag-row.conflict:hover, .master-tag-item.conflict:hover { background: rgba(200, 40, 40, 0.5) !important; }
     .conflict-warning { margin-left: 12px; font-size: 10px; color: #ffaaaa; background: #330000; padding: 2px 8px; border-radius: 12px; border: 1px solid #ff4444; cursor: help; transition: 0.2s; white-space: nowrap; user-select: none; display: inline-block;}
     .conflict-warning:hover { background: #660000; color: #fff; box-shadow: 0 0 8px #ff4444; }
     .tag-row.glow-conflict { background: rgba(255, 68, 68, 0.6) !important; box-shadow: inset 0 0 12px #ff4444 !important; border-left: 3px solid #ff4444 !important; transition: 0.1s; }
 
-    /* ESTILOS DE REDUNDÂNCIA/SIMILARIDADE (AMARELO) */
     .tag-row.similar, .master-tag-item.similar { background: rgba(200, 150, 40, 0.2) !important; border-left: 3px solid #ffcc00 !important; }
     .tag-row.similar:hover, .master-tag-item.similar:hover { background: rgba(200, 150, 40, 0.4) !important; }
     .similar-warning { margin-left: 12px; font-size: 10px; color: #ffeeaa; background: #332200; padding: 2px 8px; border-radius: 12px; border: 1px solid #ffcc00; cursor: help; transition: 0.2s; white-space: nowrap; user-select: none; display: inline-block;}
     .similar-warning:hover { background: #664400; color: #fff; box-shadow: 0 0 8px #ffcc00; }
     .tag-row.glow-similar { background: rgba(255, 170, 0, 0.4) !important; box-shadow: inset 0 0 12px #ffcc00 !important; border-left: 3px solid #ffeedd !important; transition: 0.1s; }
 
-    /* ESTILOS DE FAVORITO PERMANENTE (VERDE ESCURO) */
     .tag-row.glow-favorite, .master-tag-item.glow-favorite { background: rgba(0, 80, 40, 0.4) !important; border-left: 3px solid #00ff99 !important; transition: 0.1s; }
 
-    /* Quando a tag está SELECIONADA (azul), isso tem prioridade sobre o brilho
-       verde de favorita — senão fica impossível saber se está selecionada. */
     .tag-row.selected-active.glow-favorite, .master-tag-item.selected-master.glow-favorite {
         background: #0a3a5c !important;
         border-left: 3px solid #4db8ff !important;
@@ -62,8 +55,6 @@ window.addEventListener('DOMContentLoaded', () => {
     setupDanbooruAutocomplete('preset-add-input');
     setupDanbooruAutocomplete('replace-new-tag', 'down');
 });
-
-const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
 
 window.autocompleteUsedOnly = { active: false, master: false, replace: false };
 const AUTOCOMPLETE_SCOPE_BY_INPUT = { 'active-add-input': 'active', 'master-add-input': 'master', 'replace-new-tag': 'replace' };
@@ -159,18 +150,90 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
         const val = rawVal.replace(/ /g, '_');
         timeout = setTimeout(async () => {
             try {
-                const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);
-                const tags = await res.json();
-                suggBox.innerHTML = '';
-                if(tags.length === 0) { suggBox.style.display = 'none'; return; }
+                let combinedTags = [];
+                let danbooruObj = [];
                 
-                tags.forEach(t => {
+                try {
+                    const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);
+                    if (res.ok) danbooruObj = await res.json();
+                } catch(err) {}
+
+                danbooruObj.forEach(t => {
+                    combinedTags.push({
+                        name: t.name,
+                        post_count: parseInt(t.post_count) || 0,
+                        category: t.category
+                    });
+                });
+
+                if (window.showE621) {
+                    const host = window.showE621Sfw ? 'e926.net' : 'e621.net';
+                    try {
+                        const res = await fetch(`https://${host}/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            const tagsArr = Array.isArray(data) ? data : (data.tags || []);
+                            
+                            tagsArr.forEach(t => {
+                                const standardizedName = t.name.replace(/_/g, ' ');
+                                if (!combinedTags.some(ct => ct.name.replace(/_/g, ' ') === standardizedName)) {
+                                    combinedTags.push({
+                                        name: t.name,
+                                        post_count: parseInt(t.post_count) || 0,
+                                        category: t.category
+                                    });
+                                }
+                            });
+                        }
+                    } catch(err) {}
+                }
+
+                if (window.showDanbooruCounts && combinedTags.length > 0) {
+                    let updated = false;
+                    const now = Date.now();
+                    combinedTags.forEach(t => {
+                        const tName = t.name.replace(/_/g, ' ');
+                        if (window.danbooruCache) {
+                            window.danbooruCache[tName] = { count: t.post_count, ts: now };
+                            updated = true;
+                        }
+                    });
+                    if (updated && typeof window.saveSetting === 'function') {
+                        window.saveSetting('danbooru_tag_cache', window.danbooruCache);
+                    }
+                }
+
+                if (combinedTags.length === 0) {
+                    const cachedMatches = [];
+                    if (window.danbooruCache) {
+                        Object.keys(window.danbooruCache).forEach(k => {
+                            if (k.toLowerCase().includes(rawVal)) {
+                                cachedMatches.push({
+                                    name: k,
+                                    post_count: window.danbooruCache[k].count,
+                                    category: 0
+                                });
+                            }
+                        });
+                    }
+                    combinedTags = cachedMatches.sort((a,b) => b.post_count - a.post_count).slice(0, 6);
+                } else {
+                    combinedTags.sort((a,b) => b.post_count - a.post_count);
+                }
+
+                suggBox.innerHTML = '';
+                if(combinedTags.length === 0) { suggBox.style.display = 'none'; return; }
+                
+                combinedTags.forEach(t => {
                     const div = document.createElement('div');
                     div.className = 'db-sugg-item';
                     const color = CAT_COLORS[t.category] || "#aaa";
+                    
                     div.innerHTML = `
                         <span style="color:${color}; font-weight:bold;">${t.name.replace(/_/g, ' ')}</span>
-                        <span style="color:#666;">${Number(t.post_count).toLocaleString()}</span>
+                        <div style="display:flex; align-items:center; gap:5px;">
+                            <span style="color:#666;">${Number(t.post_count).toLocaleString()}</span>
+                        </div>
                     `;
                     div.onclick = () => {
                         input.value = t.name.replace(/_/g, ' ');
@@ -188,6 +251,8 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
         if(!wrapper.contains(e.target)) suggBox.style.display = 'none';
     });
 }
+
+const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
 
 window.checkTagStatusWithActive = function(tag) {
     if (!window.sortedActiveTags || !window.sortedActiveTags.length) return { conflicts: [], similars: [] };
@@ -229,8 +294,8 @@ window.openNLEditTag = function(scope) {
     if (!targetTag) { window.showAlert("Select a tag first!", "warn"); return; }
 
     window.nlEditTarget = { scope, tag: targetTag };
-    if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
-    if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+    if (scope === 'active' && typeof window.renderEditor === 'function') window.renderEditor();
+    if (scope === 'master' && typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 };
 
 function buildNLEditBox(tag, scope) {
@@ -260,8 +325,8 @@ function buildNLEditBox(tag, scope) {
     box.querySelector('.btn-nl-edit-cancel').onclick = (e) => {
         e.stopPropagation();
         window.nlEditTarget = null;
-        if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
-        if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+        if (scope === 'active' && typeof window.renderEditor === 'function') window.renderEditor();
+        if (scope === 'master' && typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     };
     return box;
 }
@@ -271,8 +336,8 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
     window.nlEditTarget = null;
 
     if (!newText) {
-        if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
-        if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+        if (scope === 'active' && typeof window.renderEditor === 'function') window.renderEditor();
+        if (scope === 'master' && typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
         return;
     }
 
@@ -284,8 +349,8 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
     }
 
     if (newText === oldTag) {
-        if (scope === 'active' && typeof renderEditor === 'function') renderEditor();
-        if (scope === 'master' && typeof renderMasterTagList === 'function') renderMasterTagList();
+        if (scope === 'active' && typeof window.renderEditor === 'function') window.renderEditor();
+        if (scope === 'master' && typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
         return;
     }
 
@@ -312,14 +377,14 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
     imageFiles.forEach(img => {
         if (img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if (t.trim()) masterTagSet.add(t.trim()); });
     });
-    window.updateTagsDatalist();
+    if(typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
 
     if (scope === 'active') activeSelectedTags.delete(oldTag);
     if (scope === 'master') masterSelectedTags.delete(oldTag);
 
-    window.showAlert(`Tag atualizada com texto NL em ${replacedCount} imagens!`, "success");
+    if(typeof window.showAlert === 'function') window.showAlert(`Tag atualizada com texto NL em ${replacedCount} imagens!`, "success");
 
-    window.renderImageList();
+    if(typeof window.renderImageList === 'function') window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
@@ -327,7 +392,7 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
     const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
 
     await Promise.all(savePromises);
-    if (replacedCount > 0) window.markDatasetEdited();
+    if (replacedCount > 0 && typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
 };
 
 window.showOnlyActiveGhosts = false;
@@ -339,7 +404,7 @@ window.toggleActiveGhostFilter = function() {
         btn.style.background = window.showOnlyActiveGhosts ? '#00aa66' : 'transparent';
         btn.style.color = window.showOnlyActiveGhosts ? '#000' : '#00ff99';
     }
-    renderEditor();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
 }
 
 window.activeTagFilterMode = 'ALL';
@@ -353,10 +418,10 @@ window.cycleActiveTagFilter = function() {
     const btn = document.getElementById('btn-active-tag-filter');
     if (btn) btn.textContent = labels[window.activeTagFilterMode];
     
-    renderEditor();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
 };
 
-function renderEditor() {
+window.renderEditor = function() {
     const topbarSelectFormat = document.getElementById('topbar-save-format');
     const colTools = document.getElementById('col-tools');
     const colPresets = document.getElementById('col-presets');
@@ -365,8 +430,8 @@ function renderEditor() {
     
     if (selectedIndices.size === 0) {
         window.sortedActiveTags = []; 
-        topbarSelectFormat.style.display = 'none';
-        colTools.style.display = 'flex';
+        if(topbarSelectFormat) topbarSelectFormat.style.display = 'none';
+        if(colTools) colTools.style.display = 'flex';
         if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
         return;
     }
@@ -374,7 +439,7 @@ function renderEditor() {
     const imgObj = imageFiles[Array.from(selectedIndices)[0]];
     if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
 
-    topbarSelectFormat.value = imgObj.ext || 'txt';
+    if(topbarSelectFormat) topbarSelectFormat.value = imgObj.ext || 'txt';
 
     let isAnyEmpty = false;
     selectedIndices.forEach(idx => { if (!imageFiles[idx].hasFile) isAnyEmpty = true; });
@@ -383,9 +448,9 @@ function renderEditor() {
 
     if (isAnyEmpty) {
         if(formatToggle) formatToggle.checked = true;
-        topbarSelectFormat.style.display = 'inline-block';
+        if(topbarSelectFormat) topbarSelectFormat.style.display = 'inline-block';
     } else {
-        topbarSelectFormat.style.display = (formatToggle && formatToggle.checked) ? 'inline-block' : 'none';
+        if(topbarSelectFormat) topbarSelectFormat.style.display = (formatToggle && formatToggle.checked) ? 'inline-block' : 'none';
     }
 
     const badge = document.getElementById('editor-type-badge');
@@ -393,13 +458,28 @@ function renderEditor() {
     const activeAddContainer = document.getElementById('active-add-container');
     const activeActions = document.getElementById('active-selection-actions');
 
-    badge.textContent = 'Comma Tags'; 
-    tagsContainer.style.display = 'flex'; 
+    if(badge) badge.textContent = 'Comma Tags'; 
+    if(tagsContainer) tagsContainer.style.display = 'flex'; 
     
-    colTools.style.display = 'flex'; 
+    if(colTools) colTools.style.display = 'flex'; 
     
     const tagListVertical = document.getElementById('tag-list-vertical');
+    if(!tagListVertical) return;
     tagListVertical.innerHTML = '';
+
+    // Calcula o contador das tags no dataset inteiro
+    let datasetTagCounts = new Map();
+    if (typeof imageFiles !== 'undefined') {
+        imageFiles.forEach(img => {
+            if (img.hidden) return;
+            if (img.type === 'tags' && img.hasFile && img.content) {
+                img.content.split(',').forEach(t => {
+                    const cleanTag = t.trim();
+                    if (cleanTag) datasetTagCounts.set(cleanTag, (datasetTagCounts.get(cleanTag) || 0) + 1);
+                });
+            }
+        });
+    }
     
     let fusedTags = new Set();
     selectedIndices.forEach(idx => {
@@ -412,26 +492,25 @@ function renderEditor() {
     });
     
     window.sortedActiveTags = Array.from(fusedTags); 
-    sortedActiveTags = window.sortedActiveTags;
 
     if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
-        activeAddContainer.style.display = 'none';
-        activeActions.style.display = 'none';
+        if(activeAddContainer) activeAddContainer.style.display = 'none';
+        if(activeActions) activeActions.style.display = 'none';
         const box = buildNLEditBox(window.nlEditTarget.tag, 'active');
         box.classList.add('tag-nl-edit-fullscreen');
         tagListVertical.appendChild(box);
         return;
     }
 
-    activeAddContainer.style.display = 'flex'; 
-    activeActions.style.display = activeSelectedTags.size > 0 ? 'flex' : 'none';
+    if(activeAddContainer) activeAddContainer.style.display = 'flex'; 
+    if(activeActions) activeActions.style.display = activeSelectedTags.size > 0 ? 'flex' : 'none';
     
     let favTags = new Set(datasetConfig.favoriteTags || []);
     const isMultiSelected = activeSelectedTags.size > 1; 
     const isMultiImageSelection = selectedIndices.size > 1;
     
     if (!window.showOnlyActiveGhosts) {
-        sortedActiveTags.forEach((tag, i) => {
+        window.sortedActiveTags.forEach((tag, i) => {
             const isFav = favTags.has(tag);
             const isCustomNL = tag.startsWith('NL:');
             
@@ -446,7 +525,7 @@ function renderEditor() {
                 (window.tagConflicts || []).forEach(group => {
                     const groupLower = group.map(g => g.toLowerCase());
                     if (groupLower.includes(tagLower)) {
-                        let activeInGroup = groupLower.filter(t => sortedActiveTags.some(at => at.toLowerCase() === t));
+                        let activeInGroup = groupLower.filter(t => window.sortedActiveTags.some(at => at.toLowerCase() === t));
                         let others = activeInGroup.filter(t => t !== tagLower);
                         if (others.length > 0) conflictsForThisTag.push(...others);
                     }
@@ -455,7 +534,7 @@ function renderEditor() {
                 (window.tagSimilar || []).forEach(group => {
                     const groupLower = group.map(g => g.toLowerCase());
                     if (groupLower.includes(tagLower)) {
-                        let activeInGroup = groupLower.filter(t => sortedActiveTags.some(at => at.toLowerCase() === t));
+                        let activeInGroup = groupLower.filter(t => window.sortedActiveTags.some(at => at.toLowerCase() === t));
                         let others = activeInGroup.filter(t => t !== tagLower);
                         if (others.length > 0) similarsForThisTag.push(...others);
                     }
@@ -488,13 +567,26 @@ function renderEditor() {
             const starIcon = !isCustomNL ? `<span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>` : '';
             const presetIcon = !isCustomNL ? `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>` : '';
 
+            const dbCached = window.danbooruCache ? (window.danbooruCache[tagLower] || window.danbooruCache[tag]) : null; 
+            const dbCountHtml = (window.showDanbooruCounts && dbCached && dbCached.count > 0 && !isCustomNL) 
+                ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">${window.formatDbCount(dbCached.count)}</span>` 
+                : '';
+
+            const countInDataset = datasetTagCounts.get(tag) || 0;
+            const dsCountHtml = `<span style="color:#555; font-size:10px; font-weight:bold; min-width:20px; text-align:left; margin-right:8px; user-select:none;" title="Times used in current dataset">${countInDataset}</span>`;
+
             row.innerHTML = `<div class="tag-row-left">
                 ${starIcon}
+                ${dsCountHtml}
                 ${presetIcon}
                 ${pencilIcon}
                 <span class="tag-name" style="color: ${textColor};">${displayTag}</span>
                 ${statusHtml}
-            </div><span class="tag-remove" title="Remove Tag">&times;</span>`;
+            </div>
+            <div style="display: flex; align-items: center;">
+                ${dbCountHtml}
+                <span class="tag-remove" title="Remove Tag">&times;</span>
+            </div>`;
 
             if (isCustomNL) {
                 const pencilEl = row.querySelector('.tag-edit-nl');
@@ -502,7 +594,7 @@ function renderEditor() {
                     pencilEl.onclick = (e) => {
                         e.stopPropagation();
                         window.nlEditTarget = { scope: 'active', tag: tag };
-                        renderEditor();
+                        window.renderEditor();
                     };
                 }
             }
@@ -534,7 +626,7 @@ function renderEditor() {
                         e.stopPropagation();
                         if(typeof window.savePresetTag === 'function') {
                             window.savePresetTag(tag);
-                            window.showAlert(`Tag "${tag}" saved to Presets!`, 'success');
+                            if(typeof window.showAlert === 'function') window.showAlert(`Tag "${tag}" saved to Presets!`, 'success');
                         }
                     };
                 }
@@ -548,7 +640,7 @@ function renderEditor() {
                 };
                 row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; };
                 row.ondragover = (e) => e.preventDefault();
-                row.ondrop = (e) => { e.preventDefault(); if (draggedTagIndex !== null && draggedTagIndex !== i) reorderTags(draggedTagIndex, i); };
+                row.ondrop = (e) => { e.preventDefault(); if (draggedTagIndex !== null && draggedTagIndex !== i && typeof window.reorderTags === 'function') window.reorderTags(draggedTagIndex, i); };
             }
 
             if (conflictsForThisTag.length > 0) {
@@ -589,13 +681,13 @@ function renderEditor() {
 
             row.onclick = (e) => {
                 if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl')) { 
-                    if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); removeTagFromSelected(tag); }
+                    if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.removeTagFromSelected(tag); }
                     return; 
                 }
                 if (e.shiftKey && activeSelectedTags.size > 0) {
                     const start = Math.min(lastSelectedActiveTagIndex, i), end = Math.max(lastSelectedActiveTagIndex, i);
                     activeSelectedTags.clear(); 
-                    for (let j = start; j <= end; j++) activeSelectedTags.add(sortedActiveTags[j]);
+                    for (let j = start; j <= end; j++) activeSelectedTags.add(window.sortedActiveTags[j]);
                 } else if (e.ctrlKey || e.metaKey) {
                     if (activeSelectedTags.has(tag)) activeSelectedTags.delete(tag); else activeSelectedTags.add(tag);
                     lastSelectedActiveTagIndex = i;
@@ -606,7 +698,7 @@ function renderEditor() {
                         activeSelectedTags.clear(); activeSelectedTags.add(tag); lastSelectedActiveTagIndex = i;
                     }
                 }
-                renderEditor();
+                window.renderEditor();
             };
             
             tagListVertical.appendChild(row);
@@ -637,7 +729,7 @@ function renderEditor() {
             </div><span class="tag-ghost-accept" title="Accept suggestion">✓</span>`;
             row.querySelector('.tag-ghost-accept').onclick = (e) => {
                 e.stopPropagation();
-                acceptGhostTagActive(tag);
+                window.acceptGhostTagActive(tag);
             };
             tagListVertical.appendChild(row);
         });
@@ -655,51 +747,6 @@ function renderEditor() {
         convertBtn.style.display = allNL ? 'none' : 'block';
     }
 }
-
-function acceptGhostTagActive(tag) {
-    selectedIndices.forEach(idx => {
-        const img = imageFiles[idx];
-        if (img.pendingAdd && img.pendingAdd.includes(tag)) {
-            img.pendingAdd = img.pendingAdd.filter(t => t !== tag);
-            if (typeof pendingTagsStore !== 'undefined') {
-                if (img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd;
-                else delete pendingTagsStore[img.baseName];
-            }
-        }
-    });
-    addTagToSelected(tag, document.getElementById('active-add-pos') ? document.getElementById('active-add-pos').value : 'bottom');
-    if (typeof savePendingTagsStore === 'function') {
-        const handle = window.currentImagesHandle || window.rootHandle;
-        savePendingTagsStore(handle);
-    }
-}
-
-window.discardActiveSuggestions = async function() {
-    if (selectedIndices.size === 0) return;
-    const affected = Array.from(selectedIndices)
-        .map(idx => imageFiles[idx])
-        .filter(img => img.pendingAdd && img.pendingAdd.length > 0);
-
-    if (affected.length === 0) return;
-
-    if (!confirm(`Discard pending suggestions for ${affected.length} selected image(s)? This cannot be undone.`)) return;
-
-    affected.forEach(img => {
-        img.pendingAdd = [];
-        if (typeof pendingTagsStore !== 'undefined') delete pendingTagsStore[img.baseName];
-    });
-
-    const handle = window.currentImagesHandle || window.rootHandle;
-    if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(handle);
-
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-    if (typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
-
-    showAlert(`Discarded suggestions for ${affected.length} image(s).`, "success");
-};
 
 window.updateActiveSuggestVisibility = function() {
     const btnDiscard = document.getElementById('btn-discard-active-suggestions');
@@ -723,20 +770,38 @@ window.updateActiveSuggestVisibility = function() {
     }
 };
 
-function removeTagFromSelected(tagToRemove) {
+window.acceptGhostTagActive = function(tag) {
+    selectedIndices.forEach(idx => {
+        const img = imageFiles[idx];
+        if (img.pendingAdd && img.pendingAdd.includes(tag)) {
+            img.pendingAdd = img.pendingAdd.filter(t => t !== tag);
+            if (typeof pendingTagsStore !== 'undefined') {
+                if (img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd;
+                else delete pendingTagsStore[img.baseName];
+            }
+        }
+    });
+    if(typeof window.addTagToSelected === 'function') window.addTagToSelected(tag, document.getElementById('active-add-pos') ? document.getElementById('active-add-pos').value : 'bottom');
+    if (typeof window.savePendingTagsStore === 'function') {
+        const handle = window.currentImagesHandle || window.rootHandle;
+        window.savePendingTagsStore(handle);
+    }
+}
+
+window.removeTagFromSelected = function(tagToRemove) {
     selectedIndices.forEach(idx => {
         if (imageFiles[idx].type === 'tags') imageFiles[idx].content = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t && t !== tagToRemove).join(', ');
     });
-    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    renderEditor();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
 
-function removeSelectedActiveTags() {
+window.removeSelectedActiveTags = function() {
     if (activeSelectedTags.size === 0) return;
     const tagsToRemove = Array.from(activeSelectedTags);
     selectedIndices.forEach(idx => {
@@ -746,36 +811,36 @@ function removeSelectedActiveTags() {
             imageFiles[idx].content = currentTags.join(', ');
         }
     });
-    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
     activeSelectedTags.clear();
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    renderEditor();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
 
-function clearActiveSelection() { activeSelectedTags.clear(); renderEditor(); }
+window.clearActiveSelection = function() { activeSelectedTags.clear(); if(typeof window.renderEditor === 'function') window.renderEditor(); }
 
-function addTagToSelected(newTag, position = 'bottom') {
+window.addTagToSelected = function(newTag, position = 'bottom') {
     const tag = newTag.trim(); if(!tag) return;
     selectedIndices.forEach(idx => {
         if (imageFiles[idx].type === 'tags' || !imageFiles[idx].hasFile) {
-            let tags = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t);
+            let tags = imageFiles[idx].content ? imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t) : [];
             if (!tags.includes(tag)) { position === 'top' ? tags.unshift(tag) : tags.push(tag); }
             imageFiles[idx].content = tags.join(', '); imageFiles[idx].hasFile = true; imageFiles[idx].type = 'tags';
-            if(!imageFiles[idx].ext) imageFiles[idx].ext = document.getElementById('topbar-save-format').value;
+            if(!imageFiles[idx].ext) imageFiles[idx].ext = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
         }
     });
-    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
-    masterTagSet.add(tag); 
+    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    if(typeof masterTagSet !== 'undefined') masterTagSet.add(tag); 
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
-    renderMasterTagList(); 
-    renderEditor(); 
-    refreshListStatus();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList(); 
+    if (typeof window.renderEditor === 'function') window.renderEditor(); 
+    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
 
@@ -783,17 +848,17 @@ window.addEmptyNLTag = function() {
     if (selectedIndices.size === 0) return;
     const pos = document.getElementById('active-add-pos') ? document.getElementById('active-add-pos').value : 'bottom';
     const newTag = 'NL:New NL Text';
-    addTagToSelected(newTag, pos);
+    if(typeof window.addTagToSelected === 'function') window.addTagToSelected(newTag, pos);
 
     setTimeout(() => {
         activeSelectedTags.clear();
         activeSelectedTags.add(newTag);
         window.nlEditTarget = { scope: 'active', tag: newTag };
-        renderEditor();
+        if(typeof window.renderEditor === 'function') window.renderEditor();
     }, 50);
 };
 
-function addTagToAllImages(newTag, position = 'bottom') {
+window.addTagToAllImages = function(newTag, position = 'bottom') {
     const tag = newTag.trim(); if(!tag) return;
     const affected = [];
     imageFiles.forEach(img => {
@@ -804,22 +869,22 @@ function addTagToAllImages(newTag, position = 'bottom') {
             img.content = tags.join(', ');
             img.hasFile = true;
             img.type = 'tags';
-            if(!img.ext) img.ext = document.getElementById('topbar-save-format').value;
+            if(!img.ext) img.ext = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
             affected.push(img);
         }
     });
-    window.markDirty(affected);
-    masterTagSet.add(tag);
+    if(typeof window.markDirty === 'function') window.markDirty(affected);
+    if(typeof masterTagSet !== 'undefined') masterTagSet.add(tag);
 
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
-    renderMasterTagList();
-    renderEditor();
-    refreshListStatus();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
 
-function reorderTags(fromIndex, toIndex) {
+window.reorderTags = function(fromIndex, toIndex) {
     selectedIndices.forEach(idx => {
         if (imageFiles[idx].type === 'tags') {
             let tags = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t);
@@ -827,11 +892,11 @@ function reorderTags(fromIndex, toIndex) {
             imageFiles[idx].content = tags.join(', ');
         }
     });
-    window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
-    renderEditor();
+    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    if(typeof window.renderEditor === 'function') window.renderEditor();
 }
 
-function inlineAdd(source) {
+window.inlineAdd = function(source) {
     const input = document.getElementById(`${source}-add-input`);
     const pos = document.getElementById(`${source}-add-pos`).value;
     const rawText = input.value.trim();
@@ -840,14 +905,10 @@ function inlineAdd(source) {
     let tagsToAdd = [];
 
     if (rawText.includes(',')) {
-        // Texto com vírgula(s) = múltiplas tags normais separadas por vírgula
-        // (fluxo padrão Danbooru: "red hair, blue eyes, standing").
-        // ANTES isso virava uma única tag "NL:" gigante, corrompendo o caption.
         tagsToAdd = rawText.split(',').map(t => t.trim()).filter(t => t);
     } else {
         const wordCount = rawText.split(/\s+/).length;
         if (wordCount > 4) {
-            // Frase longa sem vírgula nenhuma: trata como texto narrativo (NL).
             tagsToAdd.push('NL:' + rawText);
         } else {
             tagsToAdd.push(rawText);
@@ -857,14 +918,14 @@ function inlineAdd(source) {
     if(tagsToAdd.length === 0) return;
 
     if (source === 'master') {
-        tagsToAdd.forEach(t => addTagToAllImages(t, pos));
+        tagsToAdd.forEach(t => window.addTagToAllImages(t, pos));
     } else {
-        tagsToAdd.forEach(t => addTagToSelected(t, pos));
+        tagsToAdd.forEach(t => window.addTagToSelected(t, pos));
     }
     input.value = '';
     
-    if (source === 'active' && window.activeSearchMode) window.filterActiveTagsByName('');
-    if (source === 'master' && window.masterSearchMode) window.filterMasterTagsByName('');
+    if (source === 'active' && window.activeSearchMode && typeof window.filterActiveTagsByName === 'function') window.filterActiveTagsByName('');
+    if (source === 'master' && window.masterSearchMode && typeof window.filterMasterTagsByName === 'function') window.filterMasterTagsByName('');
 }
 
 window.showOnlyFavoriteTags = false;
@@ -884,11 +945,6 @@ window.toggleFavTagsFilter = function() {
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 };
 
-/* ---------- PIN DE TAG (ALL DATASET TAGS) ----------
-   Fixa 1 tag no topo da lista "All Dataset Tags" como um filtro obrigatório
-   (igual a um "AND" de 1 tag só), somado ao que estiver selecionado no
-   AND/OR/XOR/NOT normal — permitindo 2 filtros diferentes ao mesmo tempo.
-   Fica visível até ser desfixada (clicando de novo no 📌 ou trocando o pin). */
 window.pinnedMasterTag = window.pinnedMasterTag || null;
 
 window.toggleMasterTagPin = function(tag) {
@@ -897,32 +953,34 @@ window.toggleMasterTagPin = function(tag) {
     } else {
         window.pinnedMasterTag = tag;
     }
-    if (typeof renderMasterTagList === 'function') renderMasterTagList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 };
 
-function renderMasterTagList() {
-    const container = document.getElementById('master-tag-list'); container.innerHTML = '';
+window.renderMasterTagList = function() {
+    const container = document.getElementById('master-tag-list'); 
+    if(!container) return;
+    container.innerHTML = '';
     
     const presetCol = document.getElementById('col-presets');
     const presetsVisible = presetCol && presetCol.style.display !== 'none';
     
     let tagCounts = new Map();
-    imageFiles.forEach(img => {
-        if (img.hidden) return;
-        if (img.type === 'tags' && img.hasFile) {
-            img.content.split(',').forEach(t => {
-                const cleanTag = t.trim();
-                if (cleanTag) tagCounts.set(cleanTag, (tagCounts.get(cleanTag) || 0) + 1);
-            });
-        }
-    });
+    if(typeof imageFiles !== 'undefined') {
+        imageFiles.forEach(img => {
+            if (img.hidden) return;
+            if (img.type === 'tags' && img.hasFile) {
+                img.content.split(',').forEach(t => {
+                    const cleanTag = t.trim();
+                    if (cleanTag) tagCounts.set(cleanTag, (tagCounts.get(cleanTag) || 0) + 1);
+                });
+            }
+        });
+    }
 
     let favTags = new Set(datasetConfig.favoriteTags || []);
-    sortedMasterTags = Array.from(masterTagSet).sort();
+    let sortedMasterTags = typeof masterTagSet !== 'undefined' ? Array.from(masterTagSet).sort() : [];
 
-    /* ---------- TAG PINADA (fica grudada visualmente no topo da lista,
-       descendo junto com o scroll, até ser desfixada) ---------- */
     if (window.pinnedMasterTag) {
         const pTag = window.pinnedMasterTag;
         const pCount = tagCounts.get(pTag) || 0;
@@ -978,6 +1036,11 @@ function renderMasterTagList() {
             }
             
             const isPinned = window.pinnedMasterTag === tag;
+            const dbCached = window.danbooruCache ? (window.danbooruCache[tag.toLowerCase()] || window.danbooruCache[tag]) : null;
+            const dbCountHtml = (window.showDanbooruCounts && dbCached && dbCached.count > 0) 
+                ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">${window.formatDbCount(dbCached.count)}</span>` 
+                : '';
+
             item.innerHTML = `
                 <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
                     <span class="tag-pin${isPinned ? ' active' : ''}" style="color: ${isPinned ? '#4db8ff' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Pin as a mandatory filter (like AND for this tag only)">📌</span>
@@ -987,7 +1050,10 @@ function renderMasterTagList() {
                     <span class="tag-name">${tag}</span>
                     ${statusHtml}
                 </div>
-                <span class="tag-remove" title="Global Remove">&times;</span>
+                <div style="display: flex; align-items: center;">
+                    ${dbCountHtml}
+                    <span class="tag-remove" title="Global Remove">&times;</span>
+                </div>
             `;
 
             if (conflictsForThisTag.length > 0) {
@@ -1063,16 +1129,16 @@ function renderMasterTagList() {
                     e.stopPropagation();
                     if(typeof window.savePresetTag === 'function') {
                         window.savePresetTag(tag);
-                        window.showAlert(`Tag "${tag}" saved to Presets!`, 'success');
+                        if(typeof window.showAlert === 'function') window.showAlert(`Tag "${tag}" saved to Presets!`, 'success');
                     }
                 };
             }
             
-            item.ondblclick = (e) => { e.stopPropagation(); addTagToSelected(tag, document.getElementById('master-add-pos').value); };
+            item.ondblclick = (e) => { e.stopPropagation(); window.addTagToSelected(tag, document.getElementById('master-add-pos') ? document.getElementById('master-add-pos').value : 'bottom'); };
             
             item.onclick = (e) => {
                 if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) { 
-                    if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); globalRemoveTags([tag]); }
+                    if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.globalRemoveTags([tag]); }
                     return; 
                 }
                 
@@ -1090,7 +1156,9 @@ function renderMasterTagList() {
                     }
                 }
                 
-                renderMasterTagList(); applyFilters(); updateSelectionActions();
+                window.renderMasterTagList(); 
+                if (typeof window.applyFilters === 'function') window.applyFilters();
+                if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
             };
             container.appendChild(item);
 
@@ -1101,14 +1169,16 @@ function renderMasterTagList() {
     }
 
     let pendingCounts = new Map(); 
-    imageFiles.forEach(img => {
-        if (img.hidden) return;
-        if (img.pendingAdd && img.pendingAdd.length) {
-            img.pendingAdd.forEach(t => pendingCounts.set(t, (pendingCounts.get(t) || 0) + 1));
-        }
-    });
+    if(typeof imageFiles !== 'undefined') {
+        imageFiles.forEach(img => {
+            if (img.hidden) return;
+            if (img.pendingAdd && img.pendingAdd.length) {
+                img.pendingAdd.forEach(t => pendingCounts.set(t, (pendingCounts.get(t) || 0) + 1));
+            }
+        });
+    }
 
-    sortedGhostTags = Array.from(pendingCounts.keys()).sort();
+    let sortedGhostTags = Array.from(pendingCounts.keys()).sort();
 
     if (window.showGhostTagsInList && sortedGhostTags.length > 0) {
         const label = document.createElement('div');
@@ -1132,7 +1202,7 @@ function renderMasterTagList() {
             `;
             item.querySelector('.tag-ghost-accept').onclick = (e) => {
                 e.stopPropagation();
-                acceptGhostTagGlobal(tag);
+                window.acceptGhostTagGlobal(tag);
             };
             item.onclick = (e) => {
                 if (e.target.classList.contains('tag-ghost-accept')) return;
@@ -1151,18 +1221,20 @@ function renderMasterTagList() {
                     }
                 }
 
-                renderMasterTagList(); applyFilters(); updateSelectionActions();
+                window.renderMasterTagList(); 
+                if (typeof window.applyFilters === 'function') window.applyFilters();
+                if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
             };
             container.appendChild(item);
         });
     }
 
     if (typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
-    if (window.masterSearchMode) window.filterMasterTagsByName(document.getElementById('master-add-input').value);
+    if (window.masterSearchMode && typeof window.filterMasterTagsByName === 'function') window.filterMasterTagsByName(document.getElementById('master-add-input') ? document.getElementById('master-add-input').value : '');
 }
 
-function acceptGhostTagGlobal(tag) {
-    const globalExt = document.getElementById('topbar-save-format').value;
+window.acceptGhostTagGlobal = function(tag) {
+    const globalExt = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
     let count = 0;
     const affected = [];
     imageFiles.forEach(img => {
@@ -1185,24 +1257,24 @@ function acceptGhostTagGlobal(tag) {
             }
         }
     });
-    window.markDirty(affected);
-    masterTagSet.add(tag);
-    masterSelectedGhostTags.delete(tag);
+    if(typeof window.markDirty === 'function') window.markDirty(affected);
+    if(typeof masterTagSet !== 'undefined') masterTagSet.add(tag);
+    if(typeof masterSelectedGhostTags !== 'undefined') masterSelectedGhostTags.delete(tag);
 
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
-    renderMasterTagList();
-    if (selectedIndices.size > 0) renderEditor();
-    refreshListStatus();
+    window.renderMasterTagList();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.refreshListStatus === 'function') window.refreshListStatus();
     if (typeof window.applyFilters === 'function') window.applyFilters();
-    if (typeof savePendingTagsStore === 'function') {
+    if (typeof window.savePendingTagsStore === 'function') {
         const handle = window.currentImagesHandle || window.rootHandle;
-        savePendingTagsStore(handle);
+        window.savePendingTagsStore(handle);
     }
-    showAlert(`Tag "${tag}" accepted on ${count} images. Press Ctrl+S to save to disk.`, 'success');
+    if(typeof window.showAlert === 'function') window.showAlert(`Tag "${tag}" accepted on ${count} images. Press Ctrl+S to save to disk.`, 'success');
 }
 
-function applyFilters() {
+window.applyFilters = function() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
     imageFiles.forEach(img => {
         if (img.hidden) {
@@ -1212,15 +1284,11 @@ function applyFilters() {
 
         let visible = true;
 
-        // FILTRO DE TEXTO POR NOME (estava sendo salvo em window.imageNameFilter
-        // mas nunca era realmente checado aqui — por isso não fazia nada).
         if (visible && window.imageNameFilter) {
             const nameLower = (img.name || '').toLowerCase();
             if (!nameLower.includes(window.imageNameFilter)) visible = false;
         }
 
-        // TAG FIXADA (PIN) — funciona como um "AND" obrigatório de 1 tag,
-        // independente e somado ao filtro normal (AND/OR/XOR/NOT) abaixo.
         if (visible && window.pinnedMasterTag) {
             if (img.type === 'tags' && img.content) {
                 const tags = img.content.split(',').map(t => t.trim());
@@ -1265,28 +1333,33 @@ function applyFilters() {
     });
 }
 
-function clearFilters() { masterSelectedTags.clear(); updateSelectionActions(); renderMasterTagList(); setLogic('AND'); }
+window.clearFilters = function() { 
+    masterSelectedTags.clear(); 
+    if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions(); 
+    window.renderMasterTagList(); 
+    if(typeof window.setLogic === 'function') window.setLogic('AND'); 
+}
 
-function updateSelectionActions() {
+window.updateSelectionActions = function() {
     const bar = document.getElementById('master-selection-actions');
-    bar.style.display = masterSelectedTags.size > 0 ? 'flex' : 'none';
+    if(bar) bar.style.display = masterSelectedTags.size > 0 ? 'flex' : 'none';
 }
 
-function removeSelectedMasterTags() {
+window.removeSelectedMasterTags = function() {
     if(masterSelectedTags.size === 0) return;
-    if(confirm(`Remove ${masterSelectedTags.size} tags globally?`)) globalRemoveTags(Array.from(masterSelectedTags));
+    if(confirm(`Remove ${masterSelectedTags.size} tags globally?`)) window.globalRemoveTags(Array.from(masterSelectedTags));
 }
 
-function addSelectedMasterTagsTo(target) {
+window.addSelectedMasterTagsTo = function(target) {
     if(masterSelectedTags.size === 0) return;
-    const pos = document.getElementById('master-add-pos').value;
+    const pos = document.getElementById('master-add-pos') ? document.getElementById('master-add-pos').value : 'bottom';
     const tagsToAdd = Array.from(masterSelectedTags);
-    const globalExt = document.getElementById('topbar-save-format').value;
+    const globalExt = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
     
     let targets = [];
     if (target === 'selected') {
         targets = Array.from(selectedIndices);
-        if(targets.length === 0) { showAlert("No images selected on the left list.", "error"); return; }
+        if(targets.length === 0) { if(typeof window.showAlert === 'function') window.showAlert("No images selected on the left list.", "error"); return; }
     } else if (target === 'all') {
         targets = imageFiles.map((_, i) => i).filter(i => !imageFiles[i].hidden);
     }
@@ -1306,18 +1379,18 @@ function addSelectedMasterTagsTo(target) {
             if(!imageFiles[idx].ext) imageFiles[idx].ext = globalExt;
         }
     });
-    window.markDirty(targets.map(idx => imageFiles[idx]));
+    if(typeof window.markDirty === 'function') window.markDirty(targets.map(idx => imageFiles[idx]));
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
-    renderMasterTagList();
-    renderEditor();
-    refreshListStatus();
+    window.renderMasterTagList();
+    if(typeof window.renderEditor === 'function') window.renderEditor();
+    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
     if (typeof window.applyFilters === 'function') window.applyFilters();
-    showAlert(`Added ${tagsToAdd.length} tags to ${targets.length} images.`);
+    if(typeof window.showAlert === 'function') window.showAlert(`Added ${tagsToAdd.length} tags to ${targets.length} images.`, "success");
 }
 
-function globalRemoveTags(tagsToRemove) {
+window.globalRemoveTags = function(tagsToRemove) {
     if(!tagsToRemove || tagsToRemove.length === 0) return;
     let changed = 0;
     const affected = [];
@@ -1331,44 +1404,22 @@ function globalRemoveTags(tagsToRemove) {
             if(currentTags.length !== originalLen) { img.content = currentTags.join(', '); affected.push(img); changed++; }
         }
     });
-    window.markDirty(affected);
+    if(typeof window.markDirty === 'function') window.markDirty(affected);
     
-    tagsToRemove.forEach(t => { masterTagSet.delete(t); masterSelectedTags.delete(t); });
+    tagsToRemove.forEach(t => { 
+        if(typeof masterTagSet !== 'undefined') masterTagSet.delete(t); 
+        if(typeof masterSelectedTags !== 'undefined') masterSelectedTags.delete(t); 
+    });
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();
-    updateSelectionActions(); 
-    renderMasterTagList();
-    if (selectedIndices.size > 0) renderEditor();
+    if(typeof window.updateSelectionActions === 'function') window.updateSelectionActions(); 
+    window.renderMasterTagList();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
     
-    showAlert(`Globally removed tags from ${changed} images. Press Ctrl+S to save to disk.`, 'success');
+    if(typeof window.showAlert === 'function') window.showAlert(`Globally removed tags from ${changed} images. Press Ctrl+S to save to disk.`, 'success');
 }
-
-window.filterActiveTagsByName = function(val) {
-    window.activeTagNameFilter = (val || '').trim().toLowerCase();
-    applyActiveTagNameFilterToDOM();
-};
-
-function applyActiveTagNameFilterToDOM() {
-    const container = document.getElementById('tag-list-vertical');
-    if (!container) return;
-    container.querySelectorAll('.tag-row').forEach(item => {
-        const nameEl = item.querySelector('.tag-name');
-        if (nameEl) {
-            const text = nameEl.textContent.toLowerCase();
-            item.style.display = (!window.activeTagNameFilter || text.includes(window.activeTagNameFilter)) ? 'flex' : 'none';
-        }
-    });
-}
-
-window.addEventListener('DOMContentLoaded', () => {
-    const container = document.getElementById('tag-list-vertical');
-    if (container) {
-        const observer = new MutationObserver(() => applyActiveTagNameFilterToDOM());
-        observer.observe(container, { childList: true });
-    }
-});
 
 window.convertToCustomNL = async function() {
     if (activeSelectedTags.size === 0) return;
@@ -1415,8 +1466,8 @@ window.convertToCustomNL = async function() {
         const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
         
         await Promise.all(savePromises);
-        window.markDatasetEdited();
-        if (window.showAlert) window.showAlert(`Convertido para NL em ${changedCount} imagens!`, "success");
+        if(typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+        if (typeof window.showAlert === 'function') window.showAlert(`Convertido para NL em ${changedCount} imagens!`, "success");
     }
 };
 
@@ -1436,7 +1487,7 @@ window.translateCustomNLEdit = async function(btn, targetLang) {
         ta.value = translated;
     } catch(e) { 
         ta.value = backup; 
-        if (window.showAlert) window.showAlert("Error translating.", "error"); 
+        if (typeof window.showAlert === 'function') window.showAlert("Error translating.", "error"); 
     }
 };
 
