@@ -731,10 +731,18 @@ window.renderEditor = function() {
             row.className = 'tag-row ghost';
             row.innerHTML = `<div class="tag-row-left">
                 <span class="tag-name"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${displayTag}</span>
-            </div><span class="tag-ghost-accept" title="Accept suggestion">✓</span>`;
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span class="tag-ghost-accept" title="Accept suggestion">✓</span>
+                <span class="tag-ghost-reject" title="Reject suggestion" style="color: #ff4444; cursor: pointer; font-size: 1.2em; font-weight: bold;">&times;</span>
+            </div>`;
             row.querySelector('.tag-ghost-accept').onclick = (e) => {
                 e.stopPropagation();
                 window.acceptGhostTagActive(tag);
+            };
+            row.querySelector('.tag-ghost-reject').onclick = (e) => {
+                e.stopPropagation();
+                window.rejectGhostTagActive(tag);
             };
             tagListVertical.appendChild(row);
         });
@@ -1242,11 +1250,18 @@ window.renderMasterTagList = function() {
                     <span style="color:#00aa66; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
                     <span class="tag-name">${tag}</span>
                 </div>
-                <span class="tag-ghost-accept" title="Accept for all images that suggested it">✓</span>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span class="tag-ghost-accept" title="Accept for all images that suggested it">✓</span>
+                    <span class="tag-ghost-reject" title="Reject globally" style="color: #ff4444; cursor: pointer; font-size: 1.2em; font-weight: bold;">&times;</span>
+                </div>
             `;
             item.querySelector('.tag-ghost-accept').onclick = (e) => {
                 e.stopPropagation();
                 window.acceptGhostTagGlobal(tag);
+            };
+            item.querySelector('.tag-ghost-reject').onclick = (e) => {
+                e.stopPropagation();
+                window.rejectGhostTagGlobal(tag);
             };
             item.onclick = (e) => {
                 if (e.target.classList.contains('tag-ghost-accept')) return;
@@ -1511,6 +1526,72 @@ window.globalConvertTagToGhost = async function(tagToConvert) {
     if (typeof window.showAlert === 'function') {
         window.showAlert(`Tag "${tagToConvert}" convertida em sugestão globalmente em ${affectedCount} imagem(ns).`, 'info');
     }
+};
+
+window.rejectGhostTagActive = function(tag) {
+    let modifiedFiles = [];
+    selectedIndices.forEach(idx => {
+        const img = imageFiles[idx];
+        if (img.pendingAdd && img.pendingAdd.includes(tag)) {
+            // Remove a tag do banco de sugestões
+            img.pendingAdd = img.pendingAdd.filter(t => t !== tag);
+            if (typeof pendingTagsStore !== 'undefined') {
+                if (img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd;
+                else delete pendingTagsStore[img.baseName];
+            }
+            modifiedFiles.push(img);
+        }
+    });
+    
+    // Marca como sujo para liberar o aviso de salvar
+    if (modifiedFiles.length > 0 && typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
+    
+    // Salva o banco de sugestões temporário
+    if (typeof window.savePendingTagsStore === 'function') {
+        const handle = window.currentImagesHandle || window.rootHandle;
+        window.savePendingTagsStore(handle);
+    }
+    
+    // Atualiza a tela
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+};
+
+window.rejectGhostTagGlobal = function(tag) {
+    let count = 0;
+    const affected = [];
+    imageFiles.forEach(img => {
+        if (img.hidden) return;
+        if (img.pendingAdd && img.pendingAdd.includes(tag)) {
+            // Remove a tag do banco de sugestões globalmente
+            img.pendingAdd = img.pendingAdd.filter(t => t !== tag);
+            if (typeof pendingTagsStore !== 'undefined') {
+                if (img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd;
+                else delete pendingTagsStore[img.baseName];
+            }
+            affected.push(img);
+            count++;
+        }
+    });
+    
+    // Marca como sujo
+    if (typeof window.markDirty === 'function') window.markDirty(affected);
+    
+    // Remove da seleção de ghost tags na master list (se tiver selecionado)
+    if (typeof masterSelectedGhostTags !== 'undefined') masterSelectedGhostTags.delete(tag);
+    
+    // Atualiza a tela
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    window.renderMasterTagList();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+    
+    // Salva o banco de sugestões temporário
+    if (typeof window.savePendingTagsStore === 'function') {
+        const handle = window.currentImagesHandle || window.rootHandle;
+        window.savePendingTagsStore(handle);
+    }
+    
+    if(typeof window.showAlert === 'function') window.showAlert(`Sugestão "${tag}" rejeitada em ${count} imagens. Aperte Ctrl+S para salvar no disco.`, 'info');
 };
 
 window.convertToCustomNL = async function() {
