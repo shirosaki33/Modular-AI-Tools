@@ -641,12 +641,23 @@ window.refreshDataset = async function() {
     const val2 = document.getElementById('sub-dir-2') ? document.getElementById('sub-dir-2').value : '';
     const val1 = document.getElementById('sub-dir-1') ? document.getElementById('sub-dir-1').value : '';
 
-    if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { 
-        await window.loadSubDir2(); 
-    } else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { 
-        await window.loadSubDir1(); 
-    } else if (window.rootHandle) { 
-        await window.loadGallery(window.rootHandle); 
+    // BUG FIX: sem este try/catch, qualquer erro no meio do reload (ex:
+    // permissão perdida, arquivo bloqueado) falhava em SILÊNCIO — a lista
+    // ficava travada com os dados antigos (parecia que Renomear/Clonar
+    // "não atualizava a lista"), sem nenhum aviso na tela.
+    try {
+        if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { 
+            await window.loadSubDir2(); 
+        } else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { 
+            await window.loadSubDir1(); 
+        } else if (window.rootHandle) { 
+            await window.loadGallery(window.rootHandle); 
+        }
+    } catch (e) {
+        console.error('refreshDataset failed:', e);
+        if (window.showAlert) window.showAlert('Erro ao atualizar a lista: ' + (e.message || e), 'error');
+        if (typeof window.renderImageList === 'function') window.renderImageList();
+        return;
     }
 
     // BUG FIX: finishLoading() (chamado dentro do load acima) já auto-seleciona
@@ -700,7 +711,7 @@ window.loadGallery = async function(dirHandle) {
     for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
             configNeedsSave = await window.processSingleImage(entry, dirHandle, configNeedsSave);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash') {
+        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive') {
             window.sub1Handles.set(entry.name, entry);
         }
     }
@@ -744,7 +755,7 @@ window.loadSubDir1 = async function() {
     for await (const entry of window.currentImagesHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
             configNeedsSave = await window.processSingleImage(entry, window.currentImagesHandle, configNeedsSave);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash') {
+        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive') {
             window.sub2Handles.set(entry.name, entry);
         }
     }

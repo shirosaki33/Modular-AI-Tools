@@ -42,8 +42,8 @@ style.innerHTML = `
 
     .tag-row.glow-favorite, .master-tag-item.glow-favorite { background: rgba(0, 80, 40, 0.4) !important; border-left: 3px solid #00ff99 !important; transition: 0.1s; }
 
-    .tag-row.filter-match { box-shadow: inset 0 0 0 1px #00ff99; background: rgba(0, 255, 153, 0.12) !important; }
-    .tag-row.filter-match:hover { background: rgba(0, 255, 153, 0.2) !important; }
+    .tag-row.filter-match { box-shadow: inset 0 0 0 1px #ff9500; background: rgba(255, 149, 0, 0.14) !important; }
+    .tag-row.filter-match:hover { background: rgba(255, 149, 0, 0.22) !important; }
 
     .tag-row.selected-active.glow-favorite, .master-tag-item.selected-master.glow-favorite {
         background: #0a3a5c !important;
@@ -684,7 +684,7 @@ window.renderEditor = function() {
             }
 
             row.onclick = (e) => {
-                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl')) { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost')) { 
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.removeTagFromSelected(tag); }
 					if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.convertTagToGhost(tag); }
                     return; 
@@ -1187,7 +1187,7 @@ window.renderMasterTagList = function() {
             item.ondblclick = (e) => { e.stopPropagation(); window.addTagToSelected(tag, document.getElementById('master-add-pos') ? document.getElementById('master-add-pos').value : 'bottom'); };
             
             item.onclick = (e) => {
-                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-to-ghost')) { 
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.globalRemoveTags([tag]); }
 					if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.globalConvertTagToGhost(tag); }
                     return; 
