@@ -3,6 +3,24 @@
    Handles initialization, settings, resizers, file loading, modals.
 ========================================================================= */
 
+/* ---------------------------------------------------------------------
+   BUG FIX: <body onload="initSystem()"> in tag_manager.html was calling
+   a function that did not exist anywhere in the codebase. That throws a
+   ReferenceError on every page load, which is why settings never loaded
+   (thumb size, font size, panel widths, search-mode toggles, Danbooru
+   cache, conflict-warning toggle, etc.), the resizers never got wired up,
+   and the "Saved directories" dropdown stayed empty. This restores it.
+--------------------------------------------------------------------- */
+window.initSystem = async function() {
+    try {
+        setupResizers();
+        await window.loadSettings();
+        await window.updateSelect();
+    } catch (e) {
+        console.error('initSystem failed:', e);
+    }
+};
+
 window.toggleSearchMode = function(context) {
     if (context === 'active') {
         window.activeSearchMode = !window.activeSearchMode;
@@ -48,6 +66,13 @@ window.loadSettings = async function() {
     const danbooruCounts = await window.getSetting('toggle-danbooru-counts', false);
     window.showDanbooruCounts = danbooruCounts;
     if (document.getElementById('toggle-danbooru-counts')) document.getElementById('toggle-danbooru-counts').checked = danbooruCounts;
+
+    const e621Setting = await window.getSetting('toggle-e621', false);
+    const e621SfwSetting = await window.getSetting('toggle-e621-sfw', false);
+    window.showE621 = e621Setting;
+    window.showE621Sfw = e621SfwSetting;
+    if (document.getElementById('toggle-e621')) document.getElementById('toggle-e621').checked = e621Setting;
+    if (document.getElementById('toggle-e621-sfw')) document.getElementById('toggle-e621-sfw').checked = e621SfwSetting;
 
     if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
     if (document.getElementById('toggle-unsaved-alert')) document.getElementById('toggle-unsaved-alert').checked = unsavedAlert;
@@ -110,6 +135,22 @@ window.toggleDanbooruCounts = function(skipSave = false) {
     }
 };
 
+window.toggleE621 = function() {
+    const checkbox = document.getElementById('toggle-e621');
+    if (checkbox) {
+        window.showE621 = checkbox.checked;
+        window.saveSetting('toggle-e621', checkbox.checked);
+    }
+};
+
+window.toggleE621Sfw = function() {
+    const checkbox = document.getElementById('toggle-e621-sfw');
+    if (checkbox) {
+        window.showE621Sfw = checkbox.checked;
+        window.saveSetting('toggle-e621-sfw', checkbox.checked);
+    }
+};
+
 window.manualDanbooruSync = function() {
     if (!window.showDanbooruCounts) {
         window.showAlert("Enable Danbooru counts in settings first.", "warn");
@@ -142,7 +183,6 @@ window.syncDanbooruTags = async function(tags, force = false) {
     }
 
     const chunkSize = 50;
-    let cacheUpdated = false;
 
     for (let i = 0; i < tagsToFetch.length; i += chunkSize) {
         if (!window.showDanbooruCounts) break;
@@ -166,7 +206,6 @@ window.syncDanbooruTags = async function(tags, force = false) {
                     }
                 });
 
-                cacheUpdated = true;
                 await window.saveSetting('danbooru_tag_cache', window.danbooruCache);
                 
                 if (typeof window.renderEditor === 'function') window.renderEditor();
@@ -178,51 +217,6 @@ window.syncDanbooruTags = async function(tags, force = false) {
     }
     
     _danbooruSyncActive = false;
-};
-
-window.addEventListener('DOMContentLoaded', async () => {
-    try {
-        await window.loadSettings(); 
-        if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
-        await window.updateSelect();
-        const handles = await window.getHandles();
-        if (handles.length > 0) {
-            const h = handles[0].handle;
-            if ((await h.queryPermission({ mode: 'readwrite' })) === 'granted') {
-                document.getElementById('dir-list').value = handles[0].name;
-                window.rootHandle = h;
-                document.getElementById('btn-save-folder').style.display = 'none';
-                document.getElementById('btn-remove').style.display = 'inline-block';
-                document.getElementById('current-folder-display').textContent = `📂 ${h.name}`;
-                window.loadGallery(h);
-            }
-        }
-    } catch (e) {}
-});
-
-window.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') { 
-        e.preventDefault(); 
-        if (typeof window.saveAllImages === 'function') window.saveAllImages(); 
-    }
-});
-
-window.showAlert = function(msg, type = 'success') {
-    const bar = document.getElementById('alertBar');
-    if(!bar) return;
-    bar.className = type; bar.textContent = msg;
-    bar.style.display = 'block';
-    setTimeout(() => { bar.className = ''; bar.style.display = 'none'; }, 3500);
-};
-
-window.initSystem = function() {
-    if(typeof window.updateBatchUI === 'function') window.updateBatchUI(); 
-    setupResizers();
-    
-    if (window.location.protocol === 'file:') {
-        const fileWarning = document.getElementById('file-protocol-warning');
-        if (fileWarning) fileWarning.style.display = 'block';
-    }
 };
 
 window.updateThumbSize = function(val, skipSave = false) {
@@ -655,11 +649,31 @@ window.refreshDataset = async function() {
         await window.loadGallery(window.rootHandle); 
     }
 
+    // BUG FIX: finishLoading() (chamado dentro do load acima) já auto-seleciona
+    // o índice 0 sozinho. Sem limpar aqui antes de restaurar a seleção real,
+    // essa seleção "extra" ficava somada — depois de Clone/Rename/Delete,
+    // duas imagens ficavam selecionadas ao mesmo tempo e o editor mostrava
+    // tags misturadas das duas, dando a impressão de que a lista não tinha
+    // atualizado direito.
+    selectedIndices.clear();
     imageFiles.forEach((img, i) => { if (selectedBaseNames.includes(img.baseName)) selectedIndices.add(i); });
     if(typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
     if(selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
     window.showAlert(`Refreshed! ${imageFiles.length} images loaded.`);
 };
+
+/* ---------------------------------------------------------------------
+   BUG FIX: cada imagem carregada ganha uma blob URL via URL.createObjectURL,
+   mas ela nunca era liberada com URL.revokeObjectURL em lugar nenhum do
+   projeto. Toda troca de pasta / refresh recriava URLs novas e deixava as
+   antigas presas na memória do navegador pra sempre (vazamento que cresce
+   com o uso — pior em datasets grandes ou sessões longas). Revogamos aqui
+   antes de descartar o array antigo.
+--------------------------------------------------------------------- */
+function revokeImageFileUrls(files) {
+    if (!files) return;
+    files.forEach(img => { if (img && img.url) { try { URL.revokeObjectURL(img.url); } catch (e) {} } });
+}
 
 window.loadGallery = async function(dirHandle) {
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
@@ -679,13 +693,14 @@ window.loadGallery = async function(dirHandle) {
     await window.loadDatasetConfig(dirHandle);
     await window.loadPendingTagsStore(dirHandle);
 
+    revokeImageFileUrls(imageFiles);
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
 
     for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
             configNeedsSave = await window.processSingleImage(entry, dirHandle, configNeedsSave);
-        } else if (entry.kind === 'directory') {
+        } else if (entry.kind === 'directory' && entry.name !== '_trash') {
             window.sub1Handles.set(entry.name, entry);
         }
     }
@@ -722,13 +737,14 @@ window.loadSubDir1 = async function() {
     await window.loadDatasetConfig(window.currentImagesHandle);
     await window.loadPendingTagsStore(window.currentImagesHandle);
 
+    revokeImageFileUrls(imageFiles);
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
 
     for await (const entry of window.currentImagesHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
             configNeedsSave = await window.processSingleImage(entry, window.currentImagesHandle, configNeedsSave);
-        } else if (entry.kind === 'directory') {
+        } else if (entry.kind === 'directory' && entry.name !== '_trash') {
             window.sub2Handles.set(entry.name, entry);
         }
     }
@@ -761,6 +777,7 @@ window.loadSubDir2 = async function() {
     await window.loadDatasetConfig(targetHandle);
     await window.loadPendingTagsStore(targetHandle);
 
+    revokeImageFileUrls(imageFiles);
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
     let configNeedsSave = false;
     
@@ -829,7 +846,17 @@ window.processSingleImage = async function(entry, parentHandle, configNeedsSave)
 }
 
 window.finishLoading = function() {
-    imageFiles.sort((a,b) => a.name.localeCompare(b.name));
+    // ORDENAÇÃO NATIVA E RÁPIDA - Resolve o problema do _1 vs _11 sem travar o navegador
+    // Se a imagem tiver uma ordem manual salva (via Reorder Mode), ela tem prioridade.
+    imageFiles.sort((a, b) => {
+        const cfgA = datasetConfig[a.baseName];
+        const cfgB = datasetConfig[b.baseName];
+        const orderA = cfgA && typeof cfgA.order === 'number' ? cfgA.order : null;
+        const orderB = cfgB && typeof cfgB.order === 'number' ? cfgB.order : null;
+        if (orderA !== null && orderB !== null) return orderA - orderB;
+        return a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'});
+    });
+
     document.getElementById('list-count').textContent = imageFiles.length;
     
     window.updateLastEditedUI();
@@ -931,10 +958,13 @@ window.updateTagsDatalist = function() {
     const datalist = document.getElementById('all-tags-list');
     if(!datalist) return;
     datalist.innerHTML = '';
+    const frag = document.createDocumentFragment();
     Array.from(masterTagSet).filter(tag => !tag.startsWith('NL:')).sort().forEach(tag => {
         const opt = document.createElement('option');
-        opt.value = tag; datalist.appendChild(opt);
+        opt.value = tag; 
+        frag.appendChild(opt);
     });
+    datalist.appendChild(frag);
 };
 
 window.openReplaceTagModal = function(scope) {
@@ -957,6 +987,11 @@ window.confirmReplaceTag = async function() {
     const oldTag = document.getElementById('replace-old-tag').value.trim();
     const newTag = document.getElementById('replace-new-tag').value.trim();
     
+    // Tira o foco do input ANTES de esconder o dropdown — em alguns
+    // navegadores, esconder (display:none) um elemento que ainda está
+    // focado atrasa o repaint da área por baixo até a próxima interação.
+    // (A ordem aqui importa: tinha ficado invertida antes.)
+    if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     document.getElementById('replace-dropdown').classList.remove('open');
 
     if (!oldTag || !newTag || oldTag === newTag) return;
@@ -1002,6 +1037,16 @@ window.confirmReplaceTag = async function() {
         }
     } catch(e) { console.error("Render refresh failed:", e); }
 
+    // BUG FIX: sem isso, o navegador só repintava a tela com as mudanças
+    // acima na próxima interação do usuário (clique em qualquer lugar) —
+    // porque o Promise.all logo abaixo (salvando todos os arquivos em
+    // disco de uma vez) podia disparar antes do navegador ter uma chance
+    // de desenhar o frame com a lista já atualizada. Um único rAF nem
+    // sempre é suficiente (o navegador pode disparar dois rAFs seguidos
+    // sem pintar entre eles); o double-rAF abaixo garante um ciclo de
+    // pintura completo antes de seguir pro trabalho pesado de salvar.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
     const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
     
     await Promise.all(savePromises);
@@ -1021,6 +1066,7 @@ window.setLogic = function(mode) {
     }
 
     if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
 };
 
 window.applyTagNameFilterToDOM = function() {
@@ -1081,6 +1127,43 @@ window.updateSuggestFilterVisibility = function() {
     if (discardBtn) discardBtn.style.display = anyPending ? 'inline-flex' : 'none';
 };
 
+/* ---------------------------------------------------------------------
+   BUG FIX: btn-discard-active-suggestions (in the Active Image editor)
+   called window.discardActiveSuggestions(), which was never defined —
+   only the dataset-wide window.discardAllSuggestions() existed. This
+   scopes the discard to just the currently selected image(s).
+--------------------------------------------------------------------- */
+window.discardActiveSuggestions = async function() {
+    if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
+
+    const anyPending = Array.from(selectedIndices).some(idx => {
+        const img = imageFiles[idx];
+        return img && img.pendingAdd && img.pendingAdd.length > 0;
+    });
+    if (!anyPending) return;
+
+    if (!confirm("Discard pending tag suggestions for the selected image(s)? This cannot be undone.")) return;
+
+    selectedIndices.forEach(idx => {
+        const img = imageFiles[idx];
+        if (img) {
+            img.pendingAdd = [];
+            if (typeof pendingTagsStore !== 'undefined') delete pendingTagsStore[img.baseName];
+        }
+    });
+
+    const handle = window.currentImagesHandle || window.rootHandle;
+    if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
+
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+
+    if (window.showAlert) window.showAlert("Pending suggestions discarded for the selected image(s).", "success");
+};
+
 window.discardAllSuggestions = async function() {
     const anyPending = imageFiles.some(img => img.pendingAdd && img.pendingAdd.length > 0 && !img.hidden);
     if (!anyPending) return;
@@ -1111,3 +1194,179 @@ window.discardAllSuggestions = async function() {
 
     window.showAlert("All pending suggestions discarded.", "success");
 };
+/* =========================================================================
+   REORDER MODE (Standalone-style, same pattern as the other wrap-based
+   modules in this project — does not touch tagmanager_ui_list.js)
+   ---------------------------------------------------------------------
+   This is the feature that was half-built: the button (#btn-reorder-mode)
+   and the drag-over CSS classes (.drag-over-top / .drag-over-bottom)
+   already existed in tag_manager.html, but no JS ever drove them.
+
+   - 🔒 Locked (default): list behaves exactly as before, no dragging.
+   - 🔓 Unlocked: each visible row in the Dataset list becomes draggable;
+     dropping it above/below another row moves it there.
+   - The new order is persisted per-image as `datasetConfig[baseName].order`
+     and honored by window.finishLoading() on the next load/refresh.
+========================================================================= */
+
+window.reorderModeActive = false;
+let _reorderDragImgs = null; // array de objetos (não índices) sendo arrastados
+
+window.toggleReorderMode = function() {
+    window.reorderModeActive = !window.reorderModeActive;
+
+    const btn = document.getElementById('btn-reorder-mode');
+    if (btn) {
+        btn.textContent = window.reorderModeActive ? '🔓' : '🔒';
+        btn.title = window.reorderModeActive
+            ? 'Reorder mode ON — drag images to move them (click to lock)'
+            : 'Unlock Reorder Mode';
+        btn.style.color = window.reorderModeActive ? '#00ff99' : '#aaa';
+        btn.style.borderColor = window.reorderModeActive ? '#00aa66' : '#444';
+    }
+
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+};
+
+/* Move um grupo de imagens (movedImgs, na ordem original do dataset) para
+   antes/depois de targetImg. Usa referências de objeto em vez de índices
+   numéricos porque, ao mover vários itens de uma vez, os índices dos
+   demais mudam a cada remoção — objetos não. */
+window.reorderImagesInList = function(movedImgs, targetImg, insertAfter) {
+    if (!movedImgs || movedImgs.length === 0 || !targetImg) return;
+    const movedSet = new Set(movedImgs);
+    if (movedSet.has(targetImg)) return; // não pode soltar em cima de si mesmo
+
+    // Guarda quais baseNames estavam selecionados ANTES de qualquer mutação
+    const selectedBaseNamesBefore = Array.from(selectedIndices)
+        .map(i => imageFiles[i] ? imageFiles[i].baseName : null)
+        .filter(Boolean);
+
+    // Preserva a ordem relativa original das imagens arrastadas
+    // (não a ordem em que foram clicadas/selecionadas)
+    const movedInOrder = imageFiles.filter(f => movedSet.has(f));
+
+    // Remove-as do array (de trás pra frente pra não bagunçar índices)
+    for (let i = imageFiles.length - 1; i >= 0; i--) {
+        if (movedSet.has(imageFiles[i])) imageFiles.splice(i, 1);
+    }
+
+    let insertPos = imageFiles.indexOf(targetImg);
+    if (insertPos === -1) insertPos = imageFiles.length;
+    if (insertAfter) insertPos += 1;
+
+    imageFiles.splice(insertPos, 0, ...movedInOrder);
+
+    // Grava a nova ordem manual para sobreviver a um refresh/reload
+    imageFiles.forEach((f, i) => {
+        if (!datasetConfig[f.baseName]) datasetConfig[f.baseName] = {};
+        datasetConfig[f.baseName].order = i;
+    });
+    if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+
+    // Restaura a seleção nas mesmas imagens depois do array embaralhar
+    selectedIndices.clear();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+
+    imageFiles.forEach((f, i) => { if (selectedBaseNamesBefore.includes(f.baseName)) selectedIndices.add(i); });
+    if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
+};
+
+function injectReorderHandlers() {
+    if (typeof imageFiles === 'undefined') return;
+
+    imageFiles.forEach((img, index) => {
+        if (!img.element) return;
+        const el = img.element;
+
+        if (!window.reorderModeActive) {
+            el.draggable = false;
+            el.classList.remove('reorder-draggable');
+            el.ondragstart = null;
+            el.ondragend = null;
+            el.ondragover = null;
+            el.ondragleave = null;
+            el.ondrop = null;
+            return;
+        }
+
+        if (img.hidden) return;
+
+        el.draggable = true;
+        el.classList.add('reorder-draggable');
+
+        el.ondragstart = (e) => {
+            e.stopPropagation();
+
+            // Se a imagem arrastada faz parte de uma seleção múltipla atual,
+            // arrasta o grupo inteiro junto; senão, arrasta só ela.
+            if (typeof selectedIndices !== 'undefined' && selectedIndices.has(index) && selectedIndices.size > 1) {
+                _reorderDragImgs = Array.from(selectedIndices)
+                    .sort((a, b) => a - b)
+                    .map(i => imageFiles[i])
+                    .filter(Boolean);
+            } else {
+                _reorderDragImgs = [img];
+            }
+
+            _reorderDragImgs.forEach(dImg => { if (dImg.element) dImg.element.classList.add('dragging'); });
+
+            if (_reorderDragImgs.length > 1 && e.dataTransfer) {
+                try { e.dataTransfer.setData('text/plain', `${_reorderDragImgs.length} images`); } catch (err) {}
+            }
+        };
+        el.ondragend = () => {
+            if (_reorderDragImgs) _reorderDragImgs.forEach(dImg => { if (dImg.element) dImg.element.classList.remove('dragging'); });
+            el.classList.remove('drag-over-top', 'drag-over-bottom');
+            _reorderDragImgs = null;
+        };
+        el.ondragover = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!_reorderDragImgs) return;
+            const rect = el.getBoundingClientRect();
+            const midpoint = rect.top + rect.height / 2;
+            el.classList.toggle('drag-over-top', e.clientY < midpoint);
+            el.classList.toggle('drag-over-bottom', e.clientY >= midpoint);
+        };
+        el.ondragleave = () => el.classList.remove('drag-over-top', 'drag-over-bottom');
+        el.ondrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            el.classList.remove('drag-over-top', 'drag-over-bottom');
+            if (!_reorderDragImgs || _reorderDragImgs.includes(img)) return;
+
+            const rect = el.getBoundingClientRect();
+            const midpoint = rect.top + rect.height / 2;
+            const insertAfter = e.clientY >= midpoint;
+
+            window.reorderImagesInList(_reorderDragImgs, img, insertAfter);
+        };
+    });
+}
+
+(function wrapRenderImageListForReorder() {
+    const tryWrap = () => {
+        if (typeof window.renderImageList !== 'function' || window.renderImageList.__reorderWrapped) return false;
+        const original = window.renderImageList;
+        const wrapped = function() {
+            original.apply(this, arguments);
+            injectReorderHandlers();
+        };
+        wrapped.__reorderWrapped = true;
+        window.renderImageList = wrapped;
+        return true;
+    };
+    // tagmanager_ui_list.js já foi carregado antes deste arquivo no HTML,
+    // então isso deve funcionar de primeira; o fallback é só por segurança.
+    if (!tryWrap()) window.addEventListener('DOMContentLoaded', tryWrap);
+})();
+
+const reorderStyle = document.createElement('style');
+reorderStyle.innerHTML = `
+    .list-item.reorder-draggable { cursor: grab; }
+    .list-item.reorder-draggable:active { cursor: grabbing; }
+    .list-item.reorder-draggable.dragging { opacity: 0.4; }
+    #btn-reorder-mode.active-mode { background: #0d2a18 !important; }
+`;
+document.head.appendChild(reorderStyle);

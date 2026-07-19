@@ -102,6 +102,10 @@
         .list-item.has-data .list-item-status { color: #00ff99; }
         .list-item.is-nl .list-item-status { color: #b890ff; }
 
+        /* VÁCUO DA IMAGEM */
+        .list-item.drag-over-top { border-top: 4px solid #4db8ff !important; padding-top: 20px !important; transition: 0.1s; }
+        .list-item.drag-over-bottom { border-bottom: 4px solid #4db8ff !important; padding-bottom: 20px !important; transition: 0.1s; }
+
         #editor-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         #tags-editor-container { display: flex; flex: 1; flex-direction: column; background: #111; overflow: hidden; }
         #tag-list-vertical { flex: 1; overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 20px;}
@@ -306,6 +310,7 @@
             
             <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0; display:flex; gap:6px; align-items:center;">
                 <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="flex:1; min-width:0; box-sizing:border-box; font-size:12px; padding:6px 10px;">
+                <button id="btn-reorder-mode" title="Unlock Reorder Mode" style="flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s;" onclick="window.toggleReorderMode()">🔒</button>
                 <button id="btn-toggle-compact-view" title="Switch to Compact View (grouped by prefix)" style="flex-shrink:0; padding:6px 10px; font-size:14px;">🗂️</button>
                 <button id="btn-compact-group-depth" title="Set how many starting characters define each group" style="display:none; flex-shrink:0; padding:6px 10px; font-size:11px;">Grp: 1</button>
             </div>
@@ -584,17 +589,19 @@
 
 <canvas id="offscreen-canvas" width="448" height="448" style="display:none;"></canvas>
 
-	<script src="tools/quick_links.js"></script>
-	<script src="tools/tagmanager_globals.js"></script>
-	<script src="tools/tagmanager_batch_tagger.js"></script>
-	<script src="tools/tagmanager_caption_tag.js"></script>	
-	<script src="tools/tagmanager_db.js"></script>
-	<script src="tools/tagmanager_ui_presets.js"></script>
-	<script src="tools/tagmanager_ui_list.js"></script>
-	<script src="tools/tagmanager_ui_core.js"></script>
-	<script src="tools/tagmanager_pin_image.js"></script>
-	<script src="tools/tagmanager_compact_view.js"></script>
-	<script src="tools/tagmanager_custom_conflicts.js"></script>
+<!-- Módulos UI Divididos -->
+<script src="tools/quick_links.js"></script>
+<script src="tools/tagmanager_globals.js"></script>
+<script src="tools/tagmanager_batch_tagger.js"></script>
+<script src="tools/tagmanager_caption_tag.js"></script>    
+<script src="tools/tagmanager_db.js"></script>
+<script src="tools/tagmanager_ui_presets.js"></script>
+<script src="tools/tagmanager_ui_list.js"></script>
+<script src="tools/tagmanager_ui_core.js"></script>
+<script src="tools/tagmanager_pin_image.js"></script>
+<script src="tools/tagmanager_compact_view.js"></script>
+<script src="tools/tagmanager_custom_conflicts.js"></script>
+<script src="tools/tagmanager_trash.js"></script>
 
 </body>
 </html>

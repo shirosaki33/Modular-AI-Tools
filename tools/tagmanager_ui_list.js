@@ -99,28 +99,25 @@ window.refreshListStatus = function() {
     window.updateListSelectionVisuals();
 }
 
-window.deleteSingleImage = async function(e, index) {
-    e.stopPropagation();
-    if(!confirm(`Delete this image and its text data permanently from disk?`)) return;
-    try {
-        const img = imageFiles[index];
-        await img.parentDirHandle.removeEntry(img.name);
-        try { await img.parentDirHandle.removeEntry(img.baseName + '.txt'); } catch(err){}
-        try { await img.parentDirHandle.removeEntry(img.baseName + '.json'); } catch(err){}
-        
-        if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
-        if (pendingTagsStore[img.baseName]) { delete pendingTagsStore[img.baseName]; if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle); }
-        if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
-        
-        window.markDatasetEdited();
-        window.showAlert(`Deleted file.`, 'success');
-        if(typeof window.refreshDataset === 'function') await window.refreshDataset();
-    } catch(err) { window.showAlert("Error deleting file.", "error"); }
-}
+/* ---------------------------------------------------------------------
+   LIXEIRA (SOFT DELETE)
+   O delete não apaga nada do disco direto (removeEntry seria permanente
+   e não passa pela Lixeira do SO — o navegador não permite isso). Em vez
+   disso, delega pra window.moveToGlobalTrash() (tagmanager_trash.js),
+   que move a imagem + legenda pra uma pasta de Lixeira configurável pelo
+   usuário (igual ao "Set Directory" dos Taggers), com Restaurar / Excluir
+   Permanente disponíveis lá.
 
+   BUG FIX: se a imagem tivesse edições de tags não salvas (img.dirty),
+   mandar pra lixeira pegava o conteúdo antigo do disco — suas últimas
+   edições sumiam (e ficavam perdidas de vez, já que o item some da
+   lista). Agora salvamos a imagem no disco primeiro, se estiver dirty,
+   ANTES de mover pra lixeira. Funciona igual pra 1 imagem ou várias,
+   já que é sempre a seleção (selectedIndices) que dirige o delete.
+--------------------------------------------------------------------- */
 window.deleteSelectedImages = async function() {
     if(selectedIndices.size === 0) return;
-    if(!confirm(`Delete ${selectedIndices.size} image(s) and text data permanently from disk?`)) return;
+    if(!confirm(`Move ${selectedIndices.size} image(s) and text data to Trash (🗑️)?\nYou'll be able to restore them later, or delete them permanently, from the Trash panel.`)) return;
     
     const indices = Array.from(selectedIndices).sort((a,b) => b - a);
     let deletedCount = 0;
@@ -128,9 +125,9 @@ window.deleteSelectedImages = async function() {
     for(let i of indices) {
         const img = imageFiles[i];
         try {
-            await img.parentDirHandle.removeEntry(img.name);
-            try { await img.parentDirHandle.removeEntry(img.baseName + '.txt'); } catch(err){}
-            try { await img.parentDirHandle.removeEntry(img.baseName + '.json'); } catch(err){}
+            if (img.dirty && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
+            const ok = typeof window.moveToGlobalTrash === 'function' && await window.moveToGlobalTrash(img);
+            if (!ok) continue;
             if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
             if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
             if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
@@ -141,8 +138,9 @@ window.deleteSelectedImages = async function() {
     if(deletedCount > 0) {
         window.markDatasetEdited();
         if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
-        window.showAlert(`Deleted ${deletedCount} files.`, 'success');
+        window.showAlert(`Moved ${deletedCount} file(s) to Trash 🗑️.`, 'success');
         if(typeof window.refreshDataset === 'function') await window.refreshDataset();
+        if (typeof window.updateTrashButtonState === 'function') window.updateTrashButtonState();
     }
 }
 
@@ -272,7 +270,9 @@ window.confirmRename = async function() {
         const oldName = img.name;
         const oldExt = oldName.split('.').pop();
         
-        const finalBaseName = isMulti ? `${newBaseName}_${count}` : newBaseName;
+        // Zero-padding para o Rename: garante _001, _002, etc.
+        const paddedCount = String(count).padStart(3, '0');
+        const finalBaseName = isMulti ? `${newBaseName}_${paddedCount}` : newBaseName;
         const newName = `${finalBaseName}.${oldExt}`;
 
         if (oldName === newName) { count++; continue; }
@@ -292,19 +292,34 @@ window.confirmRename = async function() {
             
             if (img.hasFile) {
                 try {
-                    const oldTextHandle = await img.parentDirHandle.getFileHandle(oldTextName);
-                    const oldTextFile = await oldTextHandle.getFile();
+                    // Escreve o conteúdo ATUAL em memória (img.content), não o que
+                    // está salvo no disco — assim edições de tags ainda não salvas
+                    // (img.dirty) não se perdem no rename.
+                    const contentToWrite = textFormat === 'json'
+                        ? JSON.stringify({ tags: img.content }, null, 2)
+                        : img.content;
                     const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, {create: true});
                     const writableText = await newTextHandle.createWritable();
-                    await writableText.write(await oldTextFile.arrayBuffer());
+                    await writableText.write(contentToWrite);
                     await writableText.close();
-                    await img.parentDirHandle.removeEntry(oldTextName);
+                    if (oldTextName !== newTextName) {
+                        try { await img.parentDirHandle.removeEntry(oldTextName); } catch(e) {}
+                    }
+                    if (typeof window.markClean === 'function') window.markClean(img);
                 } catch(e) {}
             }
 
             if (datasetConfig[img.baseName]) {
                 datasetConfig[finalBaseName] = datasetConfig[img.baseName];
                 delete datasetConfig[img.baseName];
+            }
+            // Renomear é uma forma manual de reorganizar a lista (ex: _001, _002...).
+            // Se a imagem já tinha uma posição manual salva pelo Reorder Mode (drag),
+            // essa posição "grudava" pra sempre e o rename parecia não fazer nada
+            // na lista. Limpamos a ordem manual aqui pra que a ordenação alfabética
+            // pelo novo nome volte a valer.
+            if (datasetConfig[finalBaseName] && typeof datasetConfig[finalBaseName].order === 'number') {
+                delete datasetConfig[finalBaseName].order;
             }
             if (pendingTagsStore[img.baseName]) {
                 pendingTagsStore[finalBaseName] = pendingTagsStore[img.baseName];
@@ -322,7 +337,7 @@ window.confirmRename = async function() {
 
     if(renamedCount > 0) {
         window.markDatasetEdited();
-        if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
+        if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(window.currentImagesHandle);
         window.showAlert(`Renamed ${renamedCount} files!`, "success");
         if (typeof window.refreshDataset === 'function') await window.refreshDataset(); 
     }
@@ -353,11 +368,14 @@ window.confirmClone = async function() {
         const oldExt = img.name.substring(img.name.lastIndexOf('.') + 1);
 
         for (let n = 1; n <= count; n++) {
-            let newBaseName = `${img.baseName}_${n}`;
+            // Zero-padding para o Clone
+            let paddedN = String(n).padStart(3, '0');
+            let newBaseName = `${img.baseName}_${paddedN}`;
             let bump = 1;
             while (existingBaseNames.has(newBaseName)) {
                 bump++;
-                newBaseName = `${img.baseName}_${n}_${bump}`;
+                let paddedBump = String(bump).padStart(3, '0');
+                newBaseName = `${img.baseName}_${paddedN}_${paddedBump}`;
             }
             existingBaseNames.add(newBaseName);
             const newImgName = `${newBaseName}.${oldExt}`;
@@ -371,20 +389,24 @@ window.confirmClone = async function() {
 
                 if (img.hasFile) {
                     const textFormat = img.ext || 'txt';
-                    const oldTextName = `${img.baseName}.${textFormat}`;
                     const newTextName = `${newBaseName}.${textFormat}`;
                     try {
-                        const oldTextHandle = await img.parentDirHandle.getFileHandle(oldTextName);
-                        const oldTextFile = await oldTextHandle.getFile();
+                        // Escreve o conteúdo ATUAL em memória (img.content), não o que
+                        // está salvo no disco — assim edições de tags ainda não salvas
+                        // (img.dirty) também são clonadas corretamente.
+                        const contentToWrite = textFormat === 'json'
+                            ? JSON.stringify({ tags: img.content }, null, 2)
+                            : img.content;
                         const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, { create: true });
                         const writableText = await newTextHandle.createWritable();
-                        await writableText.write(await oldTextFile.arrayBuffer());
+                        await writableText.write(contentToWrite);
                         await writableText.close();
                     } catch (e) {}
                 }
 
                 if (datasetConfig[img.baseName]) {
                     datasetConfig[newBaseName] = { ...datasetConfig[img.baseName] };
+                    delete datasetConfig[newBaseName].order; // clone entra na ordenação alfabética normal, não gruda na posição do original
                 }
                 clonedCount++;
             } catch (e) { console.error("Clone Error:", e); }
@@ -392,7 +414,7 @@ window.confirmClone = async function() {
     }
 
     if (clonedCount > 0) {
-        if (typeof saveDatasetConfig === 'function') await saveDatasetConfig(window.currentImagesHandle || window.rootHandle);
+        if (typeof window.saveDatasetConfig === 'function') await window.saveDatasetConfig(window.currentImagesHandle || window.rootHandle);
         window.markDatasetEdited();
         window.showAlert(`Cloned ${clonedCount} file(s)!`, "success");
         if (typeof window.refreshDataset === 'function') await window.refreshDataset();

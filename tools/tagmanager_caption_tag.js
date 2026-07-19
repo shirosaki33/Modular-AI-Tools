@@ -42,10 +42,16 @@ style.innerHTML = `
 
     .tag-row.glow-favorite, .master-tag-item.glow-favorite { background: rgba(0, 80, 40, 0.4) !important; border-left: 3px solid #00ff99 !important; transition: 0.1s; }
 
+    .tag-row.filter-match { box-shadow: inset 0 0 0 1px #00ff99; background: rgba(0, 255, 153, 0.12) !important; }
+    .tag-row.filter-match:hover { background: rgba(0, 255, 153, 0.2) !important; }
+
     .tag-row.selected-active.glow-favorite, .master-tag-item.selected-master.glow-favorite {
         background: #0a3a5c !important;
         border-left: 3px solid #4db8ff !important;
     }
+	
+	.tag-to-ghost { color: #00ff99; cursor: pointer; font-weight: bold; font-size: 1.1em; padding: 0 0.4em; flex-shrink: 0; opacity: 0.85; }
+    .tag-to-ghost:hover { color: #fff; transform: scale(1.2); opacity: 1; }
 `;
 document.head.appendChild(style);
 
@@ -78,7 +84,6 @@ window.toggleAutocompleteMode = function(scope) {
     window.applyAutocompleteButtonState(scope);
     if (typeof window.saveSetting === 'function') window.saveSetting('autocomplete-used-only-' + scope, window.autocompleteUsedOnly[scope]);
 };
-window.toggleActiveAutocompleteMode = function() { window.toggleAutocompleteMode('active'); };
 
 function getUsedTagSuggestions(query) {
     const counts = new Map();
@@ -285,18 +290,6 @@ window.checkTagStatusWithActive = function(tag) {
 };
 
 window.nlEditTarget = null; 
-
-window.openNLEditTag = function(scope) {
-    let targetTag = '';
-    if (scope === 'active' && activeSelectedTags.size > 0) targetTag = Array.from(activeSelectedTags)[0];
-    else if (scope === 'master' && masterSelectedTags.size > 0) targetTag = Array.from(masterSelectedTags)[0];
-
-    if (!targetTag) { window.showAlert("Select a tag first!", "warn"); return; }
-
-    window.nlEditTarget = { scope, tag: targetTag };
-    if (scope === 'active' && typeof window.renderEditor === 'function') window.renderEditor();
-    if (scope === 'master' && typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-};
 
 function buildNLEditBox(tag, scope) {
     const isCustomNL = tag.startsWith('NL:');
@@ -544,6 +537,15 @@ window.renderEditor = function() {
             conflictsForThisTag = [...new Set(conflictsForThisTag)];
             similarsForThisTag = [...new Set(similarsForThisTag)];
 
+            // Destaque verde: esta tag (da imagem ativa) é a mesma que está
+            // pinada (📌) e/ou selecionada como filtro ativo (AND/OR/XOR/NOT)
+            // no painel "All Dataset Tags" — mostra visualmente que ela está
+            // dirigindo o filtro lá embaixo.
+            const isPinFilterMatch = (window.pinnedMasterTag === tag);
+            const isButtonFilterMatch = (typeof filterMode !== 'undefined' && filterMode !== 'NONE'
+                && typeof masterSelectedTags !== 'undefined' && masterSelectedTags.has(tag));
+            const isFilterMatch = isPinFilterMatch || isButtonFilterMatch;
+
             const row = document.createElement('div'); 
             row.className = 'tag-row'; 
             row.setAttribute('data-tag-name', tagLower); 
@@ -551,6 +553,7 @@ window.renderEditor = function() {
             if (activeSelectedTags.has(tag)) row.classList.add('selected-active');
             if (isFav && window.enableFavHighlight !== false) row.classList.add('glow-favorite');
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
+            if (isFilterMatch) row.classList.add('filter-match');
             
             let statusHtml = '';
             if (conflictsForThisTag.length > 0) {
@@ -585,6 +588,7 @@ window.renderEditor = function() {
             </div>
             <div style="display: flex; align-items: center;">
                 ${dbCountHtml}
+				<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag">💡</span>
                 <span class="tag-remove" title="Remove Tag">&times;</span>
             </div>`;
 
@@ -635,7 +639,7 @@ window.renderEditor = function() {
             if (!isMultiSelected && !isMultiImageSelection) {
                 row.draggable = true;
                 row.ondragstart = (e) => { 
-                    if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl')) return false;
+                    if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost')) return false;
                     e.dataTransfer.setData('text/plain', i); draggedTagIndex = i; row.classList.add('dragging'); 
                 };
                 row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; };
@@ -682,6 +686,7 @@ window.renderEditor = function() {
             row.onclick = (e) => {
                 if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-edit-nl')) { 
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.removeTagFromSelected(tag); }
+					if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.convertTagToGhost(tag); }
                     return; 
                 }
                 if (e.shiftKey && activeSelectedTags.size > 0) {
@@ -800,6 +805,41 @@ window.removeTagFromSelected = function(tagToRemove) {
     if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
+
+window.convertTagToGhost = async function(tagToConvert) {
+    if (!tagToConvert) return;
+    let affectedCount = 0;
+    const modifiedFiles = [];
+    selectedIndices.forEach(idx => {
+        const img = imageFiles[idx];
+        if (img.type !== 'tags' || !img.content) return;
+        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+        if (!tags.includes(tagToConvert)) return;
+        // Remove do content...
+        tags = tags.filter(t => t !== tagToConvert);
+        img.content = tags.join(', ');
+        // ...e joga pra lista de sugestões (ghost)
+        img.pendingAdd = img.pendingAdd || [];
+        if (!img.pendingAdd.includes(tagToConvert)) img.pendingAdd.push(tagToConvert);
+        if (typeof pendingTagsStore !== 'undefined') pendingTagsStore[img.baseName] = img.pendingAdd;
+        modifiedFiles.push(img);
+        affectedCount++;
+    });
+    if (affectedCount === 0) return;
+    if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
+    activeSelectedTags.delete(tagToConvert);
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
+    const handle = window.currentImagesHandle || window.rootHandle;
+    if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
+    if (typeof window.showAlert === 'function') {
+        window.showAlert(`Tag "${tagToConvert}" convertida em sugestão (ghost) em ${affectedCount} imagem(ns).`, 'info');
+    }
+};
 
 window.removeSelectedActiveTags = function() {
     if (activeSelectedTags.size === 0) return;
@@ -955,6 +995,7 @@ window.toggleMasterTagPin = function(tag) {
     }
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
 };
 
 window.renderMasterTagList = function() {
@@ -1052,6 +1093,7 @@ window.renderMasterTagList = function() {
                 </div>
                 <div style="display: flex; align-items: center;">
                     ${dbCountHtml}
+					<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag Globally">💡</span>
                     <span class="tag-remove" title="Global Remove">&times;</span>
                 </div>
             `;
@@ -1139,6 +1181,7 @@ window.renderMasterTagList = function() {
             item.onclick = (e) => {
                 if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) { 
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.globalRemoveTags([tag]); }
+					if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.globalConvertTagToGhost(tag); }
                     return; 
                 }
                 
@@ -1159,6 +1202,7 @@ window.renderMasterTagList = function() {
                 window.renderMasterTagList(); 
                 if (typeof window.applyFilters === 'function') window.applyFilters();
                 if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
+                if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
             };
             container.appendChild(item);
 
@@ -1333,12 +1377,6 @@ window.applyFilters = function() {
     });
 }
 
-window.clearFilters = function() { 
-    masterSelectedTags.clear(); 
-    if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions(); 
-    window.renderMasterTagList(); 
-    if(typeof window.setLogic === 'function') window.setLogic('AND'); 
-}
 
 window.updateSelectionActions = function() {
     const bar = document.getElementById('master-selection-actions');
@@ -1420,6 +1458,60 @@ window.globalRemoveTags = function(tagsToRemove) {
     
     if(typeof window.showAlert === 'function') window.showAlert(`Globally removed tags from ${changed} images. Press Ctrl+S to save to disk.`, 'success');
 }
+
+window.globalConvertTagToGhost = async function(tagToConvert) {
+    if (!tagToConvert) return;
+    let affectedCount = 0;
+    const modifiedFiles = [];
+    
+    // Passa por todas as imagens
+    imageFiles.forEach(img => {
+        if (img.hidden) return;
+        if (img.type !== 'tags' || !img.content) return;
+        
+        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+        if (!tags.includes(tagToConvert)) return;
+        
+        // Remove a tag do texto principal
+        tags = tags.filter(t => t !== tagToConvert);
+        img.content = tags.join(', ');
+        
+        // Joga a tag para a lista de sugestões (ghost)
+        img.pendingAdd = img.pendingAdd || [];
+        if (!img.pendingAdd.includes(tagToConvert)) img.pendingAdd.push(tagToConvert);
+        if (typeof pendingTagsStore !== 'undefined') pendingTagsStore[img.baseName] = img.pendingAdd;
+        
+        modifiedFiles.push(img);
+        affectedCount++;
+    });
+    
+    if (affectedCount === 0) return;
+    
+    // Atualiza o estado sujo para disparar o aviso de salvar (Ctrl+S)
+    if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
+    
+    // Limpa a tag da lista master e da seleção, já que agora ela é um ghost global
+    if (typeof masterTagSet !== 'undefined') masterTagSet.delete(tagToConvert);
+    if (typeof masterSelectedTags !== 'undefined') masterSelectedTags.delete(tagToConvert);
+    
+    // Atualiza a interface
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
+    
+    // Salva o banco de sugestões temporário
+    const handle = window.currentImagesHandle || window.rootHandle;
+    if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
+    
+    // Avisa que deu certo
+    if (typeof window.showAlert === 'function') {
+        window.showAlert(`Tag "${tagToConvert}" convertida em sugestão globalmente em ${affectedCount} imagem(ns).`, 'info');
+    }
+};
 
 window.convertToCustomNL = async function() {
     if (activeSelectedTags.size === 0) return;

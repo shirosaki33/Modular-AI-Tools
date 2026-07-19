@@ -160,38 +160,6 @@ window.deletePresetTag = async function(tag, skipRender = false) {
     } catch (e) {}
 };
 
-// --- DANBOORU PASSIVE CACHE ---
-window.loadDanbooruCache = async function() {
-    window.danbooruCache = await window.getSetting('danbooru_tag_cache', {});
-};
-
-window.saveDanbooruCache = async function(tagsArray) {
-    let updated = false;
-    const now = Date.now();
-    const sevenDays = 7 * 24 * 60 * 60 * 1000;
-    
-    if (!window.danbooruCache) window.danbooruCache = {};
-    
-    tagsArray.forEach(t => {
-        const name = t.name.replace(/_/g, ' ');
-        const existing = window.danbooruCache[name];
-        
-        if (!existing || (now - existing.ts > sevenDays) || existing.count !== t.post_count) {
-            window.danbooruCache[name] = { count: t.post_count, ts: now };
-            updated = true;
-        }
-    });
-    
-    if (updated) {
-        await window.saveSetting('danbooru_tag_cache', window.danbooruCache);
-        
-        const panel = document.getElementById('col-presets');
-        if (panel && panel.style.display !== 'none') {
-            if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
-        }
-    }
-};
-
 // --- SYSTEM BACKUP (EXPORT/IMPORT) ---
 window.exportBackup = async function() {
     try {
