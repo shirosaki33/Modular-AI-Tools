@@ -43,10 +43,12 @@ window.toggleSearchMode = function(context) {
 window.loadSettings = async function() {
     const lastEdited = await window.getSetting('toggle-last-edited', true);
     const unsavedAlert = await window.getSetting('toggle-unsaved-alert', true);
-    const formatSelect = await window.getSetting('toggle-format-select', false);
     const conflictWarn = await window.getSetting('toggle-conflict-warnings', true);
     const helpBtn = await window.getSetting('toggle-help-btn', true);
     const favHighlight = await window.getSetting('toggle-fav-highlight', true);
+    const filterHighlight = await window.getSetting('toggle-filter-highlight', true);
+    const presetHighlight = await window.getSetting('toggle-preset-highlight', true);
+    const ghostConvert = await window.getSetting('toggle-ghost-convert', true);
 
     const thumbSize = await window.getSetting('thumb-size', 70);
     const fontSize = await window.getSetting('font-size', 13);
@@ -76,10 +78,12 @@ window.loadSettings = async function() {
 
     if (document.getElementById('toggle-last-edited')) document.getElementById('toggle-last-edited').checked = lastEdited;
     if (document.getElementById('toggle-unsaved-alert')) document.getElementById('toggle-unsaved-alert').checked = unsavedAlert;
-    if (document.getElementById('toggle-format-select')) document.getElementById('toggle-format-select').checked = formatSelect;
     if (document.getElementById('toggle-conflict-warnings')) document.getElementById('toggle-conflict-warnings').checked = conflictWarn;
     if (document.getElementById('toggle-help-btn')) document.getElementById('toggle-help-btn').checked = helpBtn;
     if (document.getElementById('toggle-fav-highlight')) document.getElementById('toggle-fav-highlight').checked = favHighlight;
+    if (document.getElementById('toggle-filter-highlight')) document.getElementById('toggle-filter-highlight').checked = filterHighlight;
+    if (document.getElementById('toggle-preset-highlight')) document.getElementById('toggle-preset-highlight').checked = presetHighlight;
+    if (document.getElementById('toggle-ghost-convert')) document.getElementById('toggle-ghost-convert').checked = ghostConvert;
 
     if (document.getElementById('thumb-slider')) document.getElementById('thumb-slider').value = thumbSize;
     if (document.getElementById('font-slider')) document.getElementById('font-slider').value = fontSize;
@@ -96,9 +100,11 @@ window.loadSettings = async function() {
     window.enableConflictWarnings = conflictWarn;
     window.toggleLastEdited(true);
     window.unsavedAlertEnabled = unsavedAlert;
-    window.toggleFormatSelect(true);
     window.toggleHelpBtn(true);
     window.toggleFavHighlight(true);
+    window.enableFilterHighlight = filterHighlight;
+    window.enablePresetHighlight = presetHighlight;
+    window.enableGhostConvertIcon = ghostConvert;
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 
     window.activeSearchMode = searchModeActive;
@@ -159,63 +165,28 @@ window.manualDanbooruSync = function() {
     window.syncDanbooruTags(Array.from(masterTagSet), true);
 };
 
+/* ---------------------------------------------------------------------
+   REATORADO: antes fazia fetch() direto pra API do Danbooru com um cache
+   próprio. Agora delega pra window.dbFetchCountsBatch() (tools/
+   tagmanager_danbooru_core.js), que é o MESMO cache compartilhado usado
+   pelo autocomplete e pelo painel de Tag Info — uma tag só é buscada na
+   rede uma vez no total, não uma vez por script.
+--------------------------------------------------------------------- */
 let _danbooruSyncActive = false;
 window.syncDanbooruTags = async function(tags, force = false) {
     if (!window.showDanbooruCounts || _danbooruSyncActive) return;
+    if (typeof window.dbFetchCountsBatch !== 'function') return; // core não carregado
     _danbooruSyncActive = true;
-    
-    const now = Date.now();
-    const fifteenDays = 15 * 24 * 60 * 60 * 1000;
-    
-    let tagsToFetch = tags.filter(t => {
-        if (t.startsWith('NL:')) return false;
-        if (force) return true;
-        const cached = window.danbooruCache[t];
-        if (!cached) return true;
-        if (now - cached.ts > fifteenDays) return true;
-        return false;
-    });
 
-    if (tagsToFetch.length === 0) {
-        if (force) window.showAlert("All dataset tags are up to date in cache!", "info");
-        _danbooruSyncActive = false;
-        return;
+    const result = await window.dbFetchCountsBatch(tags, force);
+
+    if (result.fetched === 0 && force) {
+        window.showAlert("All dataset tags are up to date in cache!", "info");
     }
 
-    const chunkSize = 50;
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 
-    for (let i = 0; i < tagsToFetch.length; i += chunkSize) {
-        if (!window.showDanbooruCounts) break;
-        
-        const chunk = tagsToFetch.slice(i, i + chunkSize);
-        const query = chunk.map(t => encodeURIComponent(t.replace(/ /g, '_'))).join(',');
-        
-        try {
-            const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name_comma]=${query}`);
-            if (res.ok) {
-                const data = await res.json();
-                
-                chunk.forEach(t => {
-                    window.danbooruCache[t] = { count: 0, ts: now };
-                });
-
-                data.forEach(dt => {
-                    const tName = dt.name.replace(/_/g, ' ');
-                    if(window.danbooruCache[tName]) {
-                        window.danbooruCache[tName].count = parseInt(dt.post_count) || 0;
-                    }
-                });
-
-                await window.saveSetting('danbooru_tag_cache', window.danbooruCache);
-                
-                if (typeof window.renderEditor === 'function') window.renderEditor();
-                if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-            }
-        } catch(e) {}
-        
-        await new Promise(r => setTimeout(r, 1000));
-    }
-    
     _danbooruSyncActive = false;
 };
 
@@ -394,10 +365,93 @@ window.saveImageToDisk = async function(img) {
     }
 };
 
-window.toggleFormatSelect = (skipSave = false) => {
-    const isChecked = document.getElementById('toggle-format-select').checked;
-    document.getElementById('topbar-save-format').style.display = isChecked ? 'inline-block' : 'none';
-    if (!skipSave) window.saveSetting('toggle-format-select', isChecked);
+/* ---------------------------------------------------------------------
+   The .txt/.json format selector in the topbar shows automatically ONLY
+   when the active selection has an empty (no caption file yet) image.
+   For converting EXISTING file(s), use the 🔄 button at the bottom bar
+   of the Active Image panel — converts ALL currently selected images
+   at once (if more than one is selected).
+--------------------------------------------------------------------- */
+window.toggleActiveFormat = async function() {
+    if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
+
+    const firstIdx = Array.from(selectedIndices)[0];
+    const currentExt = (imageFiles[firstIdx] && imageFiles[firstIdx].ext) || 'txt';
+    const newExt = currentExt === 'json' ? 'txt' : 'json';
+
+    const changedImages = [];
+    selectedIndices.forEach(idx => {
+        const img = imageFiles[idx];
+        if (!img || !img.hasFile) return;
+        if (img.ext !== newExt) changedImages.push(img);
+        img.type = 'tags';
+        img.ext = newExt;
+        datasetConfig[img.baseName] = { type: 'tags', ext: newExt };
+    });
+
+    if (changedImages.length > 0) window.markDirty(changedImages);
+    window.markDatasetEdited();
+    window.updateTagsDatalist();
+    if (typeof window.refreshListStatus === 'function') window.refreshListStatus();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (window.showAlert) window.showAlert(`Converted ${changedImages.length} file(s) to .${newExt}. Press 💾 Save (or Ctrl+S) to write it to disk.`, "success");
+};
+
+window.updateConvertFormatButton = function() {
+    const btn = document.getElementById('btn-convert-format');
+    if (!btn) return;
+    if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0 || typeof imageFiles === 'undefined') {
+        btn.style.display = 'none';
+        return;
+    }
+    // Only makes sense for images that already have a caption file — an
+    // empty image should use the topbar .txt/.json selector instead.
+    const withFile = Array.from(selectedIndices).map(i => imageFiles[i]).filter(img => img && img.hasFile);
+    if (withFile.length === 0) { btn.style.display = 'none'; return; }
+
+    const currentExt = withFile[0].ext || 'txt';
+    const targetExt = currentExt === 'json' ? 'txt' : 'json';
+    btn.textContent = withFile.length > 1 ? `🔄 All To .${targetExt}` : `🔄 To .${targetExt}`;
+    btn.title = `Convert ${withFile.length} selected image(s) from .${currentExt} to .${targetExt}`;
+    btn.style.display = 'inline-block';
+};
+
+window.enableFilterHighlight = true;
+window.toggleFilterHighlight = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-filter-highlight');
+    if (checkbox) {
+        window.enableFilterHighlight = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-filter-highlight', checkbox.checked);
+    }
+    if (!skipSave && typeof window.renderEditor === 'function') window.renderEditor();
+};
+
+window.enablePresetHighlight = true;
+window.togglePresetHighlight = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-preset-highlight');
+    if (checkbox) {
+        window.enablePresetHighlight = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-preset-highlight', checkbox.checked);
+    }
+    if (!skipSave) {
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    }
+};
+
+window.enableGhostConvertIcon = true;
+window.toggleGhostConvert = function(skipSave = false) {
+    const checkbox = document.getElementById('toggle-ghost-convert');
+    if (checkbox) {
+        window.enableGhostConvertIcon = checkbox.checked;
+        if (!skipSave) window.saveSetting('toggle-ghost-convert', checkbox.checked);
+    }
+    if (!skipSave) {
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    }
 };
 
 window.enableFavHighlight = true;
@@ -1027,6 +1081,36 @@ window.confirmReplaceTag = async function() {
         }
     }
 
+    if (replacedCount === 0) {
+        window.showAlert(`Tag "${oldTag}" was not found in any ${replaceScope === 'active' ? 'selected' : 'dataset'} image.`, "warn");
+        return;
+    }
+
+    /* -----------------------------------------------------------------
+       BUG FIX (2 sintomas relatados juntos):
+       "Replace" nunca chamava window.markDirty() nos arquivos alterados
+       — TODA outra ação de edição do app faz isso (addTagToSelected,
+       removeTagFromSelected, globalRemoveTags, convertToCustomNL, etc).
+       Em vez disso, esta função tentava salvar sozinha no disco logo em
+       seguida, depois de esperar 2 requestAnimationFrame — nesse ponto o
+       navegador já pode ter perdido o "gesto do usuário" daquele clique,
+       e window.saveImageToDisk() pode ter a permissão de escrita negada
+       silenciosamente (ou falhar por qualquer outro motivo transitório).
+
+       Como img.dirty nunca era marcado, se esse save automático falhasse,
+       a mudança ficava só na memória: o "💾 Save All" olha para
+       img.dirty === true pra decidir o que salvar, então via false e
+       simplesmente PULAVA aquele arquivo — "não deixava salvar pra
+       atualizar a mudança", exatamente como relatado.
+
+       Fix: marcar dirty (padrão do resto do app) e deixar o usuário
+       salvar explicitamente (💾 Save All / Save Selected / Ctrl+S) em vez
+       de tentar salvar sozinho em segundo plano. Isso também remove de
+       vez o problema de timing do rAF, já que não há mais save automático
+       aqui.
+    ----------------------------------------------------------------- */
+    window.markDirty(modifiedFiles);
+
     masterTagSet.clear();
     imageFiles.forEach(img => {
         if(img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if(t.trim()) masterTagSet.add(t.trim()); });
@@ -1037,31 +1121,27 @@ window.confirmReplaceTag = async function() {
     if (replaceScope === 'active') { activeSelectedTags.delete(oldTag); activeSelectedTags.add(newTag); }
     if (replaceScope === 'master') { masterSelectedTags.delete(oldTag); masterSelectedTags.add(newTag); }
 
-    window.showAlert(`Tag replaced in ${replacedCount} images!`, "success");
+    /* -----------------------------------------------------------------
+       BUG FIX: as 4 chamadas de render ficavam dentro de UM único
+       try/catch compartilhado. Se qualquer uma delas lançasse um erro
+       (por exemplo, um módulo de terceiros que envelopa renderMasterTagList
+       ou renderEditor e quebra por conta própria), todas as chamadas
+       SEGUINTES daquele bloco eram silenciosamente puladas — o que parecia
+       exatamente "replace não atualiza as tags na tela", mesmo com
+       img.content já correto na memória. Isolando cada chamada em seu
+       próprio try/catch, uma falha em uma delas não derruba as outras.
+    ----------------------------------------------------------------- */
+    const safeRender = (fn, label) => {
+        try { if (typeof fn === 'function') fn(); }
+        catch (e) { console.error(`Render refresh failed (${label}):`, e); }
+    };
+    safeRender(window.renderImageList, 'renderImageList');
+    safeRender(window.renderMasterTagList, 'renderMasterTagList');
+    safeRender(window.renderEditor, 'renderEditor');
+    safeRender(window.applyFilters, 'applyFilters');
 
-    try {
-        if (replacedCount > 0) {
-            if(typeof window.renderImageList === 'function') window.renderImageList();
-            if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-            if (typeof window.renderEditor === 'function') window.renderEditor();
-            if (typeof window.applyFilters === 'function') window.applyFilters();
-        }
-    } catch(e) { console.error("Render refresh failed:", e); }
-
-    // BUG FIX: sem isso, o navegador só repintava a tela com as mudanças
-    // acima na próxima interação do usuário (clique em qualquer lugar) —
-    // porque o Promise.all logo abaixo (salvando todos os arquivos em
-    // disco de uma vez) podia disparar antes do navegador ter uma chance
-    // de desenhar o frame com a lista já atualizada. Um único rAF nem
-    // sempre é suficiente (o navegador pode disparar dois rAFs seguidos
-    // sem pintar entre eles); o double-rAF abaixo garante um ciclo de
-    // pintura completo antes de seguir pro trabalho pesado de salvar.
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-
-    const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
-    
-    await Promise.all(savePromises);
-    if(replacedCount > 0) window.markDatasetEdited();
+    window.markDatasetEdited();
+    window.showAlert(`Tag replaced in ${replacedCount} image(s). Press 💾 Save All (or Ctrl+S) to write it to disk.`, "success");
 }
 
 window.setLogic = function(mode) {

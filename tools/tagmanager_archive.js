@@ -65,6 +65,39 @@
         } catch (e) { return []; }
     }
 
+    /* ---------------------------------------------------------------------
+       BUG FIX: o manifesto do Archive é um único IndexedDB GLOBAL
+       (TagManagerArchiveDB), compartilhado entre TODOS os datasets já
+       arquivados alguma vez — não só o que está carregado agora. Antes, o
+       painel simplesmente listava getAllArchiveManifestEntries() inteiro,
+       misturando itens arquivados de pastas completamente diferentes.
+
+       Esta função filtra e devolve SÓ as entradas cuja pasta de origem
+       (entry.parentDirHandle) é a MESMA pasta do dataset atualmente
+       carregado (window.currentImagesHandle). Comparar FileSystemHandle
+       por igualdade de referência (===) não é confiável entre sessões/
+       handles reidratados do IndexedDB, então usamos o método nativo
+       handle.isSameEntry() da File System Access API, que compara a
+       identidade real do arquivo/pasta no disco. */
+    async function getArchiveEntriesForCurrentDataset() {
+        const allItems = await getAllArchiveManifestEntries();
+        const currentHandle = window.currentImagesHandle || window.rootHandle;
+        if (!currentHandle) return [];
+
+        const matches = await Promise.all(allItems.map(async (entry) => {
+            try {
+                if (entry.parentDirHandle && typeof entry.parentDirHandle.isSameEntry === 'function') {
+                    return await entry.parentDirHandle.isSameEntry(currentHandle);
+                }
+            } catch (e) {
+                // Handle inválido/revogado (ex: pasta foi movida/deletada fora do app) — não é a atual.
+            }
+            return false;
+        }));
+
+        return allItems.filter((_, i) => matches[i]);
+    }
+
     async function deleteArchiveManifestEntry(id) {
         try {
             const db = await initArchiveDB();
@@ -77,9 +110,21 @@
         } catch (e) { return false; }
     }
 
-    /* ---------- MOVER PARA O ARQUIVO (chamado por window.archiveSelectedImages) ---------- */
+    /* ---------- MOVER PARA O ARQUIVO (chamado por window.archiveSelectedImages) ----------
+       GARANTIA: a pasta "_archive" é SEMPRE criada dentro de
+       img.parentDirHandle — a MESMA pasta de onde a imagem veio (o dataset
+       atual, seja o root ou uma subpasta). Não existe conceito de "pasta
+       global" pro Archive (isso é exclusivo do Trash, em tagmanager_trash.js).
+       Se img.parentDirHandle estiver ausente por qualquer motivo, a função
+       agora avisa claramente em vez de falhar em silêncio (antes retornava
+       `false` sem nenhuma explicação, o que podia parecer que a imagem
+       "sumiu" sem explicação). */
     window.moveToArchive = async function (img) {
-        if (!img || !img.parentDirHandle) return false;
+        if (!img || !img.parentDirHandle) {
+            console.error('moveToArchive: missing image or parentDirHandle', img);
+            if (window.showAlert) window.showAlert(`❌ Could not archive "${img && img.name ? img.name : 'file'}": no folder handle available.`, 'error');
+            return false;
+        }
         try {
             if ((await img.parentDirHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
                 if ((await img.parentDirHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
@@ -132,30 +177,41 @@
     /* ---------- AÇÃO EM MASSA (mesmo padrão de window.deleteSelectedImages) ---------- */
     window.archiveSelectedImages = async function () {
         if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
-        if (!confirm(`Move ${selectedIndices.size} image(s) to the Archive (📦)?\nArchived files stay inside this dataset's folder (in a hidden "_archive" subfolder) and won't show up in the list. You can restore them anytime from the Archive panel.`)) return;
+        if (!confirm(`Move ${selectedIndices.size} image(s) to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. You can restore them anytime from the Archive panel.\n\nNote: the Archive panel itself has a separate "🗑️ Send to Trash" button per item — that's a different, extra action for permanently discarding an already-archived item. It does NOT run automatically when you archive.`)) return;
 
         const indices = Array.from(selectedIndices).sort((a, b) => b - a);
         let archivedCount = 0;
+        let failedNames = [];
 
         for (const i of indices) {
             const img = imageFiles[i];
             try {
                 if (img.dirty && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
                 const ok = await window.moveToArchive(img);
-                if (!ok) continue;
+                if (!ok) { failedNames.push(img.name); continue; }
                 if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
                 if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
                 if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
                 archivedCount++;
-            } catch (e) {}
+            } catch (e) {
+                console.error('archiveSelectedImages failed for', img && img.name, e);
+                failedNames.push(img ? img.name : '?');
+            }
         }
 
         if (archivedCount > 0) {
             window.markDatasetEdited();
             if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
-            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦.`, 'success');
+            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (kept in this same dataset folder).`, 'success');
             if (typeof window.refreshDataset === 'function') await window.refreshDataset();
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+        }
+
+        // Feedback explícito em vez de silenciosamente ignorar falhas — antes,
+        // um item que falhasse (ex: permissão negada, arquivo bloqueado)
+        // simplesmente não aparecia em lugar nenhum, sem nenhum aviso.
+        if (failedNames.length > 0 && window.showAlert) {
+            window.showAlert(`⚠️ Could not archive ${failedNames.length} file(s): ${failedNames.slice(0, 5).join(', ')}${failedNames.length > 5 ? '...' : ''}`, 'error');
         }
     };
 
@@ -200,7 +256,7 @@
        originais (sem prefixo), isso funciona sem duplicar nenhuma lógica
        de movimentação de arquivo. */
     window.sendArchiveEntryToTrash = async function (entry) {
-        if (!confirm(`Send "${entry.originalName}" from the Archive to the Trash?\n(From there you can still restore it, or delete it permanently.)`)) return;
+        if (!confirm(`This is a SEPARATE, optional action from Archiving.\n\nSend "${entry.originalName}" OUT of the Archive and into the Trash?\n(From there you can still restore it, or delete it permanently.)`)) return;
 
         if (typeof window.moveToGlobalTrash !== 'function') {
             if (window.showAlert) window.showAlert('Trash module not loaded.', 'error');
@@ -302,14 +358,14 @@
         const list = document.getElementById('archive-list');
         list.innerHTML = '<div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div>';
 
-        const items = await getAllArchiveManifestEntries();
+        const items = await getArchiveEntriesForCurrentDataset();
         items.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
         list.innerHTML = '';
 
         if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
         if (items.length === 0) {
-            list.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty.</div>';
+            list.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>';
             return;
         }
 
@@ -332,7 +388,7 @@
                     <div style="color:#666; font-size:10px; margin-top:2px;">📂 ${entry.folderLabel || '—'} · ${dateStr}</div>
                 </div>
                 <button class="btn-archive-restore" title="Restore to the original folder">♻️ Restore</button>
-                <button class="btn-archive-trash" title="Send this item to the Trash">🗑️ Send to Trash</button>
+                <button class="btn-archive-trash" title="Permanently discard: moves this item OUT of the Archive and into the Trash (separate, optional action)">🗑️ Send to Trash</button>
             `;
             row.querySelector('.btn-archive-restore').onclick = () => window.restoreArchiveEntry(entry);
             row.querySelector('.btn-archive-trash').onclick = () => window.sendArchiveEntryToTrash(entry);
@@ -352,10 +408,10 @@
     window.updateArchiveButtonState = async function () {
         const btn = document.getElementById('btn-open-archive');
         if (!btn) return;
-        const items = await getAllArchiveManifestEntries();
+        const items = await getArchiveEntriesForCurrentDataset();
         btn.classList.toggle('has-items', items.length > 0);
         btn.title = items.length > 0
-            ? `${items.length} item(s) in the Archive — click to view`
+            ? `${items.length} item(s) archived in THIS dataset — click to view`
             : 'View / restore archived images';
     };
 

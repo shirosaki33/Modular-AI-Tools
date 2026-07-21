@@ -6,6 +6,40 @@
 window.selectedPresetCategory = null;
 window.presetCategoryCollapseState = {};
 
+/* ---------------------------------------------------------------------
+   Set em memória com o NOME de cada tag já salva nos User Presets
+   (exclui as entradas "_sys_cat_*", que são só marcadores de categoria,
+   não tags de verdade). Usado por tagmanager_caption_tag.js pra:
+   1) esconder o ícone 💾 numa tag que já é preset (não faz sentido
+      oferecer "salvar" de novo);
+   2) destacar essa tag com uma cor própria (.is-preset) na lista da
+      Active Image e em "All Dataset Tags", enquanto o painel de Presets
+      estiver visível.
+   Fica atualizado sempre que os Presets são renderizados (abrir o
+   painel, salvar/remover uma tag, importar backup, etc.) — ver o fim de
+   window.renderPresetTags() logo abaixo. */
+window._presetTagsSet = window._presetTagsSet || new Set();
+
+window.refreshPresetTagsSet = async function() {
+    try {
+        const items = await window.getPresetTags();
+        window._presetTagsSet = new Set(
+            items.map(i => i.tag).filter(t => !t.startsWith('_sys_cat_'))
+        );
+    } catch (e) {
+        console.error('refreshPresetTagsSet failed:', e);
+    }
+    return window._presetTagsSet;
+};
+
+// Popula o set já no carregamento da página — sem isso, o ícone 💾 e o
+// destaque .is-preset só ficariam corretos DEPOIS que o usuário abrisse
+// o painel de Presets pela primeira vez (já que antes disso o set
+// começaria vazio).
+window.addEventListener('DOMContentLoaded', () => {
+    window.refreshPresetTagsSet();
+});
+
 window.createPresetCategory = function() {
     const catName = prompt("Name the new category:");
     if (catName && catName.trim()) {
@@ -166,9 +200,15 @@ window.renderPresetTags = async function() {
     }
     
     const items = await window.getPresetTags();
+
+    // Atualiza o cache em memória usado por tagmanager_caption_tag.js pra
+    // esconder o 💾 e destacar (.is-preset) tags que já são presets, tanto
+    // na Active Image quanto em "All Dataset Tags".
+    window._presetTagsSet = new Set(items.map(i => i.tag).filter(t => !t.startsWith('_sys_cat_')));
     
     if (items.length === 0) {
         container.innerHTML += '<div style="padding: 15px; text-align: center; color: #555; font-size: 11px;">No presets saved yet.</div>';
+        refreshTagListsAfterPresetChange();
         return;
     }
     
@@ -414,7 +454,18 @@ window.renderPresetTags = async function() {
     });
 
     if (window.presetSearchMode) window.filterPresetTagsByName(document.getElementById('preset-add-input').value);
+
+    refreshTagListsAfterPresetChange();
 };
+
+/* Re-renderiza a Active Image e "All Dataset Tags" depois que
+   window._presetTagsSet muda, pra: (1) esconder o 💾 de tags que acabaram
+   de virar preset, (2) mostrar de novo o 💾 de tags removidas dos
+   presets, e (3) atualizar o destaque .is-preset em ambas as listas. */
+function refreshTagListsAfterPresetChange() {
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+}
 
 window.addPresetTagFromInput = function() {
     const input = document.getElementById('preset-add-input');

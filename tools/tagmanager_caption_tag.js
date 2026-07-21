@@ -45,6 +45,17 @@ style.innerHTML = `
     .tag-row.filter-match { box-shadow: inset 0 0 0 1px #ff9500; background: rgba(255, 149, 0, 0.14) !important; }
     .tag-row.filter-match:hover { background: rgba(255, 149, 0, 0.22) !important; }
 
+    /* Destaque de "já é preset" — teal/cyan, cor não usada em nenhum outro
+       estado (conflict=vermelho, similar=amarelo, favorite=verde,
+       selected/pin/filter=azul/laranja, NL=roxo). Só aparece enquanto o
+       painel de User Presets está visível (ver tagmanager_ui_presets.js). */
+    .tag-row.is-preset, .master-tag-item.is-preset { background: rgba(45, 212, 191, 0.14) !important; border-left: 3px solid #2dd4bf !important; }
+    .tag-row.is-preset:hover, .master-tag-item.is-preset:hover { background: rgba(45, 212, 191, 0.24) !important; }
+    .tag-row.selected-active.is-preset, .master-tag-item.selected-master.is-preset {
+        background: #0a3a5c !important;
+        border-left: 3px solid #4db8ff !important;
+    }
+
     .tag-row.selected-active.glow-favorite, .master-tag-item.selected-master.glow-favorite {
         background: #0a3a5c !important;
         border-left: 3px solid #4db8ff !important;
@@ -156,12 +167,18 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
         timeout = setTimeout(async () => {
             try {
                 let combinedTags = [];
-                let danbooruObj = [];
-                
-                try {
-                    const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);
-                    if (res.ok) danbooruObj = await res.json();
-                } catch(err) {}
+
+                /* ---------------------------------------------------------
+                   REATORADO: antes fazia fetch() direto na API. Agora usa
+                   window.dbSearchTagMatches() (tools/tagmanager_danbooru_
+                   core.js), que já grava o resultado no cache COMPARTILHADO
+                   (window.danbooruCache) usado também pelo sync de contagens
+                   e pelo painel de Tag Info — evita rebuscar a mesma tag
+                   várias vezes em lugares diferentes.
+                --------------------------------------------------------- */
+                const danbooruObj = typeof window.dbSearchTagMatches === 'function'
+                    ? await window.dbSearchTagMatches(val, 6)
+                    : [];
 
                 danbooruObj.forEach(t => {
                     combinedTags.push({
@@ -193,20 +210,8 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
                     } catch(err) {}
                 }
 
-                if (window.showDanbooruCounts && combinedTags.length > 0) {
-                    let updated = false;
-                    const now = Date.now();
-                    combinedTags.forEach(t => {
-                        const tName = t.name.replace(/_/g, ' ');
-                        if (window.danbooruCache) {
-                            window.danbooruCache[tName] = { count: t.post_count, ts: now };
-                            updated = true;
-                        }
-                    });
-                    if (updated && typeof window.saveSetting === 'function') {
-                        window.saveSetting('danbooru_tag_cache', window.danbooruCache);
-                    }
-                }
+                // Gravação no cache já é feita dentro de window.dbSearchTagMatches()
+                // (tools/tagmanager_danbooru_core.js) — não duplicamos aqui.
 
                 if (combinedTags.length === 0) {
                     const cachedMatches = [];
@@ -426,6 +431,21 @@ window.renderEditor = function() {
         if(topbarSelectFormat) topbarSelectFormat.style.display = 'none';
         if(colTools) colTools.style.display = 'flex';
         if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
+        if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
+        const activeTagCountBadgeEmpty = document.getElementById('active-tag-count');
+        if (activeTagCountBadgeEmpty) activeTagCountBadgeEmpty.textContent = '0';
+
+        // BUG FIX: deselecting (or switching away from) an image left the
+        // last-rendered tag rows sitting in the DOM forever, since this
+        // early return never touched #tag-list-vertical. Clear it and hide
+        // the add-box/selection-actions so the panel actually goes empty.
+        const tagListVerticalEmpty = document.getElementById('tag-list-vertical');
+        if (tagListVerticalEmpty) tagListVerticalEmpty.innerHTML = '';
+        const activeAddContainerEmpty = document.getElementById('active-add-container');
+        if (activeAddContainerEmpty) activeAddContainerEmpty.style.display = 'none';
+        const activeActionsEmpty = document.getElementById('active-selection-actions');
+        if (activeActionsEmpty) activeActionsEmpty.style.display = 'none';
+        activeSelectedTags.clear();
         return;
     }
 
@@ -436,22 +456,17 @@ window.renderEditor = function() {
 
     let isAnyEmpty = false;
     selectedIndices.forEach(idx => { if (!imageFiles[idx].hasFile) isAnyEmpty = true; });
-    
-    const formatToggle = document.getElementById('toggle-format-select');
 
-    if (isAnyEmpty) {
-        if(formatToggle) formatToggle.checked = true;
-        if(topbarSelectFormat) topbarSelectFormat.style.display = 'inline-block';
-    } else {
-        if(topbarSelectFormat) topbarSelectFormat.style.display = (formatToggle && formatToggle.checked) ? 'inline-block' : 'none';
-    }
+    // The .txt/.json selector is only shown automatically when the selection
+    // includes an image with no caption file yet. To convert EXISTING file(s)
+    // on demand, use the 🔄 button at the bottom bar of this panel instead.
+    if(topbarSelectFormat) topbarSelectFormat.style.display = isAnyEmpty ? 'inline-block' : 'none';
+    if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
 
-    const badge = document.getElementById('editor-type-badge');
     const tagsContainer = document.getElementById('tags-editor-container');
     const activeAddContainer = document.getElementById('active-add-container');
     const activeActions = document.getElementById('active-selection-actions');
 
-    if(badge) badge.textContent = 'Comma Tags'; 
     if(tagsContainer) tagsContainer.style.display = 'flex'; 
     
     if(colTools) colTools.style.display = 'flex'; 
@@ -485,6 +500,9 @@ window.renderEditor = function() {
     });
     
     window.sortedActiveTags = Array.from(fusedTags); 
+
+    const activeTagCountBadge = document.getElementById('active-tag-count');
+    if (activeTagCountBadge) activeTagCountBadge.textContent = window.sortedActiveTags.length;
 
     if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
         if(activeAddContainer) activeAddContainer.style.display = 'none';
@@ -544,7 +562,12 @@ window.renderEditor = function() {
             const isPinFilterMatch = (window.pinnedMasterTag === tag);
             const isButtonFilterMatch = (typeof filterMode !== 'undefined' && filterMode !== 'NONE'
                 && typeof masterSelectedTags !== 'undefined' && masterSelectedTags.has(tag));
-            const isFilterMatch = isPinFilterMatch || isButtonFilterMatch;
+            const isFilterMatch = (isPinFilterMatch || isButtonFilterMatch) && window.enableFilterHighlight !== false;
+
+            // Tag já salva nos User Presets? (window._presetTagsSet vem de
+            // tagmanager_ui_presets.js, atualizado sempre que o painel de
+            // presets é aberto ou uma tag é salva/removida dele.)
+            const isAlreadyPreset = !isCustomNL && window._presetTagsSet && window._presetTagsSet.has(tag);
 
             const row = document.createElement('div'); 
             row.className = 'tag-row'; 
@@ -554,6 +577,10 @@ window.renderEditor = function() {
             if (isFav && window.enableFavHighlight !== false) row.classList.add('glow-favorite');
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
             if (isFilterMatch) row.classList.add('filter-match');
+            // Só destaca como "já é preset" enquanto o painel de presets
+            // está de fato visível — do contrário o destaque apareceria
+            // sem nenhum contexto na tela pro usuário entender o porquê.
+            if (isAlreadyPreset && presetsVisible && window.enablePresetHighlight !== false) row.classList.add('is-preset');
             
             let statusHtml = '';
             if (conflictsForThisTag.length > 0) {
@@ -568,7 +595,10 @@ window.renderEditor = function() {
 
             const pencilIcon = isCustomNL ? `<span class="tag-edit-nl" style="margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Edit Tag Text">✏️</span>` : '';
             const starIcon = !isCustomNL ? `<span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>` : '';
-            const presetIcon = !isCustomNL ? `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>` : '';
+            // O disquete só aparece se a tag AINDA NÃO está salva nos
+            // Presets — depois de salva, não faz sentido oferecer "salvar"
+            // de novo (o destaque de cor da linha já avisa que já é preset).
+            const presetIcon = (!isCustomNL && !isAlreadyPreset) ? `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>` : '';
 
             const dbCached = window.danbooruCache ? (window.danbooruCache[tagLower] || window.danbooruCache[tag]) : null; 
             const dbCountHtml = (window.showDanbooruCounts && dbCached && dbCached.count > 0 && !isCustomNL) 
@@ -577,6 +607,7 @@ window.renderEditor = function() {
 
             const countInDataset = datasetTagCounts.get(tag) || 0;
             const dsCountHtml = `<span style="color:#555; font-size:10px; font-weight:bold; min-width:20px; text-align:left; margin-right:8px; user-select:none;" title="Times used in current dataset">${countInDataset}</span>`;
+            const ghostIconHtml = window.enableGhostConvertIcon !== false ? `<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag">💡</span>` : '';
 
             row.innerHTML = `<div class="tag-row-left">
                 ${starIcon}
@@ -588,7 +619,7 @@ window.renderEditor = function() {
             </div>
             <div style="display: flex; align-items: center;">
                 ${dbCountHtml}
-				<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag">💡</span>
+				${ghostIconHtml}
                 <span class="tag-remove" title="Remove Tag">&times;</span>
             </div>`;
 
@@ -1030,6 +1061,14 @@ window.renderMasterTagList = function() {
     let favTags = new Set(datasetConfig.favoriteTags || []);
     let sortedMasterTags = typeof masterTagSet !== 'undefined' ? Array.from(masterTagSet).sort() : [];
 
+    // Contador de tags únicas em uso no dataset (igual ao contador do
+    // painel Dataset), exibido ao lado do título "All Dataset Tags".
+    const masterTagCountBadge = document.getElementById('master-tag-count');
+    if (masterTagCountBadge) {
+        const totalUniqueTags = sortedMasterTags.filter(t => !t.startsWith('NL:') && (tagCounts.get(t) || 0) > 0).length;
+        masterTagCountBadge.textContent = totalUniqueTags;
+    }
+
     if (window.pinnedMasterTag) {
         const pTag = window.pinnedMasterTag;
         const pCount = tagCounts.get(pTag) || 0;
@@ -1090,18 +1129,27 @@ window.renderMasterTagList = function() {
                 ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">${window.formatDbCount(dbCached.count)}</span>` 
                 : '';
 
+            // Tag já salva nos User Presets? Some com o disquete e destaca
+            // a linha (só enquanto o painel de presets está visível).
+            const isAlreadyPreset = window._presetTagsSet && window._presetTagsSet.has(tag);
+            if (isAlreadyPreset && presetsVisible && window.enablePresetHighlight !== false) item.classList.add('is-preset');
+            const presetIconHtml = isAlreadyPreset
+                ? ''
+                : `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>`;
+            const ghostIconHtmlMaster = window.enableGhostConvertIcon !== false ? `<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag Globally">💡</span>` : '';
+
             item.innerHTML = `
                 <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
                     <span class="tag-pin${isPinned ? ' active' : ''}" style="color: ${isPinned ? '#4db8ff' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Pin as a mandatory filter (like AND for this tag only)">📌</span>
                     <span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>
-                    <span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>
+                    ${presetIconHtml}
                     <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
                     <span class="tag-name">${tag}</span>
                     ${statusHtml}
                 </div>
                 <div style="display: flex; align-items: center;">
                     ${dbCountHtml}
-					<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag Globally">💡</span>
+					${ghostIconHtmlMaster}
                     <span class="tag-remove" title="Global Remove">&times;</span>
                 </div>
             `;

@@ -48,6 +48,7 @@
         .settings-dropdown.open { display: flex; }
         .settings-dropdown label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
         .settings-dropdown input[type="checkbox"] { width: auto; margin: 0; accent-color: #00ff99;}
+        .settings-group-label { font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; margin-top: 2px; margin-bottom: -2px; }
 
         #workspace { display: flex; flex: 1; overflow: hidden; position: relative; } 
         .view-layer { display: none; width: 100%; height: 100%; padding: 15px; gap: 0; box-sizing: border-box; }
@@ -212,7 +213,7 @@
     </div>
     
     <div class="topbar-section right" id="topbar-right">
-        <select id="topbar-save-format" style="margin-right: 15px; width: 80px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()">
+        <select id="topbar-save-format" style="margin-right: 15px; width: 80px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()" title="Only shown for images with no caption file yet">
             <option value="txt">.txt</option>
             <option value="json">.json</option>
         </select>
@@ -229,25 +230,35 @@
 </div>
 
 <div id="settings-dropdown" class="settings-dropdown">
+    <div class="settings-group-label">⚙️ General</div>
     <label><input type="checkbox" id="toggle-last-edited" onchange="window.toggleLastEdited()" checked> Show Last Edited Time</label>
     <label><input type="checkbox" id="toggle-unsaved-alert" onchange="window.toggleUnsavedAlert()" checked> Show Unsaved Changes Alert</label>
-    <label><input type="checkbox" id="toggle-format-select" onchange="window.toggleFormatSelect()"> Show Format Selector (.txt/.json)</label>
-    <label><input type="checkbox" id="toggle-conflict-warnings" onchange="window.toggleConflictWarnings()" checked> Enable Tag Conflict Warnings</label>
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
-    <label><input type="checkbox" id="toggle-fav-highlight" onchange="window.toggleFavHighlight()" checked> Enable Favorite Tags Highlight</label>
-    
+
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-    
-    <label><input type="checkbox" id="toggle-danbooru-counts" onchange="window.toggleDanbooruCounts()"> 🌐 Show Danbooru Counts</label>
+
+    <div class="settings-group-label">🎨 Highlights &amp; Visual Effects</div>
+    <label><input type="checkbox" id="toggle-fav-highlight" onchange="window.toggleFavHighlight()" checked> Enable Favorite Tags Highlight (⭐)</label>
+    <label><input type="checkbox" id="toggle-conflict-warnings" onchange="window.toggleConflictWarnings()" checked> Enable Tag Conflict Warnings</label>
+    <label><input type="checkbox" id="toggle-filter-highlight" onchange="window.toggleFilterHighlight()" checked> Enable Filter/Pin Match Highlight</label>
+    <label><input type="checkbox" id="toggle-preset-highlight" onchange="window.togglePresetHighlight()" checked> Enable "Already Preset" Highlight</label>
+    <label><input type="checkbox" id="toggle-ghost-convert" onchange="window.toggleGhostConvert()" checked> Enable "Convert to Ghost" (💡) Icon</label>
+
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+
+    <div class="settings-group-label">🌐 Danbooru</div>
+    <label><input type="checkbox" id="toggle-danbooru-counts" onchange="window.toggleDanbooruCounts()"> Show Danbooru Counts</label>
     <button onclick="window.manualDanbooruSync()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; font-size: 11px; width: 100%; margin-top: 5px;" title="Manually fetches missing tag counts from Danbooru for the current dataset.">🔄 Sync Danbooru (Dataset)</button>
     
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
     
-    <label><input type="checkbox" id="toggle-e621" onchange="window.toggleE621()"> 🦊 Enable e621 (Furry) Suggestions</label>
+    <div class="settings-group-label">🦊 e621</div>
+    <label><input type="checkbox" id="toggle-e621" onchange="window.toggleE621()"> Enable e621 (Furry) Suggestions</label>
     <label style="margin-left: 15px;"><input type="checkbox" id="toggle-e621-sfw" onchange="window.toggleE621Sfw()"> 🛡️ Force Safe-for-Work (e926)</label>
     
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-    
+
+    <div class="settings-group-label">💾 Backup</div>
     <div style="display: flex; gap: 5px;">
         <button onclick="window.exportBackup()" style="background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; font-size: 11px; flex: 1;" title="Export all presets and settings to a JSON file.">💾 Export Backup</button>
         <button onclick="window.importBackup()" style="background: #2a1a00; color: #ffcc66; border: 1px solid #aa6600; font-size: 11px; flex: 1;" title="Import presets and settings from a JSON backup.">📂 Import</button>
@@ -329,7 +340,7 @@
         <div class="panel" id="col-editor">
             <div class="panel-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <span>Active Image</span><span id="editor-type-badge" style="font-size: 10px; background: #2f1a5c; color: #b890ff; padding: 3px 6px; border-radius: 4px;">Auto</span>
+                    <span>Active Image</span> <span id="active-tag-count" style="background: #333; padding: 2px 6px; border-radius: 4px; font-size: 11px;">0</span>
                 </div>
                 <div style="display: flex; gap: 6px;">
                     <button id="btn-filter-active-ghosts" class="btn-save-local" onclick="window.toggleActiveGhostFilter()" style="display:none; background:transparent; border: 1px solid #00aa66; color:#00ff99;" title="Show Only Ghost Tags">💡</button>
@@ -350,13 +361,20 @@
             </div>
 
             <div class="inline-add-box" id="active-add-container">
-                <button id="btn-active-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('active')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
-                <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="active-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">                
-                <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
-				<select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
-                <button class="btn-inline-add" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff;" onclick="window.addEmptyNLTag()" title="Create Empty NL Tag">📝 Add NL</button>
-            </div>
+    <button id="btn-active-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('active')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
+    <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
+    
+    <!-- Envolvemos o input e os botões de ação num grupo flexível que preenche o espaço -->
+    <div style="display: flex; flex: 1; gap: 8px;">
+        <input type="text" id="active-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">                
+        <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
+        <select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+        <button class="btn-inline-add" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff;" onclick="window.addEmptyNLTag()" title="Create Empty NL Tag">📝 Add NL</button>
+    </div>
+
+    
+    <button id="btn-convert-format" onclick="window.toggleActiveFormat()" style="display:none; background:#2a1a00; color:#ffcc66; border:1px solid #aa6600;" title="Convert selected image(s) between .txt and .json">🔄 .txt</button>
+</div>
         </div>
 
         <div class="resizer vertical" id="resizer-presets" style="display: none;"></div>
@@ -389,7 +407,7 @@
         <div class="panel" id="col-tools">
             <div class="panel-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <span>All Dataset Tags</span>
+                    <span>All Dataset Tags</span> <span id="master-tag-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
                     <button id="btn-toggle-presets" class="btn-save-local" onclick="window.togglePresetPanel()" style="background:transparent; border: 1px solid #00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px; margin-left: 5px;" title="Toggle User Preset Tags">👁️</button>
                 </div>
                 <button id="btn-discard-suggestions" class="btn-save-local" onclick="window.discardAllSuggestions()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;">🗑️ Discard Suggestions</button>
@@ -592,9 +610,10 @@
 <!-- Módulos UI Divididos -->
 <script src="tools/quick_links.js"></script>
 <script src="tools/tagmanager_globals.js"></script>
+<script src="tools/tagmanager_db.js"></script>
+<script src="tools/tagmanager_danbooru_core.js"></script>
 <script src="tools/tagmanager_batch_tagger.js"></script>
 <script src="tools/tagmanager_caption_tag.js"></script>    
-<script src="tools/tagmanager_db.js"></script>
 <script src="tools/tagmanager_ui_presets.js"></script>
 <script src="tools/tagmanager_ui_list.js"></script>
 <script src="tools/tagmanager_ui_core.js"></script>
@@ -603,6 +622,7 @@
 <script src="tools/tagmanager_custom_conflicts.js"></script>
 <script src="tools/tagmanager_trash.js"></script>
 <script src="tools/tagmanager_archive.js"></script>
+<script src="tools/tagmanager_danbooru_panel.js"></script>
 
 </body>
 </html>
