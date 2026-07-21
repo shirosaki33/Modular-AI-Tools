@@ -236,6 +236,20 @@
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
 
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+	
+	<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
+    <h4 style="margin: 0 0 10px 0; color: #fff; font-size: 13px;">NL / Caption Rules</h4>
+    <label class="setting-label" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; cursor: pointer;">
+        <input type="checkbox" id="toggle-auto-nl" onchange="window.toggleAutoNl()">
+        Auto-detect NL in Hybrid Mode
+    </label>
+    <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; margin-top: 8px;">
+        Words needed to trigger NL:
+        <input type="number" id="nl-word-threshold" onchange="window.updateNlWordThreshold(this.value)" style="width: 50px; background: #111; color: #fff; border: 1px solid #4a2a8c; border-radius: 4px; padding: 2px 6px;" min="2" max="50">
+    </label>
+	</div>
+	
+	<hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
     <div class="settings-group-label">🎨 Highlights &amp; Visual Effects</div>
     <label><input type="checkbox" id="toggle-fav-highlight" onchange="window.toggleFavHighlight()" checked> Enable Favorite Tags Highlight (⭐)</label>
@@ -341,6 +355,7 @@
             <div class="panel-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span>Active Image</span> <span id="active-tag-count" style="background: #333; padding: 2px 6px; border-radius: 4px; font-size: 11px;">0</span>
+                    <button id="btn-toggle-image-mode" class="btn-save-local" onclick="window.toggleImageMode()" style="display:none; background: transparent; border: 1px solid #4a2a8c; color: #b890ff; font-size: 11px; padding: 2px 6px; cursor: pointer; transition: 0.2s;" title="Switch Mode">Mode: Tag</button>
                 </div>
                 <div style="display: flex; gap: 6px;">
                     <button id="btn-filter-active-ghosts" class="btn-save-local" onclick="window.toggleActiveGhostFilter()" style="display:none; background:transparent; border: 1px solid #00aa66; color:#00ff99;" title="Show Only Ghost Tags">💡</button>
@@ -421,6 +436,7 @@
                 <button id="btn-logic-NOT" class="logic-btn" onclick="window.setLogic('NOT')">NOT</button>
                 <button id="btn-filter-fav-tags" class="logic-btn" onclick="window.toggleFavTagsFilter()" title="Show Only Starred Tags">☆</button>
                 <button id="btn-filter-suggest-img" class="logic-btn" style="display:none;" onclick="window.toggleSuggestFilterImg()" title="Show Only Ghost Tags">💡</button>
+                <button id="btn-filter-nl-master" class="logic-btn" style="display:none; flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em;" onclick="window.toggleMasterNLFilter()" title="Show Only NL">NL</button>
             </div>
             
             <div class="tools-content"><div id="master-tag-list"></div></div>
