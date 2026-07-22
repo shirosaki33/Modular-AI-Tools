@@ -1,8 +1,9 @@
 /* =========================================================================
-   CONFLICT / SIMILARITY / AUTO-MERGE MANAGER (USER-DEFINED RULES) - v10
+   CONFLICT / SIMILARITY / AUTO-MERGE MANAGER - v16
    ---------------------------------------------------------------------
-   Standalone — Checkboxes individuais para cada módulo, Auto-Merge
-   independente (roda no load ou manualmente) e botão mestre refeito.
+   Standalone — Integra Conflitos, Similares e um Auto-Merge unificado.
+   Com botões de "Restore Defaults" individuais por categoria e 
+   ordenação que mantém regras Originais sempre no topo.
 ========================================================================= */
 
 (function () {
@@ -48,6 +49,13 @@
         ['dutch angle', 'tilted frame']
     ];
 
+    const FACTORY_EMBEDS = [
+        { 
+            name: 'clothing', 
+            tags: ['shirt', 'dress', 'skirt', 'pants', 'shorts', 'jeans', 'jacket', 'coat', 'sweater', 'hoodie', 'cardigan', 'vest', 'blazer', 'uniform', 'suit', 'kimono', 'robe', 'gown', 'swimsuit', 'bikini', 'lingerie', 'underwear', 'panties', 'bra', 'boxers', 'briefs', 'socks', 'thighhighs', 'pantyhose', 'stockings', 'leggings', 'gloves', 'mittens', 'scarf', 'tie', 'necktie', 'bowtie', 'collar', 'hat', 'cap', 'hood', 'veil', 'mask', 'apron', 'overalls', 'romper', 'leotard', 'bodysuit', 'top', 'blouse', 'tank top', 'crop top', 'tube top', 'camisole', 'corset', 'harness', 'belt', 'shoes', 'boots', 'sandals', 'heels', 'sneakers', 'slippers', 'armor', 'clothes', 'clothing', 'outfit', 'costume'] 
+        }
+    ];
+
     /* ---------- INDEXEDDB ---------- */
     const dbName = 'ConflictRulesDB';
     const storeName = 'rules'; 
@@ -55,7 +63,7 @@
     function initDB() {
         return new Promise((res, rej) => {
             try {
-                const req = indexedDB.open(dbName, 1);
+                const req = indexedDB.open(dbName, 4);
                 req.onupgradeneeded = e => {
                     if (!e.target.result.objectStoreNames.contains(storeName)) {
                         e.target.result.createObjectStore(storeName, { keyPath: 'id', autoIncrement: true });
@@ -73,25 +81,29 @@
             return new Promise(r => {
                 const tx = db.transaction(storeName, 'readonly');
                 const req = tx.objectStore(storeName).getAll();
-                req.onsuccess = () => r((req.result || []).filter(item => item && Array.isArray(item.tags)));
+                req.onsuccess = () => r(req.result || []);
                 req.onerror = () => r([]);
             });
         } catch (e) { return []; }
     }
 
-    async function addRule(category, tags, isDefault = false) {
+    async function addRule(category, data, isDefault = false) {
         try {
             const db = await initDB();
             return new Promise(r => {
                 const tx = db.transaction(storeName, 'readwrite');
-                tx.objectStore(storeName).add({ category, tags, isDefault });
+                if (data.keepTag !== undefined || data.name !== undefined) {
+                    tx.objectStore(storeName).add({ category, ...data, isDefault });
+                } else {
+                    tx.objectStore(storeName).add({ category, tags: data, isDefault });
+                }
                 tx.oncomplete = () => r(true);
                 tx.onerror = () => r(false);
             });
         } catch (e) { return false; }
     }
 
-    async function updateRule(id, tags) {
+    async function updateRule(id, data) {
         try {
             const db = await initDB();
             return new Promise(r => {
@@ -100,7 +112,21 @@
                 const getReq = store.get(id);
                 getReq.onsuccess = () => {
                     const item = getReq.result;
-                    if (item) { item.tags = tags; store.put(item); }
+                    if (item) { 
+                        if (data.name !== undefined) {
+                            item.name = data.name;
+                            item.tags = data.tags;
+                        } else if (data.keepTag !== undefined) {
+                            item.keepTag = data.keepTag;
+                            item.removeTags = data.removeTags;
+                            item.require = data.require;
+                            item.exclude = data.exclude;
+                            delete item.tags; delete item.target; delete item.fallback;
+                        } else {
+                            item.tags = data; 
+                        }
+                        store.put(item); 
+                    }
                 };
                 tx.oncomplete = () => r(true);
                 tx.onerror = () => r(false);
@@ -131,27 +157,55 @@
         return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
     }
 
-    /* ---------- AUTO-MERGE ENGINE (INDEPENDENT) ---------- */
-    function buildAutoMergeRunner(group) {
-        const canonical = group[0];
-        const groupLower = group.map(g => g.toLowerCase());
-        return function (tagsArray) {
-            const present = tagsArray.filter(t => groupLower.includes(t.toLowerCase()));
-            if (present.length < 2) return null; 
+    /* ---------- ENGINE & EMBED RESOLVER ---------- */
+    
+    function matchTag(tag, condition, embeds) {
+        const t = tag.toLowerCase();
+        const c = condition.toLowerCase();
+        if (c.startsWith('@')) {
+            const embedName = c.slice(1);
+            const embed = embeds.find(e => e.name.toLowerCase() === embedName);
+            if (embed) {
+                return embed.tags.some(eTag => eTag.toLowerCase() === t);
+            }
+            return false;
+        }
+        return t === c;
+    }
 
-            let inserted = false;
-            const newTags = [];
-            tagsArray.forEach(t => {
-                if (groupLower.includes(t.toLowerCase())) {
-                    if (!inserted) { newTags.push(canonical); inserted = true; }
-                } else { newTags.push(t); }
+    function runAutoMergeRule(tagsArray, rule, embeds) {
+        const presentRemoves = rule.removeTags.filter(rem => 
+            tagsArray.some(t => t.toLowerCase() === rem.toLowerCase())
+        );
+        
+        if (presentRemoves.length === 0) return null; 
+
+        let hasRequired = true;
+        if (rule.require && rule.require.length > 0) {
+            hasRequired = rule.require.every(req => tagsArray.some(t => matchTag(t, req, embeds)));
+        }
+
+        let hasExcluded = false;
+        if (rule.exclude && rule.exclude.length > 0) {
+            hasExcluded = tagsArray.some(t => {
+                return rule.exclude.some(ex => matchTag(t, ex, embeds));
             });
+        }
+
+        if (hasRequired && !hasExcluded) {
+            let newTags = tagsArray.filter(t => 
+                !rule.removeTags.some(rem => rem.toLowerCase() === t.toLowerCase())
+            );
+            if (rule.keepTag && rule.keepTag.trim() !== '') {
+                newTags.push(rule.keepTag.trim());
+            }
             return [...new Set(newTags)];
-        };
+        }
+        
+        return null;
     }
 
     window.runAutoMergeOnDataset = async function(manual = false) {
-        // Se a engrenagem mestre estiver desativada, bloqueia a execução
         if (window.enableConflictWarnings === false) return;
         
         if (!window.imageFiles || window.imageFiles.length === 0) {
@@ -160,14 +214,20 @@
         }
         
         const rows = await getAllRules();
-        const amGroups = rows.filter(r => r.category === 'automerge').map(r => r.tags);
         
-        if (amGroups.length === 0) {
+        const amRules = rows.filter(r => r.category === 'automerge').map(row => {
+            if (row.tags) return { keepTag: row.tags[0], removeTags: row.tags.slice(1), require: [], exclude: [] };
+            if (row.target) return { keepTag: row.fallback, removeTags: [row.target], require: row.exclude || [], exclude: row.require || [] };
+            return row;
+        });
+
+        const embeds = rows.filter(r => r.category === 'embed');
+        
+        if (amRules.length === 0) {
             if (manual && window.showAlert) window.showAlert('No Auto-Merge rules configured.', 'warn');
             return;
         }
 
-        const runners = amGroups.map(buildAutoMergeRunner);
         let changedCount = 0;
         let modifiedFiles = [];
 
@@ -176,8 +236,8 @@
                 let originalTags = img.content.split(',').map(t => t.trim()).filter(t => t);
                 let currentTags = [...originalTags];
                 
-                runners.forEach(runner => {
-                    const result = runner(currentTags);
+                amRules.forEach(rule => {
+                    const result = runAutoMergeRule(currentTags, rule, embeds);
                     if (result) currentTags = result;
                 });
 
@@ -194,7 +254,6 @@
             if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
             if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
             
-            // Reconstrói a lista global de tags
             if (window.masterTagSet) {
                 window.masterTagSet.clear();
                 window.imageFiles.forEach(img => {
@@ -210,11 +269,10 @@
             
             if (window.showAlert) window.showAlert(`Auto-Merge applied to ${changedCount} image(s)!`, 'success');
         } else {
-            if (manual && window.showAlert) window.showAlert('No matching tags found to merge.', 'info');
+            if (manual && window.showAlert) window.showAlert('No matching tags found to automate.', 'info');
         }
     };
 
-    /* ---------- HOOK DE CARREGAMENTO AUTOMÁTICO ---------- */
     let _lastImageFilesRef = null;
     function hookAutoMergeLoader() {
         if (window._autoMergeHooked) return;
@@ -223,7 +281,6 @@
             window.renderImageList = function() {
                 if (window.imageFiles && window.imageFiles !== _lastImageFilesRef) {
                     _lastImageFilesRef = window.imageFiles;
-                    
                     const autoRun = localStorage.getItem('rm_auto_merge') === 'true';
                     if (autoRun && window.enableConflictWarnings !== false) {
                         setTimeout(() => window.runAutoMergeOnDataset(false), 100);
@@ -235,17 +292,14 @@
         }
     }
 
-    /* ---------- INTERCEPTAÇÃO DO SISTEMA ORIGINAL ---------- */
     function overrideOriginalSystems() {
-        // 1. Remove/Esconde o botão Custom Rules nativo
         const customRulesBtn = document.getElementById('btn-custom-rules');
         if (customRulesBtn) {
             customRulesBtn.style.display = 'none';
             customRulesBtn.id = 'btn-custom-rules-removed';
         }
-        window.customTagRules = []; // Esvazia permanentemente qualquer resquício
+        window.customTagRules = []; 
 
-        // 2. Modifica o botão da engrenagem para ser o Disjuntor Mestre
         const toggleConflict = document.getElementById('toggle-conflict-warnings');
         if (toggleConflict) {
             const label = toggleConflict.parentElement;
@@ -270,7 +324,7 @@
     }
 
     async function checkAndInstallFactoryDefaults() {
-        const flag = 'rulesManager_v10_Installed';
+        const flag = 'rulesManager_v16_Installed';
         if (localStorage.getItem(flag)) return;
 
         const existingRules = await getAllRules();
@@ -280,6 +334,22 @@
 
         for (let tags of FACTORY_CONFLICTS) await addRule('conflict', tags, true);
         for (let tags of FACTORY_SIMILAR) await addRule('similar', tags, true);
+        
+        for (let embed of FACTORY_EMBEDS) await addRule('embed', embed, true);
+
+        await addRule('automerge', {
+            keepTag: 'nude',
+            removeTags: ['completely nude'],
+            require: [],
+            exclude: ['full body', '@clothing']
+        }, true);
+        
+        await addRule('automerge', {
+            keepTag: 'completely nude',
+            removeTags: ['nude'],
+            require: ['full body'],
+            exclude: ['@clothing']
+        }, true);
 
         localStorage.setItem(flag, 'true');
     }
@@ -287,7 +357,6 @@
     async function applyUserRulesToGlobals() {
         await checkAndInstallFactoryDefaults();
 
-        // Se o mestre estiver desligado, tudo vira vazio
         if (window.enableConflictWarnings === false) {
             window.tagConflicts = [];
             window.tagSimilar = [];
@@ -310,16 +379,39 @@
     window.reloadUserConflictRules = applyUserRulesToGlobals;
 
     window.restoreDefaultRules = async function() {
-        if (!confirm('Restore original default rules?\n\n- Your edits to original rules will be lost.\n- Your fully custom rules WILL BE KEPT intact!')) return;
+        if (!confirm('Restore ALL original default rules across ALL categories?\n\n- Your custom rules & embeds WILL BE KEPT intact!')) return;
         await clearDefaultRulesFromDB();
-        localStorage.removeItem('rulesManager_v10_Installed');
+        localStorage.removeItem('rulesManager_v16_Installed');
         await applyUserRulesToGlobals();
         if (document.getElementById('modal-conflict-manager')) await refreshModalBody(); 
-        if (window.showAlert) window.showAlert('Original rules restored successfully!', 'success');
+        if (window.showAlert) window.showAlert('All original rules restored successfully!', 'success');
+    };
+
+    window.restoreCategoryDefaults = async function(category) {
+        const catName = category.charAt(0).toUpperCase() + category.slice(1);
+        if (!confirm(`Restore original default rules for ${catName} only?\n\n- Your custom rules in this category will be kept.`)) return;
+        
+        const rows = await getAllRules();
+        for (let r of rows) {
+            if (r.category === category && r.isDefault) await deleteRule(r.id);
+        }
+        
+        if (category === 'conflict') {
+            for (let tags of FACTORY_CONFLICTS) await addRule('conflict', tags, true);
+        } else if (category === 'similar') {
+            for (let tags of FACTORY_SIMILAR) await addRule('similar', tags, true);
+        } else if (category === 'automerge') {
+            await addRule('automerge', { keepTag: 'nude', removeTags: ['completely nude'], require: [], exclude: ['full body', '@clothing'] }, true);
+            await addRule('automerge', { keepTag: 'completely nude', removeTags: ['nude'], require: ['full body'], exclude: ['@clothing'] }, true);
+        }
+
+        await applyUserRulesToGlobals();
+        if (document.getElementById('modal-conflict-manager')) await refreshModalBody();
+        if (window.showAlert) window.showAlert(`${catName} defaults restored!`, 'success');
     };
 
     window.clearAllRules = async function() {
-        if (!confirm('WARNING: This will delete ALL rules (both defaults and yours).\nAre you sure?')) return;
+        if (!confirm('WARNING: This will delete ALL rules and embeds.\nAre you sure?')) return;
         const rows = await getAllRules();
         for (let r of rows) await deleteRule(r.id);
         await applyUserRulesToGlobals();
@@ -327,7 +419,7 @@
         if (window.showAlert) window.showAlert('All rules have been deleted.', 'success');
     };
 
-    /* ---------- UI (INTERFACE) ---------- */
+    /* ---------- UI (INTERFACE PRINCIPAL) ---------- */
     const CATEGORY_META = {
         conflict: { 
             label: '🚨 Conflicts (Red)', 
@@ -342,19 +434,18 @@
             desc: 'Groups synonymous or overlapping tags. Highlights them in yellow to suggest keeping only one.'
         },
         automerge: { 
-            label: '⚡ Auto-Merge', 
+            label: '⚡ Auto-Merge (Unified)', 
             color: '#00ff99', 
-            hint: 'Automatically consolidates redundant tags.',
-            desc: "If 2+ tags from the group exist in an image, they are merged into the <b>FIRST</b> tag of the list.<br><br><span style='background:#111; padding:4px 6px; border-radius:4px; border:1px solid #222; display:block; color:#ccc;'><b style='color:#fff'>Example:</b> [bikini, swimwear]<br>➡️ If both exist, <i>swimwear</i> is removed.</span>"
+            hint: 'Consolidates redundant tags and applies advanced conditional checks.',
+            desc: 'If ANY of the Remove Tags exist in the image, it removes them and adds the Main Tag (provided conditions are met).'
         }
     };
 
     const modalStyle = document.createElement('style');
     modalStyle.innerHTML = `
-        #modal-conflict-manager .tool-modal { width: 95vw !important; max-width: 1300px !important; height: 85vh !important; display: flex; flex-direction: column; padding: 20px; }
+        #modal-conflict-manager .tool-modal { width: 95vw !important; max-width: 1400px !important; height: 85vh !important; display: flex; flex-direction: column; padding: 20px; }
         #modal-conflict-manager .conflict-group-item { transition: 0.1s; }
         #modal-conflict-manager .conflict-group-item:hover { background: #222 !important; }
-        #modal-conflict-manager .conflict-add-btn:hover { background: #1e4a78 !important; color: #fff !important; }
         #modal-conflict-manager .btn-top-action { background: #333; color: #fff; border: 1px solid #555; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; font-weight: bold; }
         #modal-conflict-manager .btn-top-action:hover { background: #555; border-color: #777; }
         #modal-conflict-manager .panel-list-scroll::-webkit-scrollbar { width: 6px; }
@@ -376,30 +467,39 @@
             <div class="tool-modal" onclick="event.stopPropagation()">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-shrink: 0;">
                     <div>
-                        <h3 style="margin:0 0 5px 0; border:none; padding:0; font-size:18px;">🧩 Manage Rules</h3>
+                        <h3 style="margin:0 0 5px 0; border:none; padding:0; font-size:18px;">🧩 Manage Tag Rules & Automations</h3>
                         <div style="font-size:11px; color:#888; margin-bottom:10px;">
-                            Create, edit, or remove groups freely organized in columns.
+                            Control UI warnings and automatic dataset operations.
                         </div>
                     </div>
                     <div style="display:flex; gap:8px;">
-                        <button class="btn-top-action" onclick="window.restoreDefaultRules()" title="Restore original factory defaults">🔄 Restore Defaults</button>
-                        <button class="btn-top-action" onclick="window.clearAllRules()" style="color:#ff6060; border-color:#7a222c;" title="Delete all rules">🗑️ Clear All</button>
+                        <button class="btn-top-action" onclick="window.runAutoMergeOnDataset(true)" style="background:#00aa66; border-color:#00cc88; color:#000;">▶ Run Auto-Merge Now</button>
+                        <button class="btn-top-action" onclick="window.restoreDefaultRules()">🔄 Restore ALL Defaults</button>
+                        <button class="btn-top-action" onclick="window.clearAllRules()" style="color:#ff6060; border-color:#7a222c;">🗑️ Clear All</button>
                     </div>
                 </div>
 
                 <div id="conflict-manager-body" style="flex:1; display:flex; flex-direction:row; gap:15px; overflow:hidden; margin-top: 10px; margin-bottom: 15px;"></div>
                 
-                <div class="modal-buttons" style="flex-shrink:0; border-top: 1px solid #333; padding-top: 15px;">
+                <div class="modal-buttons" style="flex-shrink:0; border-top: 1px solid #333; padding-top: 15px; display: flex; justify-content: space-between;">
+                    <button class="btn-top-action" style="background:#2f1a5c; color:#b890ff; border-color:#4a2a8c; padding: 8px 16px; font-size: 13px;" onclick="window.openEmbedsManager()">📦 Manage Custom Embeds (@groups)</button>
                     <button class="btn-cancel" style="background:#333; color:#fff;" onclick="window.closeModal('modal-conflict-manager')">Close Interface</button>
                 </div>
             </div>
         `;
         document.body.appendChild(overlay);
+        buildEmbedModal();
     }
 
     function renderCategorySection(category, rows) {
         const meta = CATEGORY_META[category];
         const categoryRows = rows.filter(r => r.category === category);
+        
+        // ORDENAÇÃO: Originais sempre ficam no topo
+        categoryRows.sort((a, b) => {
+            if (a.isDefault === b.isDefault) return 0;
+            return a.isDefault ? -1 : 1;
+        });
 
         const wrap = document.createElement('div');
         wrap.className = 'panel';
@@ -409,49 +509,37 @@
         header.className = 'panel-header';
         header.style.cssText = `background: #222; padding: 12px 15px; font-size: 13px; font-weight: bold; color: ${meta.color}; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;`;
         
-        // CHECKBOXES DE CONTROLE INJETADOS NO CABEÇALHO
-        if (category === 'conflict') {
-            const isRedEnabled = localStorage.getItem('rm_enable_red') !== 'false';
-            header.innerHTML = `
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <input type="checkbox" id="cb-red-enable" ${isRedEnabled ? 'checked' : ''} style="margin:0; cursor:pointer;" title="Enable/Disable conflict warnings">
-                    <span>${meta.label}</span>
-                </div>
-                <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} groups</span>
-            `;
-            setTimeout(() => {
-                const cb = document.getElementById('cb-red-enable');
-                if (cb) cb.onchange = (e) => { localStorage.setItem('rm_enable_red', e.target.checked); applyUserRulesToGlobals(); };
-            }, 0);
-        } 
-        else if (category === 'similar') {
-            const isYellowEnabled = localStorage.getItem('rm_enable_yellow') !== 'false';
-            header.innerHTML = `
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <input type="checkbox" id="cb-yellow-enable" ${isYellowEnabled ? 'checked' : ''} style="margin:0; cursor:pointer;" title="Enable/Disable similar warnings">
-                    <span>${meta.label}</span>
-                </div>
-                <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} groups</span>
-            `;
-            setTimeout(() => {
-                const cb = document.getElementById('cb-yellow-enable');
-                if (cb) cb.onchange = (e) => { localStorage.setItem('rm_enable_yellow', e.target.checked); applyUserRulesToGlobals(); };
-            }, 0);
-        }
-        else if (category === 'automerge') {
-            const isAutoEnabled = localStorage.getItem('rm_auto_merge') === 'true';
-            header.innerHTML = `
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <input type="checkbox" id="cb-auto-merge" ${isAutoEnabled ? 'checked' : ''} style="margin:0; cursor:pointer;" title="Auto-Run when a folder finishes loading">
-                    <span title="Auto-Run when a folder finishes loading" style="color: #00ff99;">Auto Merge</span>
-                </div>
-                <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} groups</span>
-            `;
-            setTimeout(() => {
-                const cb = document.getElementById('cb-auto-merge');
-                if (cb) cb.onchange = (e) => localStorage.setItem('rm_auto_merge', e.target.checked);
-            }, 0);
-        }
+        let cbId = '';
+        if (category === 'conflict') cbId = 'cb-red-enable';
+        if (category === 'similar') cbId = 'cb-yellow-enable';
+        if (category === 'automerge') cbId = 'cb-auto-merge';
+
+        let isChecked = false;
+        if (category === 'conflict') isChecked = localStorage.getItem('rm_enable_red') !== 'false';
+        if (category === 'similar') isChecked = localStorage.getItem('rm_enable_yellow') !== 'false';
+        if (category === 'automerge') isChecked = localStorage.getItem('rm_auto_merge') === 'true';
+
+        header.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <input type="checkbox" id="${cbId}" ${isChecked ? 'checked' : ''} style="margin:0; cursor:pointer;" ${category==='automerge'?'title="Auto-Run when a folder finishes loading"':''}>
+                <span>${meta.label}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <button onclick="window.restoreCategoryDefaults('${category}')" title="Restore original rules for ${meta.label.split(' ')[0]}" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px; padding:0; transition:0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🔄</button>
+                <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} rules</span>
+            </div>
+        `;
+        
+        setTimeout(() => {
+            const cb = document.getElementById(cbId);
+            if (cb) {
+                cb.onchange = (e) => {
+                    if (category === 'conflict') { localStorage.setItem('rm_enable_red', e.target.checked); applyUserRulesToGlobals(); }
+                    if (category === 'similar') { localStorage.setItem('rm_enable_yellow', e.target.checked); applyUserRulesToGlobals(); }
+                    if (category === 'automerge') { localStorage.setItem('rm_auto_merge', e.target.checked); }
+                };
+            }
+        }, 0);
 
         wrap.appendChild(header);
 
@@ -467,7 +555,7 @@
         if (categoryRows.length === 0) {
             const empty = document.createElement('div');
             empty.style.cssText = 'font-size:12px; color:#555; font-style:italic; text-align: center; margin-top: 30px;';
-            empty.textContent = 'No groups in this category.';
+            empty.textContent = 'No rules in this category.';
             list.appendChild(empty);
         }
 
@@ -477,33 +565,77 @@
             item.style.cssText = `display:flex; align-items:center; gap:8px; background:#151515; border:1px solid #2a2a2a; border-left:3px solid ${meta.color}; border-radius:6px; padding:8px 10px;`;
             
             const badge = row.isDefault
-                ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;" title="Original default rule">Original</span>'
-                : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;" title="Created by you">Custom</span>';
+                ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;">Original</span>'
+                : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;">Custom</span>';
 
-            const safeTagsText = escapeHTML(row.tags.join(', '));
+            if (category === 'automerge') {
+                let keep = row.keepTag || '';
+                let rems = row.removeTags || [];
+                let reqs = row.require || [];
+                let excs = row.exclude || [];
+                if (row.tags) { keep = row.tags[0]; rems = row.tags.slice(1); }
+                else if (row.target) { keep = row.fallback; rems = [row.target]; reqs = row.exclude || []; excs = row.require || []; }
 
-            item.innerHTML = `
-                <div style="flex:1; display:flex; flex-direction: column; gap: 4px; overflow: hidden;">
-                    <div>${badge}</div>
-                    <span style="font-size:12px; color:#ddd; word-break:break-word; line-height: 1.3;">${safeTagsText}</span>
-                </div>
-                <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
-                    <button class="btn-conflict-edit" title="Edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
-                    <button class="btn-conflict-delete" title="Delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
-                </div>
-            `;
-            
-            item.querySelector('.btn-conflict-edit').onclick = async () => {
-                const input = prompt('Edit group (comma-separated tags):', row.tags.join(', '));
-                if (input === null) return;
-                const tags = input.split(',').map(t => t.trim()).filter(t => t);
-                if (tags.length < 2) { if (window.showAlert) window.showAlert('A group needs at least 2 tags.', 'warn'); return; }
-                await updateRule(row.id, tags); 
-                await applyUserRulesToGlobals();
-                refreshModalBody();
-            };
+                item.innerHTML = `
+                    <div style="flex:1; display:flex; flex-direction: column; gap: 6px; overflow: hidden;">
+                        <div>${badge} <b style="color:#ff6060; font-size:11px;">[${escapeHTML(rems.join(', '))}]</b> ${keep ? `<span style="color:#888; font-size:10px; margin: 0 4px;">→</span> <b style="color:#00ff99; font-size:12px;">${escapeHTML(keep)}</b>` : `<span style="color:#888; font-size:10px; margin-left:4px;">(Removed)</span>`}</div>
+                        <div style="font-size:11px; color:#aaa; display:flex; gap:10px; flex-wrap:wrap;">
+                            ${reqs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#00ff99;">Req:</span> ${escapeHTML(reqs.join(', '))}</span>` : ''}
+                            ${excs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#ff6060;">Exc:</span> ${escapeHTML(excs.join(', '))}</span>` : ''}
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
+                        <button class="btn-conflict-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
+                        <button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
+                    </div>
+                `;
+                
+                item.querySelector('.btn-conflict-edit').onclick = async () => {
+                    const input = prompt(
+                        'Edit Rule:\nFormat: Main Tag | Remove Tags | Requires (comma-sep) | Excludes (comma-sep)\nLeave blank space between pipes for empty properties.', 
+                        `${keep} | ${rems.join(', ')} | ${reqs.join(', ')} | ${excs.join(', ')}`
+                    );
+                    if (input === null) return;
+                    const parts = input.split('|').map(s => s.trim());
+                    if (parts.length < 2) { if (window.showAlert) window.showAlert('Invalid format.', 'error'); return; }
+                    
+                    const data = {
+                        keepTag: parts[0],
+                        removeTags: parts[1].split(',').map(t=>t.trim()).filter(t=>t),
+                        require: parts[2] ? parts[2].split(',').map(t=>t.trim()).filter(t=>t) : [],
+                        exclude: parts[3] ? parts[3].split(',').map(t=>t.trim()).filter(t=>t) : []
+                    };
+                    if (data.removeTags.length === 0) { if (window.showAlert) window.showAlert('Remove Tags cannot be empty.', 'error'); return; }
+                    
+                    await updateRule(row.id, data); 
+                    await applyUserRulesToGlobals();
+                    refreshModalBody();
+                };
+            } else {
+                const safeTagsText = escapeHTML(row.tags.join(', '));
+                item.innerHTML = `
+                    <div style="flex:1; display:flex; flex-direction: column; gap: 4px; overflow: hidden;">
+                        <div>${badge}</div>
+                        <span style="font-size:12px; color:#ddd; word-break:break-word; line-height: 1.3;">${safeTagsText}</span>
+                    </div>
+                    <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
+                        <button class="btn-conflict-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
+                        <button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
+                    </div>
+                `;
+                item.querySelector('.btn-conflict-edit').onclick = async () => {
+                    const input = prompt('Edit simple group (comma-separated tags):', row.tags.join(', '));
+                    if (input === null) return;
+                    const tags = input.split(',').map(t => t.trim()).filter(t => t);
+                    if (tags.length < 2) { if (window.showAlert) window.showAlert('A group needs at least 2 tags.', 'warn'); return; }
+                    await updateRule(row.id, tags); 
+                    await applyUserRulesToGlobals();
+                    refreshModalBody();
+                };
+            }
+
             item.querySelector('.btn-conflict-delete').onclick = async () => {
-                if (!confirm('Remove this group?')) return;
+                if (!confirm('Remove this rule?')) return;
                 await deleteRule(row.id);
                 await applyUserRulesToGlobals();
                 refreshModalBody();
@@ -513,40 +645,74 @@
 
         wrap.appendChild(list);
 
-        // BOTÃO MANUAL DO AUTO-MERGE INJETADO APENAS NA COLUNA DELE
-        if (category === 'automerge') {
-            const runWrap = document.createElement('div');
-            runWrap.style.cssText = 'padding: 12px 15px 0 15px; background: #111; border-top: 1px solid #222; flex-shrink: 0;';
-            runWrap.innerHTML = `<button style="background:#00aa66; color:#000; border:1px solid #00cc88; font-size:12px; padding:8px; border-radius:6px; font-weight:bold; cursor:pointer; width:100%; transition:0.2s;" onclick="window.runAutoMergeOnDataset(true)">▶ Run Auto-Merge Now</button>`;
-            wrap.appendChild(runWrap);
-        }
-
         const addRow = document.createElement('div');
         addRow.className = 'inline-add-box';
-        addRow.style.cssText = 'display: flex; gap: 8px; padding: 12px 15px; background: #111; align-items: center; flex-shrink: 0; border-top: ' + (category === 'automerge' ? 'none' : '1px solid #222') + ';';
         
-        addRow.innerHTML = `
-            <input type="text" class="conflict-add-input" placeholder="tag1, tag2..." style="flex:1; font-size:12px; background:#222; border:1px solid #444; padding:8px 10px; border-radius:6px; color:#fff; outline:none;">
-            <button class="conflict-add-btn" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; font-size:12px; padding:8px 12px; border-radius:6px; flex-shrink:0; font-weight:bold; cursor:pointer; transition:0.2s;">➕ Add</button>
-        `;
-        
-        const input = addRow.querySelector('.conflict-add-input');
-        const addBtn = addRow.querySelector('.conflict-add-btn');
-        
-        const doAdd = async () => {
-            const tags = input.value.split(',').map(t => t.trim()).filter(t => t);
-            if (tags.length < 2) { if (window.showAlert) window.showAlert('A group needs at least 2 tags.', 'warn'); return; }
-            await addRule(category, tags, false); 
-            input.value = '';
-            await applyUserRulesToGlobals();
-            refreshModalBody();
-        };
-        
-        addBtn.onclick = doAdd;
-        input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } };
+        if (category === 'automerge') {
+            addRow.style.cssText = 'display: flex; flex-direction: column; gap: 8px; padding: 12px 15px; background: #111; align-items: stretch; flex-shrink: 0; border-top: 1px solid #222;';
+            addRow.innerHTML = `
+                <div style="display:flex; gap:6px;">
+                    <input type="text" class="cond-keep" placeholder="Main Tag" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                    <input type="text" class="cond-remove" placeholder="Remove Tags" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                </div>
+                <div style="display:flex; gap:6px;">
+                    <input type="text" class="cond-req" placeholder="Requires (comma-sep)" style="flex:2; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                    <input type="text" class="cond-exc" placeholder="Excludes (e.g. @clothing)" style="flex:2; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                    <button class="cond-add-btn" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; font-size:11px; padding:6px 14px; border-radius:4px; flex-shrink:0; font-weight:bold; cursor:pointer;">➕ Add</button>
+                </div>
+            `;
+            
+            const condBtn = addRow.querySelector('.cond-add-btn');
+            condBtn.onclick = async () => {
+                const keep = addRow.querySelector('.cond-keep').value.trim();
+                const removeStr = addRow.querySelector('.cond-remove').value.trim();
+                if (!removeStr) { if (window.showAlert) window.showAlert('Remove Tags is required.', 'warn'); return; }
+                
+                const reqStr = addRow.querySelector('.cond-req').value;
+                const excStr = addRow.querySelector('.cond-exc').value;
+                
+                const data = {
+                    keepTag: keep,
+                    removeTags: removeStr.split(',').map(t=>t.trim()).filter(t=>t),
+                    require: reqStr.split(',').map(t=>t.trim()).filter(t=>t),
+                    exclude: excStr.split(',').map(t=>t.trim()).filter(t=>t)
+                };
+                
+                await addRule(category, data, false); 
+                
+                addRow.querySelector('.cond-keep').value = '';
+                addRow.querySelector('.cond-remove').value = '';
+                addRow.querySelector('.cond-req').value = '';
+                addRow.querySelector('.cond-exc').value = '';
+                
+                await applyUserRulesToGlobals();
+                refreshModalBody();
+            };
+
+        } else {
+            addRow.style.cssText = 'display: flex; gap: 8px; padding: 12px 15px; background: #111; align-items: center; flex-shrink: 0; border-top: 1px solid #222;';
+            addRow.innerHTML = `
+                <input type="text" class="conflict-add-input" placeholder="tag1, tag2..." style="flex:1; font-size:12px; background:#222; border:1px solid #444; padding:8px 10px; border-radius:6px; color:#fff; outline:none;">
+                <button class="conflict-add-btn" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; font-size:12px; padding:8px 12px; border-radius:6px; flex-shrink:0; font-weight:bold; cursor:pointer;">➕ Add</button>
+            `;
+            
+            const input = addRow.querySelector('.conflict-add-input');
+            const addBtn = addRow.querySelector('.conflict-add-btn');
+            
+            const doAdd = async () => {
+                const tags = input.value.split(',').map(t => t.trim()).filter(t => t);
+                if (tags.length < 2) { if (window.showAlert) window.showAlert('A group needs at least 2 tags.', 'warn'); return; }
+                await addRule(category, tags, false); 
+                input.value = '';
+                await applyUserRulesToGlobals();
+                refreshModalBody();
+            };
+            
+            addBtn.onclick = doAdd;
+            input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } };
+        }
         
         wrap.appendChild(addRow);
-
         return wrap;
     }
 
@@ -561,6 +727,138 @@
         body.appendChild(renderCategorySection('automerge', rows));
     }
 
+    /* ---------- EMBEDS MANAGER UI ---------- */
+    window.restoreEmbedDefaults = async function() {
+        if (!confirm(`Restore original default embeds?\n\n- Your custom embeds will be kept.`)) return;
+        const rows = await getAllRules();
+        for (let r of rows) {
+            if (r.category === 'embed' && r.isDefault) await deleteRule(r.id);
+        }
+        for (let embed of FACTORY_EMBEDS) await addRule('embed', embed, true);
+        refreshEmbedList();
+        if (window.showAlert) window.showAlert(`Embed defaults restored!`, 'success');
+    };
+
+    function buildEmbedModal() {
+        if (document.getElementById('modal-embed-manager')) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'modal-embed-manager';
+        overlay.className = 'modal-overlay';
+        overlay.style.zIndex = '105';
+        overlay.onclick = () => window.closeModal('modal-embed-manager');
+
+        overlay.innerHTML = `
+            <div class="tool-modal" style="width: 500px; height: 600px; display:flex; flex-direction:column;" onclick="event.stopPropagation()">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <h3 style="margin:0 0 5px 0; font-size:16px;">📦 Custom Embeds</h3>
+                    <button onclick="window.restoreEmbedDefaults()" title="Restore default embeds" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px; padding:0; transition:0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🔄</button>
+                </div>
+                <div style="font-size:11px; color:#aaa; margin-bottom:15px;">
+                    Create custom groups of tags. Use <b>@name</b> in the Excludes/Requires of Advanced Rules.
+                </div>
+                
+                <div id="embed-list-container" class="panel-list-scroll" style="flex:1; overflow-y:auto; background:#111; padding:10px; border:1px solid #333; border-radius:6px; display:flex; flex-direction:column; gap:8px;"></div>
+                
+                <div style="margin-top:15px; display:flex; flex-direction:column; gap:8px; background:#1b1b1b; padding:12px; border:1px solid #333; border-radius:6px;">
+                    <div style="font-size:12px; color:#00ff99; font-weight:bold;">Create New Embed</div>
+                    <input type="text" id="embed-add-name" placeholder="Name (e.g. clothing)" style="font-size:12px; background:#222; border:1px solid #444; padding:8px; border-radius:4px; color:#fff;">
+                    <textarea id="embed-add-tags" placeholder="tag1, tag2, tag3..." style="font-size:12px; background:#222; border:1px solid #444; padding:8px; border-radius:4px; color:#fff; min-height:60px; resize:vertical;"></textarea>
+                    <button onclick="window.addCustomEmbed()" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer;">➕ Save Embed</button>
+                </div>
+                
+                <div class="modal-buttons" style="margin-top:15px;">
+                    <button class="btn-cancel" onclick="window.closeModal('modal-embed-manager')">Close</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+    }
+
+    window.openEmbedsManager = async function() {
+        await refreshEmbedList();
+        window.openModal('modal-embed-manager');
+    };
+
+    async function refreshEmbedList() {
+        const container = document.getElementById('embed-list-container');
+        if (!container) return;
+        
+        const rows = await getAllRules();
+        const embeds = rows.filter(r => r.category === 'embed');
+        
+        // ORDENAÇÃO para os Embeds também
+        embeds.sort((a, b) => {
+            if (a.isDefault === b.isDefault) return 0;
+            return a.isDefault ? -1 : 1;
+        });
+        
+        container.innerHTML = '';
+        if (embeds.length === 0) {
+            container.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; margin-top:20px;">No embeds created yet.</div>';
+            return;
+        }
+
+        embeds.forEach(emb => {
+            const badge = emb.isDefault 
+                ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444; margin-right:6px;">Original</span>' 
+                : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32; margin-right:6px;">Custom</span>';
+
+            const el = document.createElement('div');
+            el.style.cssText = 'background:#151515; border:1px solid #2a2a2a; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;';
+            el.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        ${badge}
+                        <span style="font-size:14px; font-weight:bold; color:#b890ff;">@${escapeHTML(emb.name)}</span>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        <button class="btn-emb-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+                        <button class="btn-emb-del" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
+                    </div>
+                </div>
+                <div style="font-size:11px; color:#aaa; line-height:1.4; word-break:break-word;">
+                    ${escapeHTML(emb.tags.join(', '))}
+                </div>
+            `;
+            
+            el.querySelector('.btn-emb-edit').onclick = async () => {
+                const input = prompt(`Edit @${emb.name} (comma-separated):`, emb.tags.join(', '));
+                if (input === null) return;
+                const tags = input.split(',').map(t => t.trim()).filter(t => t);
+                if (tags.length === 0) return;
+                await updateRule(emb.id, { name: emb.name, tags: tags });
+                refreshEmbedList();
+            };
+            
+            el.querySelector('.btn-emb-del').onclick = async () => {
+                if (!confirm(`Delete embed @${emb.name}?`)) return;
+                await deleteRule(emb.id);
+                refreshEmbedList();
+            };
+            
+            container.appendChild(el);
+        });
+    }
+
+    window.addCustomEmbed = async function() {
+        const nameInput = document.getElementById('embed-add-name');
+        const tagsInput = document.getElementById('embed-add-tags');
+        
+        let name = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+        let tags = tagsInput.value.split(',').map(t => t.trim()).filter(t => t);
+        
+        if (!name || tags.length === 0) {
+            if(window.showAlert) window.showAlert('Please provide a valid name and tags.', 'warn');
+            return;
+        }
+        
+        await addRule('embed', { name: name, tags: tags }, false);
+        nameInput.value = '';
+        tagsInput.value = '';
+        refreshEmbedList();
+        if(window.showAlert) window.showAlert(`Embed @${name} saved!`, 'success');
+    };
+
     window.openConflictManager = async function () {
         buildModal();
         await refreshModalBody();
@@ -568,12 +866,11 @@
     };
 
     function injectButton() {
-        // Esconde o botão Custom Rules nativo
         const customRulesBtn = document.getElementById('btn-custom-rules');
         if (customRulesBtn) customRulesBtn.style.display = 'none';
 
         const rightBar = document.getElementById('topbar-right');
-        const anchor = document.getElementById('btn-settings'); // Usa o settings como âncora já que o custom rules foi de base
+        const anchor = document.getElementById('btn-settings');
         if (!rightBar || !anchor || document.getElementById('btn-conflict-manager')) return;
 
         const btn = document.createElement('button');
@@ -582,7 +879,6 @@
         btn.textContent = '🧩 Manage Rules';
         btn.onclick = () => window.openConflictManager();
         
-        // Esconde o botão se a engrenagem mestre estiver desligada na inicialização
         if (window.enableConflictWarnings === false) btn.style.display = 'none';
         
         rightBar.insertBefore(btn, anchor);
