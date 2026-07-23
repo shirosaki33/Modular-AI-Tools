@@ -122,6 +122,8 @@ window.addSelectedPresetTagsTo = function(target) {
         }
     });
     window.markDirty(targets.map(idx => imageFiles[idx]));
+	
+	tagsToAdd.forEach(tag => { if (typeof masterTagSet !== 'undefined') masterTagSet.add(tag); });
     
     if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
     if (typeof window.renderImageList === 'function') window.renderImageList();

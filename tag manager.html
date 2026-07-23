@@ -71,12 +71,12 @@
         .btn-inline-add { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; padding: 8px 15px; border-radius: 6px;}
         .btn-inline-add:hover { background: #1e4a78; color: #fff; }
 
-        .logic-bar { display: flex; gap: 5px; padding: 10px 15px; background: #151515; border-bottom: 1px solid #333; flex-shrink: 0;}
-        .logic-btn { flex: 1; padding: 6px; background: #222; border: 1px solid #444; color: #aaa; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.1s;}
+        .logic-bar { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; padding: 12px 15px; background: #151515; border-bottom: 1px solid #333; flex-shrink: 0; overflow-x: auto; }
+        .logic-btn { flex: 1 1 0; min-width: 0; padding: 8px 4px; background: #222; border: 1px solid #444; color: #aaa; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.1s; white-space: nowrap; }
         .logic-btn:hover { background: #333; color: #eee; }
         .logic-btn.active { background: #0d2a18; color: #00ff99; border-color: #00aa66; }
-        #btn-filter-fav-tags { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em; }
-        #btn-filter-suggest-img { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em; }
+        #btn-filter-fav-tags { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.4em 0.7em; }
+        #btn-filter-suggest-img { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.4em 0.7em; }
         
         .selection-actions { display: none; gap: 5px; padding: 10px 15px; background: #1a1a1a; border-bottom: 1px solid #333; flex-shrink: 0; }
         .btn-multi { flex: 1; padding: 8px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: 0.1s; }
@@ -436,7 +436,7 @@
                 <button id="btn-logic-NOT" class="logic-btn" onclick="window.setLogic('NOT')">NOT</button>
                 <button id="btn-filter-fav-tags" class="logic-btn" onclick="window.toggleFavTagsFilter()" title="Show Only Starred Tags">☆</button>
                 <button id="btn-filter-suggest-img" class="logic-btn" style="display:none;" onclick="window.toggleSuggestFilterImg()" title="Show Only Ghost Tags">💡</button>
-                <button id="btn-filter-nl-master" class="logic-btn" style="display:none; flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.3em 0.6em;" onclick="window.toggleMasterNLFilter()" title="Show Only NL">NL</button>
+                <button id="btn-filter-nl-master" class="logic-btn" style="display:none; flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.4em 0.7em;" onclick="window.toggleMasterNLFilter()" title="Show Only NL">NL</button>
             </div>
             
             <div class="tools-content"><div id="master-tag-list"></div></div>
