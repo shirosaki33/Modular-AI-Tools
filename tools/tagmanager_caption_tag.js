@@ -19,9 +19,8 @@ style.innerHTML = `
     .tag-pin.active { text-shadow: 0 0 6px rgba(77,184,255,0.7); }
     .pinned-master-tag-row:hover { background: #0d2438 !important; }
 
-    .db-autocomplete { position: absolute; bottom: 100%; top: auto; left: 0; background: #111; border: 1px solid #333; z-index: 100; border-radius: 6px 6px 0 0; max-height: 200px; overflow-y: auto; width: 100%; box-shadow: 0 -4px 12px rgba(0,0,0,0.8); margin-bottom: 4px; }
-    .db-autocomplete.direction-down { bottom: auto; top: 100%; border-radius: 0 0 6px 6px; margin-bottom: 0; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.8); }
-    .db-sugg-item { padding: 8px 10px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
+    .db-autocomplete { position: absolute; bottom: 100%; top: auto; left: 0; background: #111; border: 1px solid #333; z-index: 100; border-radius: 6px 6px 0 0; max-height: 200px; overflow-y: auto; min-width: 100%; width: max-content; box-shadow: 0 -4px 12px rgba(0,0,0,0.8); margin-bottom: 4px; }
+    .db-sugg-item { padding: 8px 10px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 20px; font-size: 12px; white-space: nowrap; }
     .db-sugg-item:hover { background: #222; }
     
     .tag-row.conflict, .master-tag-item.conflict { background: rgba(200, 40, 40, 0.3) !important; border-left: 3px solid #ff4444 !important; }
@@ -40,7 +39,6 @@ style.innerHTML = `
     .tag-alias-arrow { color:#ffcc66; font-size:10px; margin-left:6px; font-weight:bold; cursor:help; }
     .tag-alias-info-icon { cursor: pointer; font-weight: bold; font-size: 1em; padding: 0 0.35em; flex-shrink: 0; opacity: 0.85; user-select: none; transition: 0.1s; }
     .tag-alias-info-icon:hover { transform: scale(1.2); opacity: 1; }
-    #modal-alias-info .tool-modal { width: 700px; max-width: 90vw; }
 `;
 document.head.appendChild(style);
 
@@ -50,153 +48,6 @@ window.checkIfNL = function(tag) {
         return datasetConfig.manualNLRules[tag] === 'nl';
     }
     return window.enableAutoNl !== false && tag.trim().split(/\s+/).length >= (window.nlWordThreshold || 6);
-};
-
-/* ---------- CONVERSOR DE DTEXT PARA HTML ----------
-   Transforma links internos [[tag]], IDs de post e links
-   brutos do Danbooru em tags HTML bonitas e clicáveis. */
-window.formatDanbooruDText = function(text) {
-    if (!text) return "";
-    return text
-        // 1. Escapar caracteres sensíveis HTML para não quebrar a UI
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        
-        // 2. Links de Tags da Wiki: [[tag]] ou [[tag|label]] (Suporta espaços se a API do Google Translate colocar)
-        .replace(/\[\s*\[\s*([^|\]]+?)\s*(?:\|\s*([^\]]+?))?\s*\]\s*\]/g, (m, tag, label) => {
-            const url = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(tag.replace(/ /g, '_'))}`;
-            return `<a href="${url}" target="_blank" style="color:#4db8ff; text-decoration:none; font-weight:bold;">${label || tag.replace(/_/g, ' ')}</a>`;
-        })
-        
-        // 3. Links de Imagens Especiais (Ex: post #123, [post #123], post:123) -> Vira o botão [IMG #123]
-        .replace(/(?:\[?\s*post\s*#|post:)\s*(\d+)\s*\]?/gi, '<a href="https://danbooru.donmai.us/posts/$1" target="_blank" style="color:#00ff99; text-decoration:none; font-weight:bold; background:#0d2a18; padding:2px 6px; border-radius:4px; border:1px solid #00aa66; white-space:nowrap;">📸 IMG #$1</a>')
-        
-        // 3.5 NOVO: Esconder assets quebrados (!asset #12345) trocando por [IMG] discreto
-        .replace(/!?asset\s*#\d+/gi, '<span style="color:#888; font-style:italic;">[IMG]</span>')
-
-        // 3.6 NOVO: Converter os subtítulos DText (ex: h4. Title) em subtítulos reais
-        .replace(/^h[1-6]\.\s+(.*)$/gm, '<b style="color:#eee; display:block; margin-top:12px; margin-bottom:4px; border-bottom:1px solid #333; padding-bottom:4px;">$1</b>')
-
-        // 4. Links Externos formato Nomeado: "label":http...
-        .replace(/"([^"]+)":\s*(https?:\/\/[^\s]+)/g, '<a href="$2" target="_blank" style="color:#4db8ff; text-decoration:underline;">$1</a>')
-        
-        // 5. Links Externos formato Clássico: [http... label]
-        .replace(/\[\s*(https?:\/\/[^\s\]]+)\s+([^\]]+)\s*\]/g, '<a href="$1" target="_blank" style="color:#4db8ff; text-decoration:underline;">$2</a>')
-        
-        // 6. Negrito e Itálico do DText
-        .replace(/\[\s*b\s*\](.*?)\[\s*\/\s*b\s*\]/gi, '<b>$1</b>')
-        .replace(/\[\s*i\s*\](.*?)\[\s*\/\s*i\s*\]/gi, '<i>$1</i>')
-
-        // 7. Quebras de linha
-        .replace(/\n/g, '<br>');
-};
-
-/* ---------- ALIAS INFO POPOUT (❓ vermelho original) ----------
-   Combina o layout explicativo customizado de Alias com a descrição 
-   oficial da Wiki baixada via API e formatada pelo Parser DText. */
-function buildAliasInfoModal() {
-    if (document.getElementById('modal-alias-info')) return;
-    const overlay = document.createElement('div');
-    overlay.id = 'modal-alias-info';
-    overlay.className = 'modal-overlay';
-    overlay.onclick = () => window.closeModal('modal-alias-info');
-    overlay.innerHTML = `
-        <div class="tool-modal" style="max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation()">
-            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0; margin-bottom:15px; padding-bottom:10px; border-bottom:1px solid #333;">
-                <span style="color: #4db8ff;">↪️ Alias Tag Info</span>
-                <button onclick="window.closeModal('modal-alias-info')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
-            </h3>
-            <div style="font-size:13px; color:#ccc; line-height:1.6;">
-                <div style="margin-bottom:8px;"><span style="color:#888; font-size:10px; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px;">Original tag (deprecated)</span><br><b style="color:#ffcc66; font-size:14px;" id="alias-info-original"></b></div>
-                <div style="margin-bottom:8px;"><span style="color:#888; font-size:10px; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px;">Redirects to</span><br><b style="color:#00ff99; font-size:14px;" id="alias-info-target"></b></div>
-                <div style="font-size:11px; color:#888; margin-top:12px; margin-bottom:12px; line-height:1.5;">Danbooru merged the original tag into the one above — any post using the old tag counts under the new one automatically. The tag count shown for the original comes from the new tag, since the old one has no posts of its own anymore.</div>
-                
-                <div id="alias-info-wiki-container" style="display:none; margin-top:15px; padding-top:15px; border-top:1px dashed #333;">
-    <span style="color:#888; font-size:10px; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px;">Wiki Description</span>
-    <div id="alias-info-desc" style="color: #ccc; font-size: 13px; line-height: 1.5; max-height: 250px; overflow-y: auto; margin: 8px 0; padding-right:5px;"></div>
-    
-    <!-- Trecho dos botões lado a lado -->
-    <div style="display: flex; gap: 8px; align-items: center; margin-top: 12px;">
-        <button id="alias-info-translate" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer;">🌐 Translate</button>
-        <a href="#" target="_blank" id="alias-info-link" style="color: #4db8ff; text-decoration: none; border: 1px solid #2a5a8c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block;">Open new tag on Danbooru ↗</a>
-    </div>
-</div>
-
-                
-            </div>
-            <div class="modal-buttons" style="margin-top:15px;"><button class="btn-cancel" onclick="window.closeModal('modal-alias-info')">Close</button></div>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-
-    document.getElementById('alias-info-translate').onclick = async function() {
-        const descEl = document.getElementById('alias-info-desc');
-        const original = descEl.dataset.original;
-        if (!original || !original.trim()) return;
-
-        const lang = prompt("Target language code (e.g. pt, es, fr, ja, en):", "pt");
-        if (!lang) return;
-
-        const backup = descEl.innerHTML;
-        descEl.innerHTML = "🌐 Translating...";
-        try {
-            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${lang.trim().toLowerCase()}&dt=t&q=${encodeURIComponent(original)}`;
-            const res = await fetch(url);
-            const data = await res.json();
-            let translated = "";
-            if (data && data[0]) data[0].forEach(part => { if (part[0]) translated += part[0]; });
-            
-            // Re-formata o resultado da tradução para restaurar os links HTML
-            descEl.innerHTML = window.formatDanbooruDText(translated) || backup;
-        } catch (e) {
-            descEl.innerHTML = backup;
-            if (window.showAlert) window.showAlert("Error translating.", "error");
-        }
-    };
-}
-
-window.openAliasInfoPopout = async function (originalTag, targetTag) {
-    buildAliasInfoModal();
-    document.getElementById('alias-info-original').textContent = originalTag;
-    document.getElementById('alias-info-target').textContent = targetTag;
-    document.getElementById('alias-info-link').href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(targetTag.trim().toLowerCase().replace(/ /g, '_'))}`;
-    
-    const wikiContainer = document.getElementById('alias-info-wiki-container');
-    const descEl = document.getElementById('alias-info-desc');
-    
-    descEl.innerHTML = "Loading wiki description...";
-    descEl.dataset.original = "";
-    wikiContainer.style.display = 'block';
-
-    if (typeof window.openModal === 'function') window.openModal('modal-alias-info');
-
-    try {
-        // Faz a busca da wiki inteira em RAW format para preservar os Links e DText
-        const wRes = await fetch(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(targetTag.trim().toLowerCase().replace(/ /g, '_'))}.json`);
-        if (wRes.ok) {
-            const wData = await wRes.json();
-            if (wData && wData.body && wData.body.trim()) {
-                descEl.dataset.original = wData.body;
-                descEl.innerHTML = window.formatDanbooruDText(wData.body);
-            } else {
-                descEl.innerHTML = "No wiki description available on Danbooru.";
-            }
-        } else {
-            descEl.innerHTML = "Wiki not found or error loading.";
-        }
-    } catch (e) {
-        // Fallback: se falhar a rede ou der CORS, tenta usar o texto limpo do cache se existir
-        if (window.dbLookupSingleTag) {
-            const info = await window.dbLookupSingleTag(targetTag);
-            if (info && info.hasWikiInfo && info.description) {
-                descEl.dataset.original = info.description;
-                descEl.innerHTML = info.description; 
-            } else {
-                descEl.innerHTML = "No wiki description available.";
-            }
-        } else {
-            descEl.innerHTML = "Error loading wiki from Danbooru.";
-        }
-    }
 };
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -369,7 +220,7 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
                     const infoHtml = t.isAlias ? `<span class="tag-alias-info-icon" title="View info about the original tag">❓</span>` : '';
                     
                     div.innerHTML = `<span style="color:${color}; font-weight:bold;">${displayName}${arrowHtml}</span>
-                        <div style="display:flex; align-items:center; gap:5px;"><span style="color:#666;">${Number(t.post_count).toLocaleString()}</span>${infoHtml}</div>`;
+                        <div style="display:flex; align-items:center; gap:5px;">${infoHtml}<span style="color:#666;">${Number(t.post_count).toLocaleString()}</span></div>`;
                     
                     div.onclick = () => {
                         input.value = (t.isAlias && window.aliasClickBehavior !== 'keep') ? t.aliasTo.replace(/_/g, ' ') : displayName;
@@ -377,7 +228,12 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
                     };
                     if (t.isAlias) {
                         const infoIcon = div.querySelector('.tag-alias-info-icon');
-                        if (infoIcon) infoIcon.onclick = (e) => { e.stopPropagation(); window.openAliasInfoPopout(displayName, aliasToSpaced); };
+                        if (infoIcon) infoIcon.onclick = (e) => { 
+                            e.stopPropagation(); 
+                            if(typeof window.openDanbooruTagInfoPopout === 'function') {
+                                window.openDanbooruTagInfoPopout(aliasToSpaced, displayName); 
+                            }
+                        };
                     }
                     suggBox.appendChild(div);
                 });
@@ -866,7 +722,7 @@ window.renderEditor = function() {
             const dbAliasArrowHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL) ? `<span class="tag-alias-arrow" title="Danbooru redirects this tag to '${dbCached.aliasTo}'">➜ ${dbCached.aliasTo}</span>` : '';
             
             // O ícone ❓ original com a classe de estilo idêntica ao do painel!
-            const dbAliasInfoHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL) ? `<span class="tag-alias-info-icon" title="View Danbooru info for target tag">❓</span>` : '';
+            const dbAliasInfoHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL) ? `<span class="tag-alias-info-icon tag-db-info" title="View Alias Tag Info">❓</span>` : '';
             
             const dbCountHtml = (window.showDanbooruCounts && dbCached && dbCached.count > 0 && !isCustomNL) ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">${window.formatDbCount(dbCached.count)}</span>` : '';
             const countInDataset = datasetTagCounts.get(tag) || 0;
@@ -930,7 +786,12 @@ window.renderEditor = function() {
 
                 const aliasInfoIcon = row.querySelector('.tag-alias-info-icon');
                 if (aliasInfoIcon && dbCached && dbCached.aliasTo) {
-                    aliasInfoIcon.onclick = (e) => { e.stopPropagation(); window.openAliasInfoPopout(tag, dbCached.aliasTo); };
+                    aliasInfoIcon.onclick = (e) => { 
+                        e.stopPropagation(); 
+                        if(typeof window.openDanbooruTagInfoPopout === 'function') {
+                            window.openDanbooruTagInfoPopout(dbCached.aliasTo, tag);
+                        }
+                    };
                 }
             }
             
@@ -1387,7 +1248,6 @@ window.renderMasterTagList = function() {
             const presetIconHtml = (isAlreadyPreset || isCustomNL) ? '' : `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>`;
             const ghostIconHtmlMaster = (window.enableGhostConvertIcon !== false && !isCustomNL) ? `<span class="tag-to-ghost" title="Convert to Ghost globally">💡</span>` : '';
             
-            // Usando a classe tag-db-info para compartilhar o MESMO espaçamento da lâmpada e evitar duplicação do painel
             const dbAliasInfoHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL)
                 ? `<span class="tag-alias-info-icon tag-db-info" title="View Alias Tag Info">❓</span>` : '';
 
@@ -1451,7 +1311,12 @@ window.renderMasterTagList = function() {
 
             const aliasInfoIcon = item.querySelector('.tag-alias-info-icon');
             if (aliasInfoIcon && dbCached && dbCached.aliasTo) {
-                aliasInfoIcon.onclick = (e) => { e.stopPropagation(); window.openAliasInfoPopout(tag, dbCached.aliasTo); };
+                aliasInfoIcon.onclick = (e) => { 
+                    e.stopPropagation(); 
+                    if(typeof window.openDanbooruTagInfoPopout === 'function') {
+                        window.openDanbooruTagInfoPopout(dbCached.aliasTo, tag);
+                    }
+                };
             }
             
             if (!isCustomNL) item.ondblclick = (e) => { e.stopPropagation(); window.addTagToSelected(tag, document.getElementById('master-add-pos') ? document.getElementById('master-add-pos').value : 'bottom'); };

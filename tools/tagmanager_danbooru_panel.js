@@ -38,7 +38,7 @@
            sem margem própria o ❓ ficaria colado demais no ✓/×. */
         .tag-row.ghost .tag-db-info, .master-tag-item.ghost .tag-db-info { margin-right: -2px; }
 
-        #modal-danbooru .tool-modal, #modal-db-tag-info .tool-modal { width: 420px; max-height: 80vh; overflow-y: auto; }
+        #modal-danbooru .tool-modal, #modal-db-tag-info .tool-modal { width: 700px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
 
         .dbp-row { display: flex; gap: 8px; }
         .dbp-input {
@@ -53,10 +53,7 @@
         .dbp-result.open { display: block; }
         .dbp-tag-title { font-size: 15px; font-weight: bold; color: #4db8ff; margin-bottom: 4px; }
         .dbp-tag-cat { font-size: 12px; color: #aaa; margin-left: 8px; }
-        .dbp-desc { color: #ccc; font-size: 13px; line-height: 1.5; max-height: 160px; overflow-y: auto; white-space: pre-wrap; margin: 8px 0; }
-        .dbp-link { color: #4db8ff; text-decoration: none; font-size: 12px; border: 1px solid #2a5a8c; padding: 6px 10px; border-radius: 4px; display: inline-block; }
-        .dbp-btn-translate { background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 4px; padding: 6px 10px; font-size: 12px; font-weight: bold; cursor: pointer; }
-        .dbp-btn-translate:hover { background: #b890ff; color: #000; }
+        .dbp-desc { color: #ccc; font-size: 13px; line-height: 1.5; max-height: 450px; overflow-y: auto; margin: 8px 0; padding-right: 5px; }
 
         .dbp-btn-scan { background: #00aa66; color: #000; border: none; border-radius: 6px; padding: 8px; font-weight: bold; cursor: pointer; font-size: 12px; }
         .dbp-btn-scan:hover { background: #00ff99; }
@@ -96,7 +93,26 @@
     window._dbBackgroundScanCancelled = window._dbBackgroundScanCancelled || false;
     window._dbInfoLastImageFilesRef = window._dbInfoLastImageFilesRef || null;
 
-    /* ---------- TRADUÇÃO (mesma API pública usada em tagmanager_nl_editor.js) ---------- */
+    /* ---------- CONVERSOR DE DTEXT PARA HTML ---------- */
+    window.formatDanbooruDText = function(text) {
+        if (!text) return "";
+        return text
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/\[\s*\[\s*([^|\]]+?)\s*(?:\|\s*([^\]]+?))?\s*\]\s*\]/g, (m, tag, label) => {
+                const url = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(tag.replace(/ /g, '_'))}`;
+                return `<a href="${url}" target="_blank" style="color:#4db8ff; text-decoration:none; font-weight:bold;">${label || tag.replace(/_/g, ' ')}</a>`;
+            })
+            .replace(/(?:\[?\s*post\s*#|post:)\s*(\d+)\s*\]?/gi, '<a href="https://danbooru.donmai.us/posts/$1" target="_blank" style="color:#00ff99; text-decoration:none; font-weight:bold; background:#0d2a18; padding:2px 6px; border-radius:4px; border:1px solid #00aa66; white-space:nowrap;">📸 IMG #$1</a>')
+            .replace(/!?asset\s*#\d+/gi, '<span style="color:#888; font-style:italic; font-weight:bold;">[IMG]</span>')
+            .replace(/^h[1-6]\.\s+(.*)$/gm, '<b style="color:#eee; display:block; margin-top:12px; margin-bottom:4px; border-bottom:1px solid #333; padding-bottom:4px;">$1</b>')
+            .replace(/"([^"]+)":\s*(https?:\/\/[^\s]+)/g, '<a href="$2" target="_blank" style="color:#4db8ff; text-decoration:underline;">$1</a>')
+            .replace(/\[\s*(https?:\/\/[^\s\]]+)\s+([^\]]+)\s*\]/g, '<a href="$1" target="_blank" style="color:#4db8ff; text-decoration:underline;">$2</a>')
+            .replace(/\[\s*b\s*\](.*?)\[\s*\/\s*b\s*\]/gi, '<b>$1</b>')
+            .replace(/\[\s*i\s*\](.*?)\[\s*\/\s*i\s*\]/gi, '<i>$1</i>')
+            .replace(/\n/g, '<br>');
+    };
+
+    /* ---------- TRADUÇÃO ---------- */
     async function translateDescNode(descEl) {
         if (descEl.dataset.original === undefined) descEl.dataset.original = descEl.textContent;
         const original = descEl.dataset.original;
@@ -105,17 +121,18 @@
         const lang = prompt("Target language code (e.g. pt, es, fr, ja, en):", "pt");
         if (!lang) return;
 
-        const backup = descEl.textContent;
-        descEl.textContent = "🌐 Translating...";
+        const backup = descEl.innerHTML;
+        descEl.innerHTML = "🌐 Translating...";
         try {
             const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${lang.trim().toLowerCase()}&dt=t&q=${encodeURIComponent(original)}`;
             const res = await fetch(url);
             const data = await res.json();
             let translated = "";
             if (data && data[0]) data[0].forEach(part => { if (part[0]) translated += part[0]; });
-            descEl.textContent = translated || backup;
+            
+            descEl.innerHTML = window.formatDanbooruDText(translated) || backup;
         } catch (e) {
-            descEl.textContent = backup;
+            descEl.innerHTML = backup;
             if (window.showAlert) window.showAlert("Error translating.", "error");
         }
     }
@@ -148,9 +165,10 @@
                         <span class="dbp-tag-cat" id="dbpTagCat"></span>
                     </div>
                     <div class="dbp-desc" id="dbpTagDesc"></div>
-                    <div style="display:flex; gap:8px; margin-top:6px;">
-                        <a href="#" target="_blank" class="dbp-link" id="dbpTagLink">Open on Danbooru ↗</a>
-                        <button class="dbp-btn-translate" id="dbpTranslateBtn">🌐 Translate</button>
+                    
+                    <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+                        <button id="dbpTranslateBtn" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer;">🌐 Translate</button>
+                        <a href="#" target="_blank" id="dbpTagLink" style="color: #4db8ff; text-decoration: none; border: 1px solid #2a5a8c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block;">Open on Danbooru ↗</a>
                     </div>
                 </div>
 
@@ -213,19 +231,30 @@
         document.getElementById('dbpTagLink').href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}`;
 
         const descEl = document.getElementById('dbpTagDesc');
-        const desc = info.hasWikiInfo ? info.description : 'No wiki description available.';
-        descEl.textContent = desc;
-        descEl.dataset.original = desc;
+        descEl.innerHTML = "Loading full wiki description...";
+        descEl.dataset.original = "";
         resultBox.classList.add('open');
+
+        try {
+            const wRes = await fetch(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}.json`);
+            if (wRes.ok) {
+                const wData = await wRes.json();
+                if (wData && wData.body && wData.body.trim()) {
+                    descEl.dataset.original = wData.body;
+                    descEl.innerHTML = window.formatDanbooruDText(wData.body);
+                } else {
+                    descEl.innerHTML = "No wiki description available on Danbooru.";
+                }
+            } else {
+                 descEl.innerHTML = "Wiki not found or error loading.";
+            }
+        } catch(e) {
+            descEl.textContent = info.hasWikiInfo ? info.description : 'No wiki description available.';
+            descEl.dataset.original = info.hasWikiInfo ? info.description : '';
+        }
     }
 
-    /* ---------- AUTO-DETECÇÃO (🔍✨) ----------
-       Não depende de nenhum textarea/caixa de edição aberta. Em vez disso,
-       lista diretamente as tags que já existem no dataset carregado
-       (window.masterTagSet) — ou seja, "detecta" o que já está ali. Tags
-       que já têm descrição da wiki cacheada (❓) vêm destacadas e no topo,
-       pra você bater o olho rápido no que já se sabe; clicar em qualquer
-       chip abre a info (se já em cache) ou faz um lookup ao vivo. */
+    /* ---------- AUTO-DETECÇÃO (🔍✨) ---------- */
     function dbpRunAutoDetect() {
         const listEl = document.getElementById('dbpDetectList');
         listEl.innerHTML = '';
@@ -243,7 +272,6 @@
             return;
         }
 
-        // Tags com ❓ já conhecida primeiro, depois o resto — ambos em ordem alfabética.
         const withInfo = [];
         const withoutInfo = [];
         tags.forEach(t => {
@@ -272,7 +300,7 @@
         listEl.classList.add('open');
     }
 
-    /* ---------- MODAL 2: POPOUT DE INFO POR TAG (aberto pelo ❓) ---------- */
+    /* ---------- MODAL 2: POPOUT DE INFO UNIFICADO (aberto pelo ❓) ---------- */
     function buildTagInfoModal() {
         if (document.getElementById('modal-db-tag-info')) return;
 
@@ -287,13 +315,22 @@
                     <span id="dbiTagTitle">❓ Tag Info</span>
                     <button onclick="window.closeModal('modal-db-tag-info')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
+
+                <div id="dbiAliasHeader" style="display:none; margin-bottom:15px; padding-bottom:10px; border-bottom:1px dashed #333;">
+                    <div style="margin-bottom:8px;"><span style="color:#888; font-size:10px; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px;">Original tag (deprecated)</span><br><b style="color:#ffcc66; font-size:14px;" id="dbiAliasOriginal"></b></div>
+                    <div><span style="color:#888; font-size:10px; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px;">Redirects to</span><br><b style="color:#00ff99; font-size:14px;" id="dbiAliasTarget"></b></div>
+                    <div style="font-size:11px; color:#888; margin-top:8px; line-height:1.5;">Danbooru merged the original tag into the one above. The tag count and wiki shown below belong to the new tag.</div>
+                </div>
+
                 <div><span class="dbp-tag-cat" id="dbiTagCat"></span></div>
                 <div class="dbp-desc" id="dbiTagDesc"></div>
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <a href="#" target="_blank" class="dbp-link" id="dbiTagLink">Open on Danbooru ↗</a>
-                    <button class="dbp-btn-translate" id="dbiTranslateBtn">🌐 Translate</button>
+                
+                <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+                    <button id="dbiTranslateBtn" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer;">🌐 Translate</button>
+                    <a href="#" target="_blank" id="dbiTagLink" style="color: #4db8ff; text-decoration: none; border: 1px solid #2a5a8c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block;">Open on Danbooru ↗</a>
                 </div>
-                <div class="modal-buttons">
+
+                <div class="modal-buttons" style="margin-top: 15px;">
                     <button class="btn-cancel" onclick="window.closeModal('modal-db-tag-info')">Close</button>
                 </div>
             </div>
@@ -302,25 +339,72 @@
         document.getElementById('dbiTranslateBtn').onclick = () => translateDescNode(document.getElementById('dbiTagDesc'));
     }
 
-    window.openDanbooruTagInfoPopout = function (tagLower) {
+    // Unifica o carregamento de info para Tags Normais e Tags Alias
+    window.openDanbooruTagInfoPopout = async function (tagLower, originalAliasTag = null) {
         buildTagInfoModal();
-        const info = window.dbGetCachedTag(tagLower);
-        if (!info || !info.hasWikiInfo) return;
-
-        document.getElementById('dbiTagTitle').textContent = '❓ ' + tagLower;
-        document.getElementById('dbiTagCat').innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>`;
-
+        
+        const titleEl = document.getElementById('dbiTagTitle');
+        const aliasHeader = document.getElementById('dbiAliasHeader');
+        const origEl = document.getElementById('dbiAliasOriginal');
+        const targetEl = document.getElementById('dbiAliasTarget');
+        const catEl = document.getElementById('dbiTagCat');
         const descEl = document.getElementById('dbiTagDesc');
-        descEl.textContent = info.description || 'No description cached.';
-        descEl.dataset.original = info.description || '';
+        const linkEl = document.getElementById('dbiTagLink');
 
-        document.getElementById('dbiTagLink').href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(info.wikiName || tagLower.replace(/ /g, '_'))}`;
+        if (originalAliasTag) {
+            titleEl.innerHTML = '<span style="color: #4db8ff;">↪️ Alias Tag Info</span>';
+            origEl.textContent = originalAliasTag;
+            targetEl.textContent = tagLower;
+            aliasHeader.style.display = 'block';
+            linkEl.textContent = 'Open new tag on Danbooru ↗';
+        } else {
+            titleEl.textContent = '❓ Tag Info';
+            aliasHeader.style.display = 'none';
+            linkEl.textContent = 'Open on Danbooru ↗';
+        }
+
+        descEl.innerHTML = "Loading full wiki description...";
+        descEl.dataset.original = "";
+        catEl.innerHTML = '';
+        linkEl.href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(tagLower.replace(/ /g, '_'))}`;
+        
         window.openModal('modal-db-tag-info');
+
+        let info = window.dbGetCachedTag(tagLower);
+        if (!info || info.count === undefined) {
+             if (window.dbLookupSingleTag) {
+                 info = await window.dbLookupSingleTag(tagLower);
+             }
+        }
+
+        if (info) {
+            catEl.innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>`;
+        }
+
+        try {
+            const wRes = await fetch(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent((info && info.wikiName) ? info.wikiName : tagLower.replace(/ /g, '_'))}.json`);
+            if (wRes.ok) {
+                const wData = await wRes.json();
+                if (wData && wData.body && wData.body.trim()) {
+                    descEl.dataset.original = wData.body;
+                    descEl.innerHTML = window.formatDanbooruDText(wData.body);
+                } else {
+                    descEl.innerHTML = "No wiki description available on Danbooru.";
+                }
+            } else {
+                 descEl.innerHTML = "Wiki not found or error loading.";
+            }
+        } catch(e) {
+            if (info && info.hasWikiInfo && info.description) {
+                descEl.dataset.original = info.description;
+                descEl.innerHTML = window.formatDanbooruDText(info.description);
+            } else {
+                descEl.innerHTML = "Error loading wiki from Danbooru.";
+            }
+        }
     };
 
-    /* ---------- SCAN DO DATASET (contagem em lote + wiki tag-a-tag) ----------
-       Usada tanto pelo botão manual quanto pelo background scan automático;
-       o parâmetro `force` é o único jeito de pular o cache/TTL. */
+    /* ---------- SCAN DO DATASET (contagem em lote + wiki tag-a-tag) ---------- */
     window.runDanbooruInfoScan = async function (force = false) {
         if (!window.danbooruInfoEnabled) {
             if (window.showAlert) window.showAlert('Danbooru Tag Info is disabled in Settings.', 'warn');
@@ -376,13 +460,7 @@
         }
     };
 
-    /* ---------- BACKGROUND SCAN AUTOMÁTICO (1x por dataset carregado) ----------
-       Mesmo padrão de "detectar troca de dataset" usado em
-       tagmanager_custom_conflicts.js (hookAutoMergeLoader / _lastImageFilesRef):
-       compara a referência do array imageFiles, não o conteúdo, então
-       dispara só quando um load/refresh real troca o array inteiro — não a
-       cada render() cosmético (seleção de imagem, filtro, etc). Roda em
-       silêncio: sem alert de início/fim, só atualiza os ❓ incrementalmente. */
+    /* ---------- BACKGROUND SCAN AUTOMÁTICO (1x por dataset carregado) ---------- */
     let _dbIconRefreshTimer = null;
     function scheduleIconRefresh() {
         clearTimeout(_dbIconRefreshTimer);
@@ -407,10 +485,8 @@
         if (forceBtn) forceBtn.disabled = true;
         if (progress) { progress.style.display = 'block'; progress.textContent = 'Background scan running...'; }
 
-        // Etapa 1: contagem+categoria em lote (silenciosa, respeita cache/TTL)
         await window.dbFetchCountsBatch(tags, false);
 
-        // Etapa 2: wiki, tag por tag, atualizando os ❓ incrementalmente
         await window.dbFetchWikiBatch(
             tags,
             false,
@@ -434,8 +510,6 @@
             original.apply(this, arguments);
             if (typeof imageFiles !== 'undefined' && imageFiles !== window._dbInfoLastImageFilesRef) {
                 window._dbInfoLastImageFilesRef = imageFiles;
-                // Cancela qualquer scan de dataset anterior ainda rodando
-                // (o dataset trocou) antes de iniciar o novo scan.
                 window._dbBackgroundScanCancelled = true;
                 setTimeout(() => {
                     window._dbBackgroundScanCancelled = false;
@@ -447,20 +521,19 @@
         window.renderImageList = wrapped;
     }
 
-    /* ---------- INJEÇÃO DO ❓ NAS LINHAS DE TAG (via wrap, sem editar
-       tagmanager_caption_tag.js) ---------- */
+    /* ---------- INJEÇÃO DO ❓ NAS LINHAS DE TAG ---------- */
     function injectDbInfoIcons(container) {
         if (!container) return;
         if (!window.danbooruInfoEnabled || !window.danbooruInfoShowIcons) return;
 
         container.querySelectorAll('[data-tag-name]').forEach(row => {
             const removeBtn = row.querySelector('.tag-remove');
-            if (!removeBtn) return; // ghost rows e tags NL não têm remove aqui
+            if (!removeBtn) return; 
 
             const tagLower = row.getAttribute('data-tag-name');
             const info = window.dbGetCachedTag(tagLower);
             if (!info || !info.hasWikiInfo) return;
-            if (row.querySelector('.tag-db-info')) return; // já injetado
+            if (row.querySelector('.tag-db-info')) return;
 
             const icon = document.createElement('span');
             icon.className = 'tag-db-info';
@@ -471,16 +544,6 @@
         });
     }
 
-    /* ---------- INJEÇÃO DO ❓ NAS GHOST TAGS (💡 sugestões pendentes) ----------
-       As linhas ghost (tanto na imagem ativa quanto em "All Dataset Tags")
-       NÃO têm data-tag-name — não dá pra ler a tag direto do DOM. Em vez
-       de editar tagmanager_caption_tag.js pra adicionar o atributo,
-       recalculamos aqui a MESMA lista/ordem que o código original usa pra
-       montar essas linhas (fusedPending ordenado, ou pendingCounts
-       ordenado) e "casamos" posição a posição com as linhas reais do DOM.
-       Se a contagem não bater (algo mudou entre o cálculo e a leitura do
-       DOM), não arriscamos casar errado — simplesmente pulamos essa
-       passada; a próxima renderização tenta de novo. */
     function computeActiveGhostTags() {
         if (typeof selectedIndices === 'undefined' || typeof imageFiles === 'undefined') return [];
         let fusedTags = new Set();
@@ -520,12 +583,12 @@
         if (filterNL) tags = tags.filter(t => !t.startsWith('NL:'));
 
         const rows = container.querySelectorAll(ghostSelector);
-        if (rows.length !== tags.length) return; // estado mudou no meio — não arrisca casar errado
+        if (rows.length !== tags.length) return; 
 
         rows.forEach((row, i) => {
             const tag = tags[i];
-            if (tag.startsWith('NL:')) return; // sugestão em linguagem natural não é uma tag do Danbooru
-            if (row.querySelector('.tag-db-info')) return; // já injetado
+            if (tag.startsWith('NL:')) return; 
+            if (row.querySelector('.tag-db-info')) return; 
 
             const tagLower = tag.toLowerCase();
             const info = window.dbGetCachedTag(tagLower);
@@ -555,9 +618,6 @@
                 original.apply(this, arguments);
                 const el = document.getElementById('tag-list-vertical');
                 injectDbInfoIcons(el);
-                // Ghost tags na imagem ativa NÃO filtram NL: da renderização
-                // (o código original mostra todas, inclusive NL:), então
-                // aqui também não filtramos — só ignoramos NL: ao aplicar o ❓.
                 injectGhostDbInfoIcons(el, '.tag-row.ghost', computeActiveGhostTags, false);
             };
             wrapped.__dbInfoWrapped = true;
@@ -569,18 +629,12 @@
                 original2.apply(this, arguments);
                 const el = document.getElementById('master-tag-list');
                 injectDbInfoIcons(el);
-                // Ghost tags em "All Dataset Tags" FILTRAM NL: antes de criar
-                // a linha (o código original faz "if (tag.startsWith('NL:'))
-                // return;"), então aqui também filtramos pra ordem/contagem
-                // baterem com o DOM real.
                 injectGhostDbInfoIcons(el, '.master-tag-item.ghost', computeMasterGhostTags, true);
             };
             wrapped2.__dbInfoWrapped = true;
             window.renderMasterTagList = wrapped2;
         }
     }
-    // tagmanager_caption_tag.js já foi carregado antes deste arquivo, então
-    // isso funciona de primeira (mesmo padrão do tagmanager_pin_image.js).
     wrapRenderersForDbInfo();
 
     /* ---------- BOTÃO NO TOPBAR ---------- */
@@ -603,20 +657,11 @@
         if (btn) btn.style.display = (window.danbooruInfoEnabled && window.danbooruInfoShowButton) ? 'inline-block' : 'none';
     }
 
-    /* ---------- ENGRENAGEM: TOGGLES NOVOS NO #settings-dropdown ----------
-       Tudo que é Danbooru fica agrupado num único bloco: o toggle nativo
-       "🌐 Show Danbooru Counts" + botão de sync (que já existiam no HTML)
-       e, logo abaixo, os 3 toggles deste módulo (mestre / ícones ❓ / botão
-       do topbar) — sem <hr> entre eles, só o <hr> que já separava esse
-       bloco do e621 continua isolando o grupo inteiro do resto. */
+    /* ---------- ENGRENAGEM: TOGGLES NOVOS NO #settings-dropdown ---------- */
     function injectSettingsToggles() {
         const dropdown = document.getElementById('settings-dropdown');
         if (!dropdown || document.getElementById('toggle-db-info-master')) return;
 
-        // Âncora: o botão nativo "🔄 Sync Danbooru (Dataset)" já existente
-        // no HTML. Inserimos logo depois dele, ANTES do <hr> que já separa
-        // esse bloco do bloco do e621 — assim tudo relacionado a Danbooru
-        // fica visualmente junto, num único grupo.
         const syncBtn = dropdown.querySelector('button[onclick="window.manualDanbooruSync()"]');
         const insertPoint = syncBtn || dropdown.lastElementChild;
 
@@ -635,9 +680,6 @@
         lblButton.style.marginLeft = '15px';
         lblButton.innerHTML = `<input type="checkbox" id="toggle-db-info-button"> Show 📖 Danbooru button in topbar`;
 
-        // Insere em sequência logo após a âncora, avançando um "cursor" a
-        // cada elemento pra manter a ordem certa (subLabel, master, icons,
-        // button) em vez de tudo grudado no mesmo ponto.
         let cursor = (insertPoint && insertPoint.parentNode === dropdown) ? insertPoint : null;
         [subLabel, lblMaster, lblIcons, lblButton].forEach(el => {
             if (cursor) {
@@ -666,7 +708,6 @@
             updateTopbarButtonVisibility();
             refreshTagRenders();
 
-            // Ligou agora? Dispara um background scan imediato pro dataset atual.
             if (window.danbooruInfoEnabled) window.runDanbooruBackgroundScan();
         };
 
@@ -676,9 +717,6 @@
             refreshTagRenders();
         };
 
-        // Só oculta/mostra o botão 📖 Danbooru do topbar (e o acesso ao
-        // popout/scan manual). Não afeta o background scan nem os ❓ nas
-        // tags — quem controla isso é o toggle mestre acima.
         cbButton.onchange = async (e) => {
             window.danbooruInfoShowButton = e.target.checked;
             await window.saveSetting('danbooru-info-show-button', window.danbooruInfoShowButton);
