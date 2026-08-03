@@ -139,6 +139,7 @@ async function dbFetchSingleTagInfo(tagName, force = false) {
                     count: parseInt(data[0].post_count) || 0,
                     category: data[0].category,
                     wikiName: data[0].name,
+                    isDeprecated: !!data[0].is_deprecated,
                     ts: now
                 };
                 return window.danbooruCache[key];
@@ -189,6 +190,7 @@ window.dbFetchCountsBatch = function (tags, force = false) {
                             count: parseInt(dt.post_count) || 0,
                             category: dt.category,
                             wikiName: dt.name,
+                            isDeprecated: !!dt.is_deprecated,
                             ts: now
                         };
                     });
@@ -231,6 +233,7 @@ window.dbFetchCountsBatch = function (tags, force = false) {
                     count: (consequentInfo && consequentInfo.count) || 0,
                     category: (consequentInfo && consequentInfo.category) || 0,
                     aliasTo, aliasChecked: true, aliasTs: now,
+                    isDeprecated: true,
                     ts: now
                 };
                 await new Promise(r => setTimeout(r, 400));
@@ -324,6 +327,7 @@ window.dbLookupSingleTag = async function (rawTag) {
                     count: parseInt(data[0].post_count) || 0,
                     category: data[0].category,
                     wikiName: data[0].name,
+                    isDeprecated: !!data[0].is_deprecated,
                     ts: now
                 };
             } else {
@@ -337,6 +341,7 @@ window.dbLookupSingleTag = async function (rawTag) {
                         category: (consequentInfo && consequentInfo.category) || 0,
                         wikiName: (consequentInfo && consequentInfo.wikiName) || aliasTo.replace(/ /g, '_'),
                         aliasTo, aliasChecked: true, aliasTs: now,
+                        isDeprecated: true,
                         ts: now
                     };
                 } else {
@@ -430,11 +435,11 @@ window.dbSearchTagMatches = async function (query, limit = 6) {
             const consequentInfo = await dbFetchSingleTagInfo(aliasToSpaced);
             const realCount = (consequentInfo && consequentInfo.count) || 0;
             const realCategory = (consequentInfo && consequentInfo.category) || 0;
-            window.danbooruCache[key] = { ...(window.danbooruCache[key] || {}), count: realCount, category: realCategory, aliasTo: aliasToSpaced, aliasChecked: true, aliasTs: now, ts: now };
-            results.push({ name: key, post_count: realCount, category: realCategory, isAlias: true, aliasTo: aliasToSpaced });
+            window.danbooruCache[key] = { ...(window.danbooruCache[key] || {}), count: realCount, category: realCategory, aliasTo: aliasToSpaced, aliasChecked: true, aliasTs: now, isDeprecated: true, ts: now };
+            results.push({ name: key, post_count: realCount, category: realCategory, isAlias: true, aliasTo: aliasToSpaced, isDeprecated: true });
         } else {
-            window.danbooruCache[key] = { ...(window.danbooruCache[key] || {}), count: parseInt(t.post_count) || 0, category: t.category, wikiName: t.name, aliasTo: null, aliasChecked: true, aliasTs: now, ts: now };
-            results.push({ name: key, post_count: parseInt(t.post_count) || 0, category: t.category, isAlias: false });
+            window.danbooruCache[key] = { ...(window.danbooruCache[key] || {}), count: parseInt(t.post_count) || 0, category: t.category, wikiName: t.name, aliasTo: null, aliasChecked: true, aliasTs: now, isDeprecated: !!t.is_deprecated, ts: now };
+            results.push({ name: key, post_count: parseInt(t.post_count) || 0, category: t.category, isAlias: false, isDeprecated: !!t.is_deprecated });
         }
     }
 
@@ -447,13 +452,31 @@ window.dbSearchTagMatches = async function (query, limit = 6) {
         const realCount = (consequentInfo && consequentInfo.count) || 0;
         const realCategory = (consequentInfo && consequentInfo.category) || 0;
         const key = antecedent.replace(/_/g, ' ').toLowerCase();
-        window.danbooruCache[key] = { ...(window.danbooruCache[key] || {}), count: realCount, category: realCategory, aliasTo: consequentSpaced, aliasChecked: true, aliasTs: now, ts: now };
-        results.push({ name: key, post_count: realCount, category: realCategory, isAlias: true, aliasTo: consequentSpaced });
+        window.danbooruCache[key] = { ...(window.danbooruCache[key] || {}), count: realCount, category: realCategory, aliasTo: consequentSpaced, aliasChecked: true, aliasTs: now, isDeprecated: true, ts: now };
+        results.push({ name: key, post_count: realCount, category: realCategory, isAlias: true, aliasTo: consequentSpaced, isDeprecated: true });
     }
 
-    results.sort((a, b) => b.post_count - a.post_count);
-    if (results.length > 0) dbScheduleAutocompleteSave();
-    return results.slice(0, limit);
+    // DEDUPLICAÇÃO: uma mesma tag pode ter entrado duas vezes na lista —
+    // uma vez como registro "cru" dela mesma (geralmente com 0 posts, por
+    // ser uma tag depreciada) e outra vez já resolvida como alias (com a
+    // seta ➜ apontando pra tag consequente/real). Isso fazia a mesma tag
+    // aparecer duplicada no autocomplete. Aqui agrupamos por nome (o termo
+    // que o usuário efetivamente digitou/bateu na busca) e, havendo
+    // duplicata, mantemos SÓ a versão com isAlias:true (a que mostra a
+    // seta ➜ e a contagem real), descartando a entrada solta/zerada.
+    const dedupedByName = new Map();
+    for (const r of results) {
+        const key = r.name.toLowerCase();
+        const existing = dedupedByName.get(key);
+        if (!existing || (r.isAlias && !existing.isAlias)) {
+            dedupedByName.set(key, r);
+        }
+    }
+    const dedupedResults = Array.from(dedupedByName.values());
+
+    dedupedResults.sort((a, b) => b.post_count - a.post_count);
+    if (dedupedResults.length > 0) dbScheduleAutocompleteSave();
+    return dedupedResults.slice(0, limit);
 };
 
 window.addEventListener('DOMContentLoaded', async () => {

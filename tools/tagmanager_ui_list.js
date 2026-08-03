@@ -56,14 +56,42 @@ window.renderImageList = function() {
         
         div.className = `list-item ${img.hasFile ? (img.type === 'nl' ? 'is-nl' : 'has-data') : ''}`;
         div.innerHTML = `
-            <img src="${img.url}">
+            <div class="list-item-thumb-wrap">
+                <img src="${img.url}">
+                <button class="list-item-zoom-btn" title="Zoom / view full size">🔍</button>
+            </div>
             <div class="list-item-info">
                 <div class="list-item-name">${img.name}</div>
-                <div class="list-item-status">${typeBadge}${suggestBadge}</div>
+                <div class="list-item-status">${typeBadge}${suggestBadge}<span class="list-item-resolution"></span></div>
             </div>
         `;
         div.onclick = (e) => window.handleListClick(index, e.shiftKey, e.ctrlKey || e.metaKey);
-        div.ondblclick = () => { document.getElementById('image-popout').src = img.url; window.openModal('modal-image'); };
+        // Zoom agora é exclusivo do ícone 🔍 (abaixo) — duplo-clique na linha
+        // não abre mais o modal, pra não conflitar com seleção/drag da imagem.
+
+        // RESOLUÇÃO: reaproveita o próprio evento de carregamento da miniatura
+        // já exibida na lista, sem precisar baixar/decodificar a imagem de novo
+        // só pra descobrir o tamanho real (naturalWidth/naturalHeight = pixels
+        // reais do arquivo, independente do tamanho exibido via --thumb-size).
+        const thumbImgEl = div.querySelector('.list-item-thumb-wrap img');
+        const resEl = div.querySelector('.list-item-resolution');
+        if (thumbImgEl && resEl) {
+            const paintRes = () => { resEl.textContent = ` · ${thumbImgEl.naturalWidth}×${thumbImgEl.naturalHeight}`; };
+            if (thumbImgEl.complete && thumbImgEl.naturalWidth) paintRes();
+            else thumbImgEl.onload = paintRes;
+        }
+
+        // LUPA 🔍: abre o mesmo modal de zoom do double-click, sem precisar
+        // dar duplo-clique — e sem disparar a seleção da linha (stopPropagation).
+        const zoomBtn = div.querySelector('.list-item-zoom-btn');
+        if (zoomBtn) {
+            zoomBtn.onclick = (e) => {
+                e.stopPropagation();
+                document.getElementById('image-popout').src = img.url;
+                window.openModal('modal-image');
+            };
+        }
+
         img.element = div; listDiv.appendChild(div);
     });
     
@@ -77,12 +105,46 @@ window.filterImagesByName = function(val) {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 };
 
+/* ---------------------------------------------------------------------
+   BUG FIX: seleção azul "grudando" na imagem errada até dar F5
+   ---------------------------------------------------------------------
+   O recurso de Custom Highlights (cor de seleção configurável, ver
+   applyImageListSelectionOverride em tagmanager_custom_conflicts.js)
+   aplica a cor via estilo INLINE com !important — isso é necessário pra
+   sobrepor a cor customizada em cima do CSS padrão da classe ".selected".
+   O problema: aquele override só rodava depois de um RENDER COMPLETO da
+   lista (renderImageList). Um clique rápido pra selecionar/desselecionar
+   uma imagem passa só por AQUI (updateListSelectionVisuals), sem recriar
+   os elementos — então a classe ".selected" era removida corretamente,
+   mas o estilo inline (!important, independente da classe) continuava
+   "grudado" na imagem antiga, dando a impressão de que o azul estava na
+   imagem errada.
+   Agora este é o ÚNICO lugar que decide a aparência da seleção — tanto o
+   clique rápido quanto o render completo passam por aqui, então nunca
+   mais fica dessincronizado. Ele já limpa (removeProperty) o que não
+   está mais selecionado, e aplica a cor customizada (se o módulo de
+   Highlights estiver carregado) no que está selecionado agora.
+--------------------------------------------------------------------- */
 window.updateListSelectionVisuals = function() {
     imageFiles.forEach((img, i) => {
-        if (selectedIndices.has(i)) {
-            if (img.element) img.element.classList.add('selected'); 
+        if (!img.element) return;
+        const isSelected = selectedIndices.has(i);
+        img.element.classList.toggle('selected', isSelected);
+
+        if (isSelected) {
+            const selColor = (window._builtinHighlightColors && window._builtinHighlightColors.selection) || null;
+            if (selColor) {
+                let h = selColor.replace('#', '');
+                if (h.length === 3) h = h.split('').map(c => c + c).join('');
+                const r = parseInt(h.substring(0, 2), 16) || 0;
+                const g = parseInt(h.substring(2, 4), 16) || 0;
+                const b = parseInt(h.substring(4, 6), 16) || 0;
+                img.element.style.setProperty('background-color', `rgba(${r}, ${g}, ${b}, 0.32)`, 'important');
+                img.element.style.setProperty('border-left-color', selColor, 'important');
+            }
         } else {
-            if (img.element) img.element.classList.remove('selected');
+            img.element.style.removeProperty('background-color');
+            img.element.style.removeProperty('border-left-color');
         }
     });
     const listActions = document.getElementById('list-selection-actions');
@@ -204,6 +266,16 @@ window.unhideAllImages = function() {
     });
     window.hiddenImagesStore.clear(); 
     if (changed) {
+        // BUG FIX: no Modo Compacto (🗂️), cada grupo guarda se está
+        // colapsado em window._compactCollapsedGroups — isso nunca era
+        // limpo. Se um grupo ficou colapsado (ex: durante o Focus Mode,
+        // sobrando só 1 grupo visível), as imagens reveladas pelo Unhide
+        // voltavam pro DOM normalmente, mas continuavam com
+        // display:none por causa do CSS do grupo colapsado — parecia
+        // que "não voltaram", mas estavam lá dentro, só escondidas.
+        if (window._compactCollapsedGroups && typeof window._compactCollapsedGroups.clear === 'function') {
+            window._compactCollapsedGroups.clear();
+        }
         window.updateUnhideButton();
         window.renderImageList();
         if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
@@ -255,6 +327,37 @@ window.openRenameModal = function() {
     document.getElementById('rename-input').focus();
 }
 
+/* ---------------------------------------------------------------------
+   RENAME SEGURO (v2 — com pasta de staging "_rename_cache")
+   ---------------------------------------------------------------------
+   BUG CORRIGIDO: a versão antiga escrevia direto no nome de destino
+   (getFileHandle(newName, {create:true}) + createWritable()) sem checar
+   se esse nome já existia no disco por outro motivo (ex: colisão com uma
+   imagem que NÃO fazia parte da seleção). createWritable() TRUNCA e
+   sobrescreve o arquivo existente silenciosamente — se houvesse colisão,
+   o arquivo antigo virava lixo sem nenhum aviso e sem cópia de segurança
+   em lugar nenhum. Foi assim que fotos sumiram.
+
+   Agora o processo tem 2 fases:
+   1) CHECAGEM DE COLISÃO: antes de tocar em qualquer arquivo, comparamos
+      todos os nomes de destino planejados contra o conteúdo real da(s)
+      pasta(s) de origem. Se algum nome de destino já existir no disco E
+      não for um dos arquivos que estamos renomeando, avisamos o usuário
+      com detalhes e pedimos confirmação explícita antes de continuar
+      (podendo cancelar sem nada ter sido tocado ainda).
+   2) STAGING: para cada arquivo, a imagem (e a legenda, se houver) são
+      primeiro COPIADAS para uma subpasta "_rename_cache" dentro da MESMA
+      pasta de origem. Só depois disso o novo nome é escrito, e só então
+      o arquivo antigo é removido da pasta principal. Se qualquer coisa
+      falhar no meio do caminho, a cópia de segurança continua intacta
+      dentro de "_rename_cache" — nada é perdido. Ao final de um rename
+      bem-sucedido, a cópia de staging daquele arquivo é apagada (ela já
+      cumpriu seu papel de rede de segurança).
+
+   "_rename_cache" é ignorada pelo scanner de subpastas (mesmo tratamento
+   já dado a "_trash" e "_archive" em tagmanager_ui_core.js), então não
+   aparece na lista de subpastas do dataset.
+--------------------------------------------------------------------- */
 window.confirmRename = async function() {
     if(selectedIndices.size === 0) return;
     const newBaseName = document.getElementById('rename-input').value.trim();
@@ -263,55 +366,140 @@ window.confirmRename = async function() {
     document.getElementById('rename-dropdown').classList.remove('open');
     const indices = Array.from(selectedIndices).sort((a,b) => a - b);
     const isMulti = indices.length > 1;
-    let count = 1; let renamedCount = 0;
 
-    for (let idx of indices) {
-        const img = imageFiles[idx];
-        const oldName = img.name;
-        const oldExt = oldName.split('.').pop();
-        
-        // Zero-padding para o Rename: garante _001, _002, etc.
-        const paddedCount = String(count).padStart(3, '0');
-        const finalBaseName = isMulti ? `${newBaseName}_${paddedCount}` : newBaseName;
-        const newName = `${finalBaseName}.${oldExt}`;
-
-        if (oldName === newName) { count++; continue; }
-
-        try {
-            const oldImgHandle = await img.parentDirHandle.getFileHandle(oldName);
-            const oldImgFile = await oldImgHandle.getFile();
-            const newImgHandle = await img.parentDirHandle.getFileHandle(newName, {create: true});
-            const writableImg = await newImgHandle.createWritable();
-            await writableImg.write(await oldImgFile.arrayBuffer());
-            await writableImg.close();
-            await img.parentDirHandle.removeEntry(oldName);
-
+    // ---------- FASE 0: planeja todos os nomes de destino primeiro ----------
+    const plans = [];
+    {
+        let count = 1;
+        for (let idx of indices) {
+            const img = imageFiles[idx];
+            const oldExt = img.name.split('.').pop();
+            const paddedCount = String(count).padStart(3, '0');
+            const finalBaseName = isMulti ? `${newBaseName}_${paddedCount}` : newBaseName;
+            const newImgName = `${finalBaseName}.${oldExt}`;
             const textFormat = img.ext || 'txt';
             const oldTextName = `${img.baseName}.${textFormat}`;
             const newTextName = `${finalBaseName}.${textFormat}`;
-            
+            plans.push({ idx, img, oldName: img.name, newImgName, oldTextName, newTextName, finalBaseName });
+            count++;
+        }
+    }
+
+    // ---------- FASE 1: checagem de colisão contra arquivos FORA da seleção ----------
+    const oldNamesInBatch = new Set();
+    plans.forEach(p => { oldNamesInBatch.add(p.oldName); oldNamesInBatch.add(p.oldTextName); });
+
+    const dirListingCache = new Map(); // parentDirHandle -> Set(nomes existentes)
+    async function listExistingNames(dirHandle) {
+        if (dirListingCache.has(dirHandle)) return dirListingCache.get(dirHandle);
+        const names = new Set();
+        try { for await (const entry of dirHandle.values()) names.add(entry.name); } catch(e) {}
+        dirListingCache.set(dirHandle, names);
+        return names;
+    }
+
+    const collisions = [];
+    for (const p of plans) {
+        if (p.oldName === p.newImgName && p.oldTextName === p.newTextName) continue; // nada muda, sem risco
+        const existing = await listExistingNames(p.img.parentDirHandle);
+        if (p.newImgName !== p.oldName && existing.has(p.newImgName) && !oldNamesInBatch.has(p.newImgName)) {
+            collisions.push(p.newImgName);
+        }
+        if (p.img.hasFile && p.newTextName !== p.oldTextName && existing.has(p.newTextName) && !oldNamesInBatch.has(p.newTextName)) {
+            collisions.push(p.newTextName);
+        }
+    }
+
+    if (collisions.length > 0) {
+        const preview = [...new Set(collisions)].slice(0, 5).join(', ');
+        const more = collisions.length > 5 ? ` (+${collisions.length - 5} more)` : '';
+        if (!confirm(`⚠️ WARNING: ${collisions.length} target filename(s) already exist in this folder and are NOT part of the images you're renaming:\n${preview}${more}\n\nContinuing would OVERWRITE and PERMANENTLY LOSE the content of those existing files.\n\nClick Cancel to pick a different name/prefix instead. Continue anyway and overwrite them?`)) {
+            return;
+        }
+    }
+
+    // ---------- FASE 2: staging + rename com rede de segurança ----------
+    let renamedCount = 0;
+    const cacheDirByParent = new Map();
+    async function getCacheDir(parentDirHandle) {
+        if (cacheDirByParent.has(parentDirHandle)) return cacheDirByParent.get(parentDirHandle);
+        const cacheDir = await parentDirHandle.getDirectoryHandle('_rename_cache', { create: true });
+        cacheDirByParent.set(parentDirHandle, cacheDir);
+        return cacheDir;
+    }
+
+    for (const p of plans) {
+        const { img, oldName, newImgName, oldTextName, newTextName, finalBaseName } = p;
+        if (oldName === newImgName && oldTextName === newTextName) continue;
+
+        let cacheDir = null;
+        let stagedImgName = null;
+        let stagedTextName = null;
+
+        try {
+            cacheDir = await getCacheDir(img.parentDirHandle);
+
+            // 2a. Copia o original (imagem) para o staging ANTES de mexer em qualquer coisa
+            const oldImgHandle = await img.parentDirHandle.getFileHandle(oldName);
+            const oldImgFile = await oldImgHandle.getFile();
+            const stagedImgHandle = await cacheDir.getFileHandle(oldName, { create: true });
+            const stagedImgWritable = await stagedImgHandle.createWritable();
+            await stagedImgWritable.write(await oldImgFile.arrayBuffer());
+            await stagedImgWritable.close();
+            stagedImgName = oldName;
+
+            const textFormat = img.ext || 'txt';
+
+            // 2b. Copia a legenda original (se existir no disco) para o staging também
             if (img.hasFile) {
                 try {
-                    // Escreve o conteúdo ATUAL em memória (img.content), não o que
-                    // está salvo no disco — assim edições de tags ainda não salvas
-                    // (img.dirty) não se perdem no rename.
-                    const contentToWrite = textFormat === 'json'
-                        ? JSON.stringify({ tags: img.content }, null, 2)
-                        : img.content;
-                    const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, {create: true});
-                    const writableText = await newTextHandle.createWritable();
-                    await writableText.write(contentToWrite);
-                    await writableText.close();
-                    if (oldTextName !== newTextName) {
-                        try { await img.parentDirHandle.removeEntry(oldTextName); } catch(e) {}
-                    }
-                    if (typeof window.markClean === 'function') window.markClean(img);
-                } catch(e) {}
+                    const oldTextHandle = await img.parentDirHandle.getFileHandle(oldTextName);
+                    const oldTextFile = await oldTextHandle.getFile();
+                    const stagedTextHandle = await cacheDir.getFileHandle(oldTextName, { create: true });
+                    const stagedTextWritable = await stagedTextHandle.createWritable();
+                    await stagedTextWritable.write(await oldTextFile.arrayBuffer());
+                    await stagedTextWritable.close();
+                    stagedTextName = oldTextName;
+                } catch(e) { /* legenda pode não existir ainda no disco — tudo bem */ }
             }
+
+            // 2c. Só AGORA escreve a imagem com o novo nome, lendo da cópia staged
+            //     (garante que já temos uma cópia segura antes de sobrescrever nada)
+            const stagedImgFile = await (await cacheDir.getFileHandle(oldName)).getFile();
+            const newImgHandle = await img.parentDirHandle.getFileHandle(newImgName, { create: true });
+            const writableImg = await newImgHandle.createWritable();
+            await writableImg.write(await stagedImgFile.arrayBuffer());
+            await writableImg.close();
+
+            // 2d. Escreve a legenda com o novo nome, usando o conteúdo ATUAL em
+            //     memória (img.content) — não o que está salvo no disco — assim
+            //     edições de tags ainda não salvas (img.dirty) não se perdem.
+            if (img.hasFile) {
+                const contentToWrite = textFormat === 'json'
+                    ? JSON.stringify({ tags: img.content }, null, 2)
+                    : img.content;
+                const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, { create: true });
+                const writableText = await newTextHandle.createWritable();
+                await writableText.write(contentToWrite);
+                await writableText.close();
+                if (typeof window.markClean === 'function') window.markClean(img);
+            }
+
+            // 2e. Novos arquivos confirmados no disco — agora sim remove os antigos
+            if (oldName !== newImgName) {
+                try { await img.parentDirHandle.removeEntry(oldName); } catch(e) {}
+            }
+            if (stagedTextName && oldTextName !== newTextName) {
+                try { await img.parentDirHandle.removeEntry(oldTextName); } catch(e) {}
+            }
+
+            // 2f. Rename concluído com sucesso — limpa a cópia de staging deste arquivo
+            try { await cacheDir.removeEntry(stagedImgName); } catch(e) {}
+            if (stagedTextName) { try { await cacheDir.removeEntry(stagedTextName); } catch(e) {} }
 
             if (datasetConfig[img.baseName]) {
                 datasetConfig[finalBaseName] = datasetConfig[img.baseName];
-                delete datasetConfig[img.baseName];
+                if (img.baseName !== finalBaseName) delete datasetConfig[img.baseName];
             }
             // Renomear é uma forma manual de reorganizar a lista (ex: _001, _002...).
             // Se a imagem já tinha uma posição manual salva pelo Reorder Mode (drag),
@@ -323,20 +511,24 @@ window.confirmRename = async function() {
             }
             if (pendingTagsStore[img.baseName]) {
                 pendingTagsStore[finalBaseName] = pendingTagsStore[img.baseName];
-                delete pendingTagsStore[img.baseName];
+                if (img.baseName !== finalBaseName) delete pendingTagsStore[img.baseName];
             }
             if (window.hiddenImagesStore.has(img.baseName)) {
                 window.hiddenImagesStore.delete(img.baseName);
                 window.hiddenImagesStore.add(finalBaseName);
             }
-            img.name = newName; img.baseName = finalBaseName;
+            img.name = newImgName; img.baseName = finalBaseName;
             renamedCount++;
-        } catch(e) { console.error("Rename Error:", e); }
-        count++;
+        } catch(e) {
+            console.error("Rename Error:", e);
+            // Se algo deu errado, a cópia original (se já chegou a ser copiada) continua
+            // segura dentro de "_rename_cache" — nada foi perdido, só não foi renomeado.
+            if (window.showAlert) window.showAlert(`⚠️ Could not rename "${oldName}" — the original is safely kept in the "_rename_cache" folder, nothing was lost.`, 'error');
+        }
     }
 
     if(renamedCount > 0) {
-        window.markDatasetEdited();
+        await window.markDatasetEdited();
         if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(window.currentImagesHandle);
         window.showAlert(`Renamed ${renamedCount} files!`, "success");
         if (typeof window.refreshDataset === 'function') await window.refreshDataset(); 
@@ -415,7 +607,7 @@ window.confirmClone = async function() {
 
     if (clonedCount > 0) {
         if (typeof window.saveDatasetConfig === 'function') await window.saveDatasetConfig(window.currentImagesHandle || window.rootHandle);
-        window.markDatasetEdited();
+        await window.markDatasetEdited();
         window.showAlert(`Cloned ${clonedCount} file(s)!`, "success");
         if (typeof window.refreshDataset === 'function') await window.refreshDataset();
     }

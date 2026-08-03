@@ -97,6 +97,15 @@
         .list-item:hover { background: #222; }
         .list-item.selected { background: #0a3a5c; border-left: 3px solid #4db8ff; padding-left: 9px; }
         .list-item img { width: var(--thumb-size); height: auto; display: block; border-radius: 4px; pointer-events: none; border: 1px solid #333;}
+        .list-item-thumb-wrap { position: relative; flex-shrink: 0; line-height: 0; }
+        .list-item-thumb-wrap .list-item-zoom-btn {
+            position: absolute; bottom: 3px; right: 3px; z-index: 2;
+            background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.15); color: #fff;
+            font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 5px;
+            cursor: zoom-in; opacity: 0.8; transition: 0.15s;
+        }
+        .list-item-thumb-wrap .list-item-zoom-btn:hover { background: #00aa66; opacity: 1; transform: scale(1.12); }
+        .list-item-resolution { color: #666; }
         .list-item-info { flex: 1; overflow: hidden; pointer-events: none; }
         .list-item-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .list-item-status { font-size: 10px; color: #888; margin-top: 4px; }
@@ -201,6 +210,9 @@
         <select id="sub-dir-2" class="folder-select" onchange="window.loadSubDir2()" style="display:none;" title="Inner Folders">
             <option value="">-- Current Folder --</option>
         </select>
+        <select id="sub-dir-3" class="folder-select" onchange="window.loadSubDir3()" style="display:none;" title="Deeper Folders">
+            <option value="">-- Current Folder --</option>
+        </select>
         
         <button id="btn-refresh" onclick="window.refreshDataset()" style="display:none; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c;" title="Refresh Folder">🔄</button>
         <button id="btn-remove" onclick="window.removeDirectory()" style="display:none; background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c;" title="Remove from saved list">Remove</button>
@@ -270,6 +282,12 @@
     <label><input type="checkbox" id="toggle-e621" onchange="window.toggleE621()"> Enable e621 (Furry) Suggestions</label>
     <label style="margin-left: 15px;"><input type="checkbox" id="toggle-e621-sfw" onchange="window.toggleE621Sfw()"> 🛡️ Force Safe-for-Work (e926)</label>
     
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+
+    <div class="settings-group-label">🔧 Duplicate Filenames</div>
+    <label title="If two images share the same name with only the extension different (e.g. cat.png + cat.jpg), automatically rename the extra one(s) so captions don't get mixed up between them. Uses a safe staging folder ('_rename_cache') — nothing is ever overwritten without a backup copy first."><input type="checkbox" id="toggle-dup-name-fixer" onchange="window.toggleDupNameFixer()"> Auto-Fix Duplicate Base Names</label>
+    <button onclick="window.runDupNameFixer(true)" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; font-size: 11px; width: 100%; margin-top: 5px;" title="Manually scans the current dataset for duplicate base names and fixes them right now.">🔍 Scan &amp; Fix Now</button>
+
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
     <div class="settings-group-label">💾 Backup</div>
@@ -405,6 +423,7 @@
             </div>
 
             <div id="preset-selection-actions" class="selection-actions">
+                <select id="preset-add-pos" class="pos-select" title="Position when adding these tags"><option value="bottom">Bot</option><option value="top">Top</option></select>
                 <button class="btn-multi btn-add-all" onclick="addSelectedPresetTagsTo('selected')">➕ Add</button>
                 <button class="btn-multi btn-add-all" onclick="addSelectedPresetTagsTo('all')">➕ Add to All</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedPresetTags()">🗑️ Remove</button>
@@ -485,6 +504,11 @@
                     <option value="wasm">🐌 CPU (WASM Local)</option>
                 </select>
             </div>
+        </div>
+
+        <div id="recursive-mode-box" style="display:flex; align-items:center; gap:10px; background:#0d1f2a; border:1px solid #144a63; padding:10px 12px; border-radius:8px; margin-bottom: 20px;">
+            <input type="checkbox" id="recursive-mode-toggle" onchange="window.updateRecursiveModeUI && window.updateRecursiveModeUI()" style="width:auto; margin:0;">
+            <label for="recursive-mode-toggle" style="font-size:12px; color:#66ccff; font-weight:bold; cursor:pointer; user-select:none;">📁🔁 Recursive Mode — process images inside ALL subfolders too (e.g. a franchise folder with one subfolder per character). Ignores the folder dropdowns above and scans everything under the currently loaded root.</label>
         </div>
 
         <div id="batch-tag-settings">
@@ -585,6 +609,7 @@
         <h3>❓ Help & Instructions</h3>
         <div style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 65vh; overflow-y: auto;">
             <h4 style="color: #00ff99; margin-top: 0; margin-bottom: 5px;">Auto Caption / Batch Tagger (ONNX)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px; background:#0d1f2a; border:1px solid #144a63; padding: 8px 10px; border-radius: 6px;"><b>📁🔁 Recursive Mode:</b> enable the checkbox above the settings to caption a whole franchise folder in one go — it scans every subfolder (one per character, for example) starting from the folder you currently have loaded, instead of just the folder/subfolder shown in the dropdowns. Each image is tagged and saved right next to itself, inside its own character subfolder. Note: Review Mode (ghost suggestions) is not available together with Recursive Mode — tags are written directly to disk in this mode.</p>
             <p style="margin-top: 0; margin-bottom: 10px;">To use the Auto Captioner via ONNX WebGPU, you need to download the model files locally:</p>
             <ol style="padding-left: 20px; margin-bottom: 15px;">
                 <li style="margin-bottom: 8px;">
@@ -629,16 +654,24 @@
 <script src="tools/tagmanager_db.js"></script>
 <script src="tools/tagmanager_danbooru_core.js"></script>
 <script src="tools/tagmanager_batch_tagger.js"></script>
-<script src="tools/tagmanager_caption_tag.js"></script>    
+<script src="tools/tagmanager_caption_tag.js"></script>
+<script src="tools/tagmanager_danbooru_autocomplete.js"></script>
+<script src="tools/tagmanager_danbooru_alias.js"></script>
+<script src="tools/tagmanager_nl_inline_editor.js"></script>
+<script src="tools/tagmanager_active_editor.js"></script>
+<script src="tools/tagmanager_master_list.js"></script>
 <script src="tools/tagmanager_ui_presets.js"></script>
 <script src="tools/tagmanager_ui_list.js"></script>
 <script src="tools/tagmanager_ui_core.js"></script>
+<script src="tools/tagmanager_render_hooks.js"></script>
+<script src="tools/tagmanager_auto_task_queue.js"></script>
 <script src="tools/tagmanager_pin_image.js"></script>
 <script src="tools/tagmanager_compact_view.js"></script>
 <script src="tools/tagmanager_custom_conflicts.js"></script>
 <script src="tools/tagmanager_trash.js"></script>
 <script src="tools/tagmanager_archive.js"></script>
 <script src="tools/tagmanager_danbooru_panel.js"></script>
+<script src="tools/tagmanager_dup_name_fixer.js"></script>
 
 </body>
 </html>

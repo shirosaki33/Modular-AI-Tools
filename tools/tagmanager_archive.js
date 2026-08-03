@@ -19,6 +19,14 @@
      dentro de "_archive" são idênticos aos nomes originais, então dá pra
      reusar moveToGlobalTrash() passando a "_archive" como se fosse a
      "pasta atual" da imagem.
+
+   ---------------------------------------------------------------------
+   FIX (isolamento de tamanho de miniatura): o slider de miniaturas deste
+   painel usava a MESMA variável CSS global "--thumb-size" do painel
+   principal (Dataset) e do Trash — mexer no slider aqui redimensionava
+   as miniaturas em TODOS os painéis. Agora este painel tem sua PRÓPRIA
+   variável ("--thumb-size-archive") e sua PRÓPRIA preferência salva
+   ("archive-thumb-size"), totalmente independente do Dataset e do Trash.
 ========================================================================= */
 
 (function () {
@@ -200,7 +208,7 @@
         }
 
         if (archivedCount > 0) {
-            window.markDatasetEdited();
+            await window.markDatasetEdited();
             if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
             if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (kept in this same dataset folder).`, 'success');
             if (typeof window.refreshDataset === 'function') await window.refreshDataset();
@@ -285,6 +293,19 @@
         }
     };
 
+    /* ---------- TAMANHO DE MINIATURA — ISOLADO DO DATASET E DO TRASH ----------
+       Antes: o slider deste painel chamava window.updateThumbSize(), que
+       escreve na variável CSS GLOBAL "--thumb-size" — a MESMA usada pelo
+       painel principal (Dataset) e pelo Trash. Resultado: mexer aqui
+       redimensionava as miniaturas em todo lugar.
+       Agora: variável própria ("--thumb-size-archive") + preferência salva
+       própria ("archive-thumb-size"), sem nenhuma dependência do slider
+       do Dataset ou do Trash. */
+    window.updateArchiveThumbSize = function (val, skipSave = false) {
+        document.documentElement.style.setProperty('--thumb-size-archive', val + 'px');
+        if (!skipSave && typeof window.saveSetting === 'function') window.saveSetting('archive-thumb-size', val);
+    };
+
     /* ---------- UI ---------- */
     const style = document.createElement('style');
     style.innerHTML = `
@@ -295,7 +316,7 @@
         #modal-archive .tool-modal { width: 600px; max-height: 84vh; }
         #archive-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; max-height: 55vh; }
         .archive-item { display: flex; align-items: center; gap: 10px; background: #151515; border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; }
-        .archive-item img { width: var(--thumb-size); height: auto; object-fit: cover; border-radius: 4px; border: 1px solid #333; flex-shrink: 0; cursor: zoom-in; }
+        .archive-item img { width: var(--thumb-size-archive); height: auto; object-fit: cover; border-radius: 4px; border: 1px solid #333; flex-shrink: 0; cursor: zoom-in; }
         .archive-item-name { flex: 1; font-size: 11px; color: #ddd; word-break: break-all; }
         .archive-item button { font-size: 11px; padding: 6px 10px; flex-shrink: 0; }
         .btn-archive-restore { background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; }
@@ -305,8 +326,43 @@
         #archive-thumb-bar { display:flex; align-items:center; gap:10px; padding: 8px 0 2px; border-top: 1px solid #222; margin-top: 6px; flex-shrink: 0; }
 
         .list-archive-btn { background:#151515; border-color:#555; color:#aaa; }
+
+        /* Zoom PRÓPRIO do Archive (não reaproveita o #modal-image/#image-popout
+           compartilhado pelo resto do app). Antes disso, dar dois-cliques numa
+           miniatura do Archive abria o modal global de zoom, mas como o overlay
+           do Archive é injetado no DOM DEPOIS dele, o zoom acabava renderizando
+           ATRÁS do painel do Archive (mesmo z-index, ordem no DOM decide quem
+           fica por cima) — parecia que o zoom "sumia". Um z-index dedicado e
+           mais alto resolve isso de vez, sem depender de ordem de inserção. */
+        #modal-archive-zoom { z-index: 150; }
+        #archive-zoom-wrapper { max-width: 90%; max-height: 90%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        #archive-zoom-img { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); user-select: none; -webkit-user-drag: none; }
     `;
     document.head.appendChild(style);
+
+    /* ---------- ZOOM PRÓPRIO (isolado do #modal-image compartilhado) ---------- */
+    function buildArchiveZoomModal() {
+        if (document.getElementById('modal-archive-zoom')) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'modal-archive-zoom';
+        overlay.className = 'modal-overlay';
+        overlay.onclick = () => overlay.classList.remove('active');
+
+        overlay.innerHTML = `
+            <div id="archive-zoom-wrapper" onclick="event.stopPropagation()">
+                <img id="archive-zoom-img" src="">
+            </div>
+        `;
+        document.body.appendChild(overlay);
+    }
+
+    window.openArchiveImageZoom = function (url) {
+        if (!url) return;
+        buildArchiveZoomModal();
+        document.getElementById('archive-zoom-img').src = url;
+        document.getElementById('modal-archive-zoom').classList.add('active');
+    };
 
     function buildModal() {
         if (document.getElementById('modal-archive')) return;
@@ -328,7 +384,7 @@
                 <div id="archive-list"><div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div></div>
                 <div id="archive-thumb-bar">
                     <span style="font-size:11px; color:#555;">🔍</span>
-                    <input type="range" id="archive-thumb-slider" min="70" max="500" style="flex:1; accent-color:#00ff99;" oninput="window.updateThumbSize(this.value)">
+                    <input type="range" id="archive-thumb-slider" min="70" max="500" style="flex:1; accent-color:#00ff99;" oninput="window.updateArchiveThumbSize(this.value)">
                     <span style="font-size:14px; color:#555;">🖼️</span>
                 </div>
                 <div class="modal-buttons">
@@ -348,11 +404,13 @@
         window._archiveObjectUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         window._archiveObjectUrls = [];
 
+        // Tamanho de miniatura ISOLADO: lê a preferência PRÓPRIA do Archive
+        // (não copia mais o valor do slider do Dataset).
         const thumbSlider = document.getElementById('archive-thumb-slider');
         if (thumbSlider) {
-            const mainSlider = document.getElementById('thumb-slider');
-            const currentSize = mainSlider ? mainSlider.value : (getComputedStyle(document.documentElement).getPropertyValue('--thumb-size') || '70').trim();
-            thumbSlider.value = parseInt(currentSize, 10) || 70;
+            const savedSize = (typeof window.getSetting === 'function') ? await window.getSetting('archive-thumb-size', 70) : 70;
+            thumbSlider.value = savedSize;
+            window.updateArchiveThumbSize(savedSize, true);
         }
 
         const list = document.getElementById('archive-list');
@@ -395,10 +453,7 @@
 
             const imgEl = row.querySelector('img');
             if (imgEl && url) {
-                imgEl.ondblclick = () => {
-                    document.getElementById('image-popout').src = url;
-                    window.openModal('modal-image');
-                };
+                imgEl.ondblclick = () => window.openArchiveImageZoom(url);
             }
 
             list.appendChild(row);
@@ -461,6 +516,14 @@
             injectArchiveTopbarButton();
             injectArchiveSelectionButton();
         }, 0);
+
+        // Aplica o tamanho de miniatura salvo do Archive já no carregamento,
+        // isolado do Dataset/Trash (independente do modal ter sido aberto).
+        if (typeof window.getSetting === 'function') {
+            window.getSetting('archive-thumb-size', 70).then(savedSize => {
+                window.updateArchiveThumbSize(savedSize, true);
+            });
+        }
     });
 
 })();

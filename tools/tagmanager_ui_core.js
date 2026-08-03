@@ -483,11 +483,11 @@ window.updateLastEditedUI = function() {
     if (display) display.textContent = datasetConfig.lastEdited ? `Last edited: ${datasetConfig.lastEdited}` : "Last edited: Never";
 };
 
-window.markDatasetEdited = function() {
+window.markDatasetEdited = async function() {
     datasetConfig.lastEdited = new Date().toLocaleString();
     window.updateLastEditedUI();
     const handle = window.currentImagesHandle || window.rootHandle;
-    if (handle) window.saveDatasetConfig(handle);
+    if (handle) await window.saveDatasetConfig(handle);
 };
 
 window.showHelp = () => document.getElementById('modal-help').classList.add('active');
@@ -634,11 +634,13 @@ window.loadSelectedDirectory = async function() {
 window.refreshDataset = async function() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
     const selectedBaseNames = Array.from(selectedIndices).map(i => imageFiles[i].baseName);
+    const val3 = document.getElementById('sub-dir-3') ? document.getElementById('sub-dir-3').value : '';
     const val2 = document.getElementById('sub-dir-2') ? document.getElementById('sub-dir-2').value : '';
     const val1 = document.getElementById('sub-dir-1') ? document.getElementById('sub-dir-1').value : '';
 
     try {
-        if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { await window.loadSubDir2(); } 
+        if (val3 && document.getElementById('sub-dir-3').style.display !== 'none') { await window.loadSubDir3(); }
+        else if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { await window.loadSubDir2(); } 
         else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { await window.loadSubDir1(); } 
         else if (window.rootHandle) { await window.loadGallery(window.rootHandle); }
     } catch (e) {
@@ -660,32 +662,59 @@ function revokeImageFileUrls(files) {
     files.forEach(img => { if (img && img.url) { try { URL.revokeObjectURL(img.url); } catch (e) {} } });
 }
 
+/* ---------------------------------------------------------------------
+   PROCESSAMENTO EM LOTE PARALELO (otimização de performance)
+   ---------------------------------------------------------------------
+   Antes, cada pasta carregada rodava um `for await` chamando
+   window.processSingleImage em SÉRIE, uma imagem de cada vez — com
+   getFileHandle('.txt') e, se falhar, getFileHandle('.json') (falha de
+   handle é exception, cara) por imagem. Com 300+ imagens isso é 300+
+   idas ao disco uma atrás da outra.
+
+   window.processSingleImage não depende de ordem (imageFiles é
+   reordenado por window.finishLoading logo depois), então é seguro
+   rodar em paralelo. Aqui rodamos em lotes (chunks) de tamanho
+   controlado — paralelo dentro do lote, lotes em sequência — pra não
+   abrir centenas de handles simultâneos de uma vez só. */
+window.processImageEntriesBatched = async function(fileEntries, dirHandle, concurrency = 20) {
+    let anyConfigNeedsSave = false;
+    for (let i = 0; i < fileEntries.length; i += concurrency) {
+        const chunk = fileEntries.slice(i, i + concurrency);
+        const results = await Promise.all(chunk.map(entry => window.processSingleImage(entry, dirHandle, false)));
+        if (results.some(r => r)) anyConfigNeedsSave = true;
+    }
+    return anyConfigNeedsSave;
+};
+
 window.loadGallery = async function(dirHandle) {
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
     window.rootHandle = dirHandle;
     window.currentImagesHandle = dirHandle;
     window.sub1Handles.clear();
     if(window.sub2Handles) window.sub2Handles.clear();
+    if(window.sub3Handles) window.sub3Handles.clear();
     
     document.getElementById('btn-refresh').style.display = 'inline-block';
     const sel1 = document.getElementById('sub-dir-1');
     const sel2 = document.getElementById('sub-dir-2');
-    sel1.style.display = 'none'; sel2.style.display = 'none';
+    const sel3 = document.getElementById('sub-dir-3');
+    sel1.style.display = 'none'; sel2.style.display = 'none'; if(sel3) sel3.style.display = 'none';
 
     await window.loadDatasetConfig(dirHandle);
     await window.loadPendingTagsStore(dirHandle);
 
     revokeImageFileUrls(imageFiles);
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
-    let configNeedsSave = false;
 
+    const fileEntriesRoot = [];
     for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await window.processSingleImage(entry, dirHandle, configNeedsSave);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive') {
+            fileEntriesRoot.push(entry);
+        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
             window.sub1Handles.set(entry.name, entry);
         }
     }
+    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesRoot, dirHandle);
 
     if (configNeedsSave) await window.saveDatasetConfig(dirHandle);
 
@@ -702,12 +731,15 @@ window.loadGallery = async function(dirHandle) {
 window.loadSubDir1 = async function() {
     const val = document.getElementById('sub-dir-1').value;
     const sel2 = document.getElementById('sub-dir-2');
+    const sel3 = document.getElementById('sub-dir-3');
     if (!val) { await window.loadGallery(window.rootHandle); return; }
 
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
     window.currentImagesHandle = window.sub1Handles.get(val); 
     window.sub2Handles.clear();
+    if(window.sub3Handles) window.sub3Handles.clear();
     sel2.style.display = 'none';
+    if(sel3) sel3.style.display = 'none';
     sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
 
     await window.loadDatasetConfig(window.currentImagesHandle);
@@ -715,15 +747,16 @@ window.loadSubDir1 = async function() {
 
     revokeImageFileUrls(imageFiles);
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
-    let configNeedsSave = false;
 
+    const fileEntriesSub1 = [];
     for await (const entry of window.currentImagesHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await window.processSingleImage(entry, window.currentImagesHandle, configNeedsSave);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive') {
+            fileEntriesSub1.push(entry);
+        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
             window.sub2Handles.set(entry.name, entry);
         }
     }
+    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub1, window.currentImagesHandle);
 
     if (configNeedsSave) await window.saveDatasetConfig(window.currentImagesHandle);
 
@@ -738,10 +771,48 @@ window.loadSubDir1 = async function() {
 
 window.loadSubDir2 = async function() {
     const val = document.getElementById('sub-dir-2').value;
+    const sel3 = document.getElementById('sub-dir-3');
     if (!val) { await window.loadSubDir1(); return; }
 
     if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
     const targetHandle = window.sub2Handles.get(val);
+    window.currentImagesHandle = targetHandle;
+    if(window.sub3Handles) window.sub3Handles.clear();
+    if(sel3) { sel3.style.display = 'none'; sel3.innerHTML = `<option value="">-- [ ${val} ] --</option>`; }
+
+    await window.loadDatasetConfig(targetHandle);
+    await window.loadPendingTagsStore(targetHandle);
+
+    revokeImageFileUrls(imageFiles);
+    imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
+
+    const fileEntriesSub2 = [];
+    for await (const entry of targetHandle.values()) {
+        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+            fileEntriesSub2.push(entry);
+        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
+            if(window.sub3Handles) window.sub3Handles.set(entry.name, entry);
+        }
+    }
+    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub2, targetHandle);
+
+    if (window.sub3Handles && window.sub3Handles.size > 0 && sel3) {
+        sel3.style.display = 'inline-block';
+        for (let path of Array.from(window.sub3Handles.keys()).sort((a,b) => a.localeCompare(b))) {
+            sel3.innerHTML += `<option value="${path}">${path}</option>`;
+        }
+    }
+
+    if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+    window.finishLoading();
+};
+
+window.loadSubDir3 = async function() {
+    const val = document.getElementById('sub-dir-3').value;
+    if (!val) { await window.loadSubDir2(); return; }
+
+    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+    const targetHandle = window.sub3Handles.get(val);
     window.currentImagesHandle = targetHandle;
 
     await window.loadDatasetConfig(targetHandle);
@@ -749,13 +820,14 @@ window.loadSubDir2 = async function() {
 
     revokeImageFileUrls(imageFiles);
     imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
-    let configNeedsSave = false;
-    
+
+    const fileEntriesSub3 = [];
     for await (const entry of targetHandle.values()) {
         if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            configNeedsSave = await window.processSingleImage(entry, targetHandle, configNeedsSave);
+            fileEntriesSub3.push(entry);
         }
     }
+    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub3, targetHandle);
 
     if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
     window.finishLoading();
@@ -934,26 +1006,32 @@ window.updateTagsDatalist = function() {
 
 window.openReplaceTagModal = function(scope) {
     replaceScope = scope;
-    let targetTag = '';
-    if (scope === 'active' && activeSelectedTags.size > 0) targetTag = Array.from(activeSelectedTags)[0];
-    else if (scope === 'master' && masterSelectedTags.size > 0) targetTag = Array.from(masterSelectedTags)[0];
-    
-    if(!targetTag) { window.showAlert("Select a tag first!", "warn"); return; }
+    const selectedSet = scope === 'active' ? activeSelectedTags : masterSelectedTags;
+    if (selectedSet.size === 0) { window.showAlert("Select a tag first!", "warn"); return; }
+
+    window._replaceOldTags = Array.from(selectedSet);
+
     document.getElementById('replace-scope').textContent = scope === 'active' ? 'Active Image' : 'All Dataset';
-    document.getElementById('replace-old-tag').value = targetTag;
+    document.getElementById('replace-old-tag').value = window._replaceOldTags.length > 1
+        ? `${window._replaceOldTags.length} tags: ${window._replaceOldTags.join(', ')}`
+        : window._replaceOldTags[0];
     document.getElementById('replace-new-tag').value = '';
     document.getElementById('replace-dropdown').classList.add('open');
     document.getElementById('replace-new-tag').focus();
 }
 
 window.confirmReplaceTag = async function() {
-    const oldTag = document.getElementById('replace-old-tag').value.trim();
+    const oldTags = (window._replaceOldTags && window._replaceOldTags.length)
+        ? window._replaceOldTags
+        : [document.getElementById('replace-old-tag').value.trim()].filter(t => t);
     const newTag = document.getElementById('replace-new-tag').value.trim();
     if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
     document.getElementById('replace-dropdown').classList.remove('open');
 
-    if (!oldTag || !newTag || oldTag === newTag) return;
+    if (!newTag || oldTags.length === 0) return;
+    if (oldTags.length === 1 && oldTags[0] === newTag) return;
 
+    const oldTagsSet = new Set(oldTags);
     let replacedCount = 0;
     let indicesToProcess = replaceScope === 'active' ? Array.from(selectedIndices) : imageFiles.map((_, i) => i);
     let modifiedFiles = []; 
@@ -963,8 +1041,9 @@ window.confirmReplaceTag = async function() {
         if (img.hidden) continue; 
         if (img.type === 'tags' && img.content) {
             let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
-            if (tags.includes(oldTag)) {
-                tags = tags.map(t => t === oldTag ? newTag : t);
+            const hasAny = tags.some(t => oldTagsSet.has(t));
+            if (hasAny) {
+                tags = tags.map(t => oldTagsSet.has(t) ? newTag : t);
                 tags = [...new Set(tags)]; 
                 img.content = tags.join(', ');
                 img.hasFile = true;
@@ -975,13 +1054,17 @@ window.confirmReplaceTag = async function() {
     }
 
     if (replacedCount === 0) {
-        window.showAlert(`Tag "${oldTag}" was not found.`, "warn");
+        window.showAlert(`Tag(s) "${oldTags.join(', ')}" not found.`, "warn");
         return;
     }
 
-    if (datasetConfig && datasetConfig.manualNLRules && datasetConfig.manualNLRules[oldTag]) {
-        datasetConfig.manualNLRules[newTag] = datasetConfig.manualNLRules[oldTag];
-        delete datasetConfig.manualNLRules[oldTag];
+    if (datasetConfig && datasetConfig.manualNLRules) {
+        oldTags.forEach(oldTag => {
+            if (datasetConfig.manualNLRules[oldTag] !== undefined) {
+                datasetConfig.manualNLRules[newTag] = datasetConfig.manualNLRules[oldTag];
+                delete datasetConfig.manualNLRules[oldTag];
+            }
+        });
     }
 
     window.markDirty(modifiedFiles);
@@ -992,13 +1075,13 @@ window.confirmReplaceTag = async function() {
     });
     window.updateTagsDatalist();
 
-    if (replaceScope === 'active') { activeSelectedTags.delete(oldTag); activeSelectedTags.add(newTag); }
-    if (replaceScope === 'master') { masterSelectedTags.delete(oldTag); masterSelectedTags.add(newTag); }
+    if (replaceScope === 'active') { oldTags.forEach(t => activeSelectedTags.delete(t)); activeSelectedTags.add(newTag); }
+    if (replaceScope === 'master') { oldTags.forEach(t => masterSelectedTags.delete(t)); masterSelectedTags.add(newTag); }
 
     const safeRender = (fn) => { try { if (typeof fn === 'function') fn(); } catch(e){} };
     safeRender(window.renderImageList); safeRender(window.renderMasterTagList); safeRender(window.renderEditor); safeRender(window.applyFilters);
     window.markDatasetEdited();
-    window.showAlert(`Tag replaced in ${replacedCount} image(s).`, "success");
+    window.showAlert(`Tag(s) replaced in ${replacedCount} image(s).`, "success");
 }
 
 window.setLogic = function(mode) {
@@ -1027,6 +1110,18 @@ window.applyTagNameFilterToDOM = function() {
 window.filterMasterTagsByName = function(val) {
     window.tagNameFilter = (val || '').trim().toLowerCase();
     window.applyTagNameFilterToDOM();
+};
+
+window.filterActiveTagsByName = function(val) {
+    window.activeTagNameFilter = (val || '').trim().toLowerCase();
+    const container = document.getElementById('tag-list-vertical');
+    if (!container) return;
+    container.querySelectorAll('.tag-row').forEach(row => {
+        if (row.classList.contains('ghost')) { row.style.display = 'flex'; return; }
+        const nameEl = row.querySelector('.tag-name');
+        const text = (nameEl ? nameEl.textContent : row.textContent).toLowerCase();
+        row.style.display = (!window.activeTagNameFilter || text.includes(window.activeTagNameFilter)) ? 'flex' : 'none';
+    });
 };
 
 window.toggleSuggestFilterImg = function() {
@@ -1202,3 +1297,36 @@ reorderStyle.innerHTML = `
     #btn-reorder-mode.active-mode { background: #0d2a18 !important; }
 `;
 document.head.appendChild(reorderStyle);
+
+/* ---------------------------------------------------------------------
+   GUARDA DE VISIBILIDADE DA SELEÇÃO (FIX)
+   ---------------------------------------------------------------------
+   Antes, nenhuma das ações de filtro (busca por nome, tag pinada 📌,
+   lógica AND/OR/XOR/NOT, filtro Tags/NL, ou Hide 👁️) removia uma imagem
+   de selectedIndices quando ela deixava de estar visível na lista da
+   esquerda. Resultado: a Active Image continuava mostrando/editando
+   tags de uma imagem que já não aparecia mais na lista, dando a
+   impressão de que a tag "persistia" mesmo depois de removida/alterada
+   sob um filtro ativo.
+
+   window.pruneSelectionToVisible() varre a seleção atual e tira dela
+   qualquer imagem hidden ou com display:none no DOM. Ela é chamada no
+   final de window.applyFilters() (a função por onde TODOS os filtros
+   acima já passam), então não é preciso duplicar a chamada em cada
+   botão de filtro separadamente.
+--------------------------------------------------------------------- */
+window.pruneSelectionToVisible = function() {
+    if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return false;
+    let changed = false;
+    Array.from(selectedIndices).forEach(idx => {
+        const img = imageFiles[idx];
+        const isVisible = img && !img.hidden && img.element && img.element.style.display !== 'none';
+        if (!isVisible) { selectedIndices.delete(idx); changed = true; }
+    });
+    if (changed) {
+        activeSelectedTags.clear();
+        if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+    }
+    return changed;
+};

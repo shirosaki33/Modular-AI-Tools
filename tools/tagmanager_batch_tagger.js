@@ -73,6 +73,99 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+/* =========================================================================
+   RECURSIVE MODE (📁🔁)
+   ---------------------------------------------------------------------
+   Varre a pasta raiz carregada (window.rootHandle / currentImagesHandle)
+   e TODAS as suas subpastas recursivamente (pulando "_trash" e
+   "_archive", igual ao loadGallery normal), montando uma lista "solta"
+   de pseudo-imagens no MESMO formato que o resto do batch já espera
+   (name, baseName, ext, content, hasFile, type, url, parentDirHandle).
+
+   Cada item guarda seu PRÓPRIO parentDirHandle (a subpasta de onde veio
+   de verdade), então window.saveImageToDisk() já funciona sem
+   modificação nenhuma — cada legenda é salva de volta na pasta do
+   personagem correspondente.
+
+   Isto é INDEPENDENTE do array window.imageFiles (que continua sendo só
+   a pasta/subpasta atualmente exibida na lista à esquerda) — por isso,
+   ao final do batch, refreshDataset() só vai "enxergar" as mudanças da
+   pasta que estiver aberta no momento; as outras já foram salvas no
+   disco normalmente, só não aparecem na lista até você navegar até lá. */
+window._recursiveBatchUrls = window._recursiveBatchUrls || [];
+
+async function collectImagesRecursively(dirHandle, list = [], stats = { folders: 0 }) {
+    stats.folders++;
+    let entries;
+    try {
+        entries = dirHandle.values();
+    } catch (e) {
+        console.warn('[Recursive Mode] Could not read folder', dirHandle && dirHandle.name, e);
+        return list;
+    }
+
+    for await (const entry of entries) {
+        try {
+            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                const baseName = entry.name.substring(0, entry.name.lastIndexOf('.'));
+                let content = ""; let hasFile = false; let ext = "txt";
+
+                try {
+                    const txtHandle = await dirHandle.getFileHandle(baseName + '.txt');
+                    content = await (await txtHandle.getFile()).text();
+                    hasFile = true; ext = "txt";
+                } catch (e) {}
+
+                if (!hasFile) {
+                    try {
+                        const jsonHandle = await dirHandle.getFileHandle(baseName + '.json');
+                        const jsonObj = JSON.parse(await (await jsonHandle.getFile()).text());
+                        if (jsonObj.tags) content = jsonObj.tags; else if (jsonObj.caption) content = jsonObj.caption;
+                        hasFile = true; ext = "json";
+                    } catch (e) {}
+                }
+
+                const file = await entry.getFile();
+                const url = URL.createObjectURL(file);
+                window._recursiveBatchUrls.push(url);
+
+                list.push({
+                    name: entry.name,
+                    baseName: baseName,
+                    ext: ext,
+                    content: content,
+                    hasFile: hasFile,
+                    type: 'tags',
+                    url: url,
+                    handle: entry,
+                    parentDirHandle: dirHandle,
+                    folderLabel: dirHandle.name || '',
+                    pendingAdd: [],
+                    hidden: false,
+                    dirty: false
+                });
+            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive') {
+                await collectImagesRecursively(entry, list, stats);
+            }
+        } catch (e) {
+            // Uma subpasta/arquivo específico com problema (permissão, nome
+            // corrompido, etc.) não deve derrubar o scan inteiro — pula e
+            // continua com o resto.
+            console.warn('[Recursive Mode] Skipped an entry due to error:', entry && entry.name, e);
+        }
+    }
+    return list;
+}
+
+function revokeRecursiveBatchUrls() {
+    window._recursiveBatchUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
+    window._recursiveBatchUrls = [];
+}
+
+window.updateRecursiveModeUI = function () {
+    if (typeof window.checkBatchReadyState === 'function') window.checkBatchReadyState();
+};
+
 function getTargetEnv() {
     let handle = window.currentImagesHandle || (typeof currentImagesHandle !== 'undefined' ? currentImagesHandle : null);
     if (!handle) handle = window.currentHandle || (typeof currentHandle !== 'undefined' ? currentHandle : null);
@@ -160,19 +253,18 @@ window.loadSelectedModelData = async function() {
 
 window.checkBatchReadyState = function() {
     const btn = document.getElementById('btn-start-batch');
-    const modeSelect = document.getElementById('batch-mode-select');
-    const mode = modeSelect ? modeSelect.value : 'tags';
-    const { files } = getTargetEnv();
-    
-    if(btn) {
-        if (mode === 'tags') {
-            if (tagsDB.length > 0 && files && files.length > 0) btn.disabled = false;
-            else btn.disabled = true;
-        } else {
-            if (files && files.length > 0) btn.disabled = false;
-            else btn.disabled = true;
-        }
-    }
+    if (!btn) return;
+
+    // Antes o botão só habilitava com tagsDB já carregado (modelo selecionado)
+    // E arquivos já detectados na pasta atual — se qualquer um faltasse, o
+    // clique no botão simplesmente não fazia NADA, sem nenhum aviso (parecia
+    // que o Recursive Mode, ou o app, "não estava processando"). Agora o
+    // botão só fica desabilitado se não existir NENHUMA pasta carregada;
+    // qualquer outro pré-requisito faltando (modelo do tagger, 0 imagens
+    // encontradas etc.) é validado dentro de window.startBatchTagging(), que
+    // já mostra um alerta explicando exatamente o que falta.
+    const hasFolder = !!(window.rootHandle || window.currentImagesHandle);
+    btn.disabled = !hasFolder;
 }
 
 const KNOWN_VLM_DEFAULT_PROMPTS = [
@@ -326,9 +418,47 @@ window.stopBatchTagging = function() {
 };
 
 window.startBatchTagging = async function() {
-    const { handle: targetHandle, files: targetFiles } = getTargetEnv();
+    const recursiveToggle = document.getElementById('recursive-mode-toggle');
+    const isRecursive = !!(recursiveToggle && recursiveToggle.checked);
+
+    let targetHandle, targetFiles;
+
+    if (isRecursive) {
+        // Prioriza a pasta que está sendo EXIBIDA agora (window.currentImagesHandle —
+        // que muda conforme você navega pelos dropdowns "Subfolders"/"Inner
+        // Folders"/"Deeper Folders"), e não sempre a raiz (window.rootHandle).
+        // Assim, se você entrou 2 níveis dentro da franquia antes de rodar o
+        // batch, o scan recursivo começa DALI pra baixo, não do topo.
+        const rootForScan = window.currentImagesHandle || window.rootHandle;
+        if (!rootForScan) {
+            if(window.showAlert) window.showAlert("No folder loaded.", "error");
+            return;
+        }
+        if(window.showAlert) window.showAlert("🔁 Scanning all subfolders recursively... this can take a moment for big franchise folders.", "info");
+        revokeRecursiveBatchUrls();
+        const stats = { folders: 0 };
+        try {
+            targetFiles = await collectImagesRecursively(rootForScan, [], stats);
+        } catch (e) {
+            console.error(e);
+            if(window.showAlert) window.showAlert("Error scanning subfolders recursively. Check the console.", "error");
+            return;
+        }
+        console.log(`[Recursive Mode] Scanned ${stats.folders} folder(s), found ${targetFiles.length} image(s).`);
+        if (targetFiles.length === 0) {
+            if(window.showAlert) window.showAlert(`🔁 Scanned ${stats.folders} folder(s) starting from "${rootForScan.name}", but found 0 images inside. Make sure the images are directly inside the character subfolders (.png/.jpg/.jpeg/.webp).`, "error");
+            return;
+        }
+        if(window.showAlert) window.showAlert(`🔁 Found ${targetFiles.length} image(s) across ${stats.folders} folder(s). Starting batch...`, "info");
+        targetHandle = rootForScan;
+    } else {
+        const env = getTargetEnv();
+        targetHandle = env.handle;
+        targetFiles = env.files;
+    }
+
     if (!targetFiles || !targetFiles.length || !targetHandle) {
-        if(window.showAlert) window.showAlert("No images or folder loaded.", "error");
+        if(window.showAlert) window.showAlert(isRecursive ? "No images found recursively in this folder." : "No images or folder loaded.", "error");
         return;
     }
     
@@ -348,7 +478,17 @@ window.startBatchTagging = async function() {
     }
     
     const reviewModeToggleEl = document.getElementById('review-mode-toggle');
-    const reviewModeActive = !!(reviewModeToggleEl && reviewModeToggleEl.checked);
+    let reviewModeActive = !!(reviewModeToggleEl && reviewModeToggleEl.checked);
+
+    // Review Mode (sugestões-fantasma 💡) depende do array global window.imageFiles
+    // e de datasetConfig/pendingTagsStore da pasta ATUAL — coisas que não existem
+    // pras imagens de outras subpastas coletadas recursivamente. Em vez de fingir
+    // que funciona (e perder as sugestões silenciosamente), desligamos e avisamos.
+    if (isRecursive && reviewModeActive) {
+        reviewModeActive = false;
+        if (reviewModeToggleEl) reviewModeToggleEl.checked = false;
+        if(window.showAlert) window.showAlert("⚠️ Review Mode isn't supported together with Recursive Mode — saving tags directly to disk instead.", "warn");
+    }
 
     window.isBatchCancelled = false;
     const btn = document.getElementById('btn-start-batch'); btn.disabled = true;
@@ -701,6 +841,8 @@ window.startBatchTagging = async function() {
     } finally { 
         btn.disabled = false; 
         if(cancelBtn) cancelBtn.style.display = 'none';
+
+        if (isRecursive) revokeRecursiveBatchUrls();
 
         const dlContainer = document.getElementById('vlm-dl-container');
         if(dlContainer) dlContainer.style.display = 'none'; 

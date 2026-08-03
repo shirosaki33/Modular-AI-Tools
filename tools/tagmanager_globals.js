@@ -21,6 +21,7 @@ var sortedActiveTags = [];
 var rootHandle = null;
 var sub1Handles = new Map();
 var sub2Handles = new Map();
+var sub3Handles = new Map();
 var currentImagesHandle = null;
 
 var imageFiles = []; 

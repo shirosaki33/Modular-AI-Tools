@@ -17,6 +17,15 @@
      origem, o nome original, e o nome físico salvo na lixeira — assim dá
      pra Restaurar exatamente pro lugar de onde saiu.
    - Tem botão de Restaurar E de Excluir Permanente (por item, ou tudo).
+
+   ---------------------------------------------------------------------
+   FIX (isolamento de tamanho de miniatura): o slider de miniaturas deste
+   painel usava a MESMA variável CSS global "--thumb-size" do painel
+   principal (Dataset) e do Archive — mexer no slider de um painel mudava
+   o tamanho das miniaturas nos outros dois também. Agora este painel tem
+   sua PRÓPRIA variável ("--thumb-size-trash") e sua PRÓPRIA preferência
+   salva ("trash-thumb-size"), totalmente independente do Dataset e do
+   Archive.
 ========================================================================= */
 
 (function () {
@@ -362,6 +371,19 @@
         if (window.showAlert) window.showAlert('Trash emptied.', 'success');
     };
 
+    /* ---------- TAMANHO DE MINIATURA — ISOLADO DO DATASET E DO ARCHIVE ----------
+       Antes: o slider deste painel chamava window.updateThumbSize(), que
+       escreve na variável CSS GLOBAL "--thumb-size" — a MESMA usada pelo
+       painel principal (Dataset) e pelo Archive. Resultado: mexer aqui
+       redimensionava as miniaturas em todo lugar.
+       Agora: variável própria ("--thumb-size-trash") + preferência salva
+       própria ("trash-thumb-size"), sem nenhuma dependência do slider do
+       Dataset. */
+    window.updateTrashThumbSize = function (val, skipSave = false) {
+        document.documentElement.style.setProperty('--thumb-size-trash', val + 'px');
+        if (!skipSave && typeof window.saveSetting === 'function') window.saveSetting('trash-thumb-size', val);
+    };
+
     /* ---------- UI ---------- */
     const style = document.createElement('style');
     style.innerHTML = `
@@ -378,7 +400,7 @@
         .trash-mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         #trash-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; max-height: 48vh; }
         .trash-item { display: flex; align-items: center; gap: 10px; background: #151515; border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; }
-        .trash-item img { width: var(--thumb-size); height: auto; object-fit: cover; border-radius: 4px; border: 1px solid #333; flex-shrink: 0; cursor: zoom-in; }
+        .trash-item img { width: var(--thumb-size-trash); height: auto; object-fit: cover; border-radius: 4px; border: 1px solid #333; flex-shrink: 0; cursor: zoom-in; }
         .trash-item-name { flex: 1; font-size: 11px; color: #ddd; word-break: break-all; }
         .trash-item button { font-size: 11px; padding: 6px 10px; flex-shrink: 0; }
         .btn-trash-restore { background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; }
@@ -416,7 +438,7 @@
                 <div id="trash-list"><div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div></div>
                 <div id="trash-thumb-bar">
                     <span style="font-size:11px; color:#555;">🔍</span>
-                    <input type="range" id="trash-thumb-slider" min="70" max="500" style="flex:1; accent-color:#00ff99;" oninput="window.updateThumbSize(this.value)">
+                    <input type="range" id="trash-thumb-slider" min="70" max="500" style="flex:1; accent-color:#00ff99;" oninput="window.updateTrashThumbSize(this.value)">
                     <span style="font-size:14px; color:#555;">🖼️</span>
                 </div>
                 <div class="modal-buttons">
@@ -472,11 +494,13 @@
         window._trashObjectUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         window._trashObjectUrls = [];
 
+        // Tamanho de miniatura ISOLADO: lê a preferência PRÓPRIA do Trash
+        // (não copia mais o valor do slider do Dataset).
         const thumbSlider = document.getElementById('trash-thumb-slider');
         if (thumbSlider) {
-            const mainSlider = document.getElementById('thumb-slider');
-            const currentSize = mainSlider ? mainSlider.value : (getComputedStyle(document.documentElement).getPropertyValue('--thumb-size') || '70').trim();
-            thumbSlider.value = parseInt(currentSize, 10) || 70;
+            const savedSize = (typeof window.getSetting === 'function') ? await window.getSetting('trash-thumb-size', 70) : 70;
+            thumbSlider.value = savedSize;
+            window.updateTrashThumbSize(savedSize, true);
         }
 
         const list = document.getElementById('trash-list');
@@ -561,8 +585,14 @@
         window.updateTrashButtonState();
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
         setTimeout(injectTrashButton, 0);
+        // Aplica o tamanho de miniatura salvo do Trash já no carregamento,
+        // isolado do Dataset/Archive (independente do modal ter sido aberto).
+        if (typeof window.getSetting === 'function') {
+            const savedSize = await window.getSetting('trash-thumb-size', 70);
+            window.updateTrashThumbSize(savedSize, true);
+        }
     });
 
 })();

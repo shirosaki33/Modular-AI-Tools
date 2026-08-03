@@ -227,7 +227,8 @@
 
         const key = tag.trim().toLowerCase().replace(/_/g, ' ');
         document.getElementById('dbpTagName').textContent = key;
-        document.getElementById('dbpTagCat').innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>`;
+        const deprecatedBadge0 = (info.isDeprecated) ? ` <span style="color:#888;">· Deprecated</span>` : '';
+        document.getElementById('dbpTagCat').innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge0}`;
         document.getElementById('dbpTagLink').href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}`;
 
         const descEl = document.getElementById('dbpTagDesc');
@@ -378,7 +379,8 @@
         }
 
         if (info) {
-            catEl.innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>`;
+            const deprecatedBadge1 = (info.isDeprecated) ? ` <span style="color:#888;">· Deprecated</span>` : '';
+            catEl.innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge1}`;
         }
 
         try {
@@ -503,7 +505,22 @@
         refreshTagRenders();
     };
 
+    /* Antes: wrap próprio de renderImageList detectando troca de dataset e
+       disparando o scan em background via setTimeout independente — competia
+       por rede/CPU com o dup name fixer e o auto-merge rodando ao mesmo
+       tempo. Agora registra na fila serializada (tagmanager_auto_task_queue.js),
+       que roda os 3 scans automáticos em sequência. */
     function hookAutoDanbooruScan() {
+        if (typeof window.registerAutoDatasetTask === 'function') {
+            if (window._dbAutoScanRegistered) return;
+            window.registerAutoDatasetTask('danbooru-background-scan', async () => {
+                window._dbBackgroundScanCancelled = false;
+                await window.runDanbooruBackgroundScan();
+            });
+            window._dbAutoScanRegistered = true;
+            return;
+        }
+        // Fallback (caso tagmanager_auto_task_queue.js não tenha carregado)
         if (typeof window.renderImageList !== 'function' || window.renderImageList.__dbAutoScanWrapped) return;
         const original = window.renderImageList;
         const wrapped = function () {
@@ -611,7 +628,27 @@
         if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     }
 
+    /* Antes: 2 wraps próprios (renderEditor, renderMasterTagList) empilhados
+       em cima dos wraps de outros plugins. Agora registra no ponto central
+       de hooks (tagmanager_render_hooks.js). Fallback pro wrap manual se o
+       arquivo central não tiver carregado. */
     function wrapRenderersForDbInfo() {
+        if (typeof window.registerPostRenderEditor === 'function' && typeof window.registerPostRenderMasterTagList === 'function') {
+            if (window._dbInfoHooksRegistered) return;
+            window.registerPostRenderEditor(() => {
+                const el = document.getElementById('tag-list-vertical');
+                injectDbInfoIcons(el);
+                injectGhostDbInfoIcons(el, '.tag-row.ghost', computeActiveGhostTags, false);
+            });
+            window.registerPostRenderMasterTagList(() => {
+                const el = document.getElementById('master-tag-list');
+                injectDbInfoIcons(el);
+                injectGhostDbInfoIcons(el, '.master-tag-item.ghost', computeMasterGhostTags, true);
+            });
+            window._dbInfoHooksRegistered = true;
+            return;
+        }
+
         if (typeof window.renderEditor === 'function' && !window.renderEditor.__dbInfoWrapped) {
             const original = window.renderEditor;
             const wrapped = function () {

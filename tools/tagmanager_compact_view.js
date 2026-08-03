@@ -151,33 +151,33 @@
         if (window.compactMode) buildCompactGroups();
     };
 
-    /* ---------- WRAP DE window.renderImageList / window.applyFilters ----------
-       Mesmo padrão usado em tagmanager_pin_image.js: não editamos os arquivos
-       originais, só envelopamos as funções já existentes. */
-    function wrapRenderImageList() {
-        if (typeof window.renderImageList !== 'function' || window.renderImageList.__compactWrapped) return;
-        const original = window.renderImageList;
-        const wrapped = function () {
-            original.apply(this, arguments);
-            if (window.compactMode) buildCompactGroups();
-        };
-        wrapped.__compactWrapped = true;
-        window.renderImageList = wrapped;
+    /* ---------- HOOKS PÓS-RENDER (via tagmanager_render_hooks.js) ----------
+       Antes, este arquivo envelopava window.renderImageList e
+       window.applyFilters por conta própria. Agora registra no ponto
+       central de hooks (1 wrap único compartilhado por todos os plugins).
+       Fallback pro wrap manual antigo se o arquivo central não tiver
+       carregado, por segurança. */
+    function installCompactHooks() {
+        if (typeof window.registerPostRenderImageList === 'function' && typeof window.registerPostApplyFilters === 'function') {
+            window.registerPostRenderImageList(() => { if (window.compactMode) buildCompactGroups(); });
+            window.registerPostApplyFilters(updateGroupVisibility);
+            return;
+        }
+        if (typeof window.renderImageList === 'function' && !window.renderImageList.__compactWrapped) {
+            const original = window.renderImageList;
+            const wrapped = function () { original.apply(this, arguments); if (window.compactMode) buildCompactGroups(); };
+            wrapped.__compactWrapped = true;
+            window.renderImageList = wrapped;
+        }
+        if (typeof window.applyFilters === 'function' && !window.applyFilters.__compactWrapped) {
+            const original2 = window.applyFilters;
+            const wrapped2 = function () { original2.apply(this, arguments); updateGroupVisibility(); };
+            wrapped2.__compactWrapped = true;
+            window.applyFilters = wrapped2;
+        }
     }
 
-    function wrapApplyFilters() {
-        if (typeof window.applyFilters !== 'function' || window.applyFilters.__compactWrapped) return;
-        const original = window.applyFilters;
-        const wrapped = function () {
-            original.apply(this, arguments);
-            updateGroupVisibility();
-        };
-        wrapped.__compactWrapped = true;
-        window.applyFilters = wrapped;
-    }
-
-    wrapRenderImageList();
-    wrapApplyFilters();
+    installCompactHooks();
 
     /* ---------- LIGA OS BOTÕES E CARREGA PREFERÊNCIAS ---------- */
     window.addEventListener('DOMContentLoaded', async () => {

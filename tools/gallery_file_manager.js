@@ -6,52 +6,62 @@
 let isRenameMode = false;
 
 /**
- * Ativa o modo de seleção de caixas (checkbox) no grid.
+ * Activates checkbox selection mode in the grid.
  */
 function enterRenameModeGrid() {
-    if (!currentHandle) { showAlert('Carregue uma pasta primeiro.', 'warn'); return false; }
+    if (!currentHandle) { showAlert('Load a folder first.', 'warn'); return false; }
     isRenameMode = true;
-    
-    // Destaca o botão do lápis e oculta a barra antiga (caso ela ainda exista no HTML)
+
+    // Highlight the pencil button and hide the old bar (in case it still exists in the HTML)
     document.getElementById('btn-rename-top').classList.add('active');
     const oldBar = document.getElementById('batch-rename-bar');
     if (oldBar) oldBar.style.display = 'none';
-    
-    showAlert('✏️ Selecione as imagens e digite o novo nome no balão.', 'info');
+
+    showAlert('✏️ Select the images, then type the new name in the popup. The popup stays open while you select.', 'info');
     renderGrid();
-    return true; // Retorna true para confirmar que o modo foi ativado
+    return true; // Confirms selection mode was activated
 }
 
-/** Cancela o modo de renomear e limpa o grid. */
+/** Cancels rename mode and refreshes the grid. */
 function cancelRenameMode() {
     isRenameMode = false;
     document.getElementById('btn-rename-top').classList.remove('active');
     document.getElementById('rename-dropdown').classList.remove('open');
+
+    const selectControls = document.getElementById('rename-select-controls');
+    const selectionCount = document.getElementById('rename-selection-count');
+    if (selectControls) selectControls.style.display = 'none';
+    if (selectionCount) selectionCount.style.display = 'none';
+
     renderGrid();
 }
 
 /* ================================================================
    PENCIL BUTTON TOGGLE
-   Gerencia o clique no Lápis tanto no grid quanto na imagem aberta.
+   Handles clicking the pencil icon both in the grid and in the open image.
    ================================================================ */
 function toggleRenameBalloon() {
-    // Truque: Conserta o botão "Cancel" do HTML dinamicamente sem precisar mexer no arquivo .html
+    // Dynamically wires up the popup's "Cancel" button without touching the HTML file
     const cancelBtn = document.querySelector('#rename-dropdown button:last-child');
     if (cancelBtn) {
         cancelBtn.onclick = function() {
             if (document.getElementById('detail-view').style.display === 'flex') {
-                document.getElementById('rename-dropdown').classList.remove('open'); // Se for 1 imagem, só fecha o balão
+                document.getElementById('rename-dropdown').classList.remove('open'); // Single image: just close the popup
             } else {
-                cancelRenameMode(); // Se for no grid, desativa as caixinhas e fecha o balão
+                cancelRenameMode(); // Grid mode: turn off the checkboxes and close the popup
             }
         };
     }
 
     const detailView   = document.getElementById('detail-view');
     const isDetailView = detailView.style.display === 'flex';
+    const selectControls = document.getElementById('rename-select-controls');
+    const selectionCount = document.getElementById('rename-selection-count');
 
-    // 1. Modo Imagem Única (Detail View)
+    // 1. Single Image Mode (Detail View) — no selection helpers needed here
     if (isDetailView) {
+        if (selectControls) selectControls.style.display = 'none';
+        if (selectionCount) selectionCount.style.display = 'none';
         const dropdown = document.getElementById('rename-dropdown');
         dropdown.classList.toggle('open');
         if (dropdown.classList.contains('open')) {
@@ -66,26 +76,28 @@ function toggleRenameBalloon() {
         return;
     }
 
-    // 2. Modo Grid
+    // 2. Grid Mode — the popup stays open the whole time you're selecting images
     if (!isRenameMode) {
-        // Se ativou o modo grid com sucesso, JÁ ABRE o balão instantaneamente!
+        // If grid mode activated successfully, open the popup right away!
         if (enterRenameModeGrid()) {
+            if (selectControls) selectControls.style.display = 'flex';
             const dropdown = document.getElementById('rename-dropdown');
             dropdown.classList.add('open');
             const input = document.getElementById('rename-input');
-            input.value = 'new_name'; // Sugestão para o batch rename
+            input.value = 'new_name'; // Suggested base name for batch rename
             input.focus();
             input.select();
+            if (typeof updateSelectionCount === 'function') updateSelectionCount('rename-checkbox');
         }
     } else {
-        // Se já estava no modo de seleção e clicou no lápis de novo, cancela tudo
+        // If already in selection mode and the pencil is clicked again, cancel everything
         cancelRenameMode();
     }
 }
 
 /* ================================================================
    MAIN DISPATCHER
-   Chamado pelo botão "Confirm" dentro do balão de renomear.
+   Called by the "Confirm" button inside the rename popup.
    ================================================================ */
 async function renameCurrentImage() {
     const isDetailView = document.getElementById('detail-view').style.display === 'flex';
@@ -96,8 +108,7 @@ async function renameCurrentImage() {
     } else if (checkboxes.length > 0) {
         await batchRenameImages(checkboxes);
     } else {
-        // Validador que você pediu: ele trava e avisa que precisa selecionar a imagem!
-        showAlert('❌ Nenhuma imagem selecionada para renomear.', 'warn');
+        showAlert('❌ No images selected to rename.', 'warn');
     }
 }
 
@@ -112,7 +123,7 @@ async function renameSingleImage() {
 
     const oldName = document.getElementById('file-name').value;
     if (!oldName) {
-        showAlert('❌ Abra uma foto primeiro para renomear.', 'warn');
+        showAlert('❌ Open a photo first to rename it.', 'warn');
         return;
     }
 
@@ -136,7 +147,7 @@ async function renameSingleImage() {
     showAlert('⏳ Renaming file...', 'info');
 
     try {
-        // Abort se o alvo já existir
+        // Abort if the target name already exists
         try {
             await currentHandle.getFileHandle(newName);
             showAlert('❌ A file with that name already exists!', 'error');
@@ -146,7 +157,7 @@ async function renameSingleImage() {
         const oldBaseName = oldName.substring(0, oldName.lastIndexOf('.')) || oldName;
         const newBaseName = newName.substring(0, newName.lastIndexOf('.')) || newName;
 
-        // Copia o arquivo da imagem
+        // Copy the image file
         const oldImgHandle = await currentHandle.getFileHandle(oldName);
         const oldImgFile   = await oldImgHandle.getFile();
         const newImgHandle = await currentHandle.getFileHandle(newName, { create: true });
@@ -154,7 +165,7 @@ async function renameSingleImage() {
         await imgWritable.write(await oldImgFile.arrayBuffer());
         await imgWritable.close();
 
-        // Copia e atualiza o JSON sidecar
+        // Copy and update the sidecar JSON
         try {
             const oldJsonHandle = await currentHandle.getFileHandle(oldBaseName + '.json');
             const oldJsonFile   = await oldJsonHandle.getFile();
@@ -170,10 +181,10 @@ async function renameSingleImage() {
             await currentHandle.removeEntry(oldBaseName + '.json');
         } catch (e) {}
 
-        // Remove a imagem antiga
+        // Remove the old image
         await currentHandle.removeEntry(oldName);
 
-        // Atualiza a memória cache
+        // Update the in-memory cache
         const fileIndex = currentFiles.findIndex(f => f.name === oldName);
         if (fileIndex !== -1) {
             URL.revokeObjectURL(currentFiles[fileIndex].url);
@@ -185,7 +196,7 @@ async function renameSingleImage() {
             };
         }
 
-        // Atualiza o mapa de tags
+        // Update the tags map
         if (tagsPerFile.has(oldName)) {
             const tag = tagsPerFile.get(oldName);
             tagsPerFile.delete(oldName);
@@ -194,7 +205,7 @@ async function renameSingleImage() {
 
         document.getElementById('file-name').value = newName;
 
-        // Atualiza o thumbnail ativo
+        // Update the active thumbnail
         const activeThumb = document.querySelector('#thumbnail-strip .thumb.active');
         if (activeThumb && fileIndex !== -1) {
             activeThumb.src     = currentFiles[fileIndex].url;
@@ -216,7 +227,7 @@ async function renameSingleImage() {
 async function batchRenameImages(checkboxes) {
     if (!currentHandle) return;
 
-    // Puxa o valor do input do balão
+    // Grab the value from the popup input
     let baseNameRaw = document.getElementById('rename-input').value;
 
     if (!baseNameRaw || baseNameRaw.trim() === '') {
@@ -227,8 +238,8 @@ async function batchRenameImages(checkboxes) {
     let baseName = baseNameRaw.trim();
     document.getElementById('rename-dropdown').classList.remove('open');
     document.getElementById('btn-rename-top').classList.remove('active');
-    
-    showAlert(`⏳ Renomeando ${checkboxes.length} arquivo(s)...`, 'info');
+
+    showAlert(`⏳ Renaming ${checkboxes.length} file(s)...`, 'info');
 
     let count = 0;
     const padding = String(checkboxes.length).length;
@@ -243,10 +254,10 @@ async function batchRenameImages(checkboxes) {
         const oldBaseName = oldName.substring(0, oldName.lastIndexOf('.')) || oldName;
 
         try {
-            // Pula se já existe para não sobreescrever
+            // Skip if it already exists, to avoid overwriting
             try {
                 await currentHandle.getFileHandle(newName);
-                console.warn(`Arquivo ${newName} já existe! Pulando para evitar perda de dados.`);
+                console.warn(`File ${newName} already exists! Skipping to avoid data loss.`);
                 continue;
             } catch (e) {}
 
@@ -291,11 +302,16 @@ async function batchRenameImages(checkboxes) {
 
             count++;
         } catch (error) {
-            console.error(`Erro ao renomear ${oldName}:`, error);
+            console.error(`Error renaming ${oldName}:`, error);
         }
     }
 
     isRenameMode = false;
+    const selectControls = document.getElementById('rename-select-controls');
+    const selectionCount = document.getElementById('rename-selection-count');
+    if (selectControls) selectControls.style.display = 'none';
+    if (selectionCount) selectionCount.style.display = 'none';
+
     renderGrid();
-    showAlert(`✅ ${count} arquivo(s) renomeado(s) com sucesso!`, 'success');
+    showAlert(`✅ ${count} file(s) renamed successfully!`, 'success');
 }

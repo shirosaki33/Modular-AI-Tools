@@ -1,10 +1,10 @@
 /* ================================================================
    GALLERY PATH SAVER
-   Gerencia a criação e exibição de etiquetas visuais para os 
-   diretórios, salvando no IndexedDB.
+   Manages creating and displaying visual path labels for
+   directories, saved in IndexedDB.
    ================================================================ */
 
-// 1. Funções de Banco de Dados (IndexedDB) exclusivas para os textos
+// 1. Database (IndexedDB) functions dedicated to the path text
 async function savePathToDB(folderName, pathStr) { 
     const db = await initDB(); 
     return new Promise(r => { 
@@ -24,20 +24,20 @@ async function getPathFromDB(folderName) {
     }); 
 }
 
-// NOTA: getHandles() e deleteHandle() já são definidas em gallery_holder.html
-// (e já ignoram as chaves 'path_*' e '__app_settings__'), então não precisam
-// ser reimplementadas aqui.
+// NOTE: getHandles() and deleteHandle() are already defined in gallery_holder.html
+// (and already ignore the 'path_*' and '__app_settings__' keys), so they don't
+// need to be reimplemented here.
 
-// 2. Controle de UI (O balão de digitação)
+// 2. UI control (the input popup)
 function togglePathMode() {
     if (!rootHandle) { 
-        showAlert('Carregue uma pasta primeiro.', 'warn'); 
+        showAlert('Load a folder first.', 'warn'); 
         return; 
     }
     
     const dropdown = document.getElementById('path-dropdown');
     
-    // Fecha qualquer outro menu que esteja aberto
+    // Close any other open menu
     document.querySelectorAll('.settings-dropdown').forEach(el => {
         if (el.id !== 'path-dropdown') el.classList.remove('open');
     });
@@ -53,7 +53,7 @@ function togglePathMode() {
     }
 }
 
-// 3. Salvar e Atualizar Interface
+// 3. Save and update the interface
 async function applyPathLabel() {
     if (!rootHandle) return;
     const newPath = document.getElementById('path-label-input').value.trim();
@@ -62,7 +62,7 @@ async function applyPathLabel() {
     updatePathDisplay(newPath);
     
     document.getElementById('path-dropdown').classList.remove('open');
-    showAlert('📍 Rota visual salva com sucesso!', 'success');
+    showAlert('📍 Visual path saved successfully!', 'success');
 }
 
 function updatePathDisplay(pathStr) {
@@ -72,7 +72,7 @@ function updatePathDisplay(pathStr) {
     }
 }
 
-// Função para ser chamada quando a pasta carregar no HTML
+// Called by the HTML file when a folder loads
 window.loadSavedPathDisplay = async function(dirHandle) {
     if (!dirHandle) return;
     const savedText = await getPathFromDB(dirHandle.name);

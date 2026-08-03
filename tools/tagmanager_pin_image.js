@@ -28,25 +28,31 @@
     const style = document.createElement('style');
     style.innerHTML = `
         #col-pinned {
-            width: 230px; flex-shrink: 0; margin-right: 14px; display: none;
+            width: 230px; flex-shrink: 0; display: none;
         }
         #pinned-image-wrap {
             padding: 12px; display: flex; flex-direction: column; gap: 8px;
-            overflow-y: auto; flex: 1;
+            flex: 1; min-height: 0; overflow: hidden;
         }
         #pinned-image-preview-box {
             border-radius: 8px; overflow: hidden; background: #0d0d0d;
             border: 1px solid #222; display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
         }
         #pinned-image-preview { width: 100%; max-height: 220px; object-fit: contain; display: block; background: #0d0d0d; }
-        #pinned-image-name { font-size: 11px; color: #9ecfff; word-break: break-all; text-align: center; font-weight: bold; }
-        #pinned-image-folder { font-size: 10px; color: #666; text-align: center; margin-top: -4px; }
-        #pinned-tags-title { font-size: 11px; color: #888; text-transform: uppercase; font-weight: bold; margin-top: 6px; letter-spacing: 0.5px; }
-        #pinned-tags-hint { font-size: 10px; color: #555; margin-top: -4px; margin-bottom: 2px; }
-        #pinned-tags-list { display: flex; flex-direction: column; gap: 0; background: #111; border-radius: 6px; overflow: hidden; }
+        #pinned-image-name { font-size: 11px; color: #9ecfff; word-break: break-all; text-align: center; font-weight: bold; flex-shrink: 0; }
+        #pinned-image-folder { font-size: 10px; color: #666; text-align: center; margin-top: -4px; flex-shrink: 0; }
+        #pinned-tags-title { font-size: 11px; color: #888; text-transform: uppercase; font-weight: bold; margin-top: 6px; letter-spacing: 0.5px; flex-shrink: 0; }
+        #pinned-tags-hint { font-size: 10px; color: #555; margin-top: -4px; margin-bottom: 2px; flex-shrink: 0; }
+        /* Região de scroll PRÓPRIA da lista de tags — antes o scroll (ou a falta
+           dele) era do wrap inteiro (foto + nome + lista + botões juntos), o que
+           também empurrava os botões "Add" pra fora da vista. Agora só esta
+           região rola; foto/nome ficam fixos em cima e os botões fixos embaixo. */
+        #pinned-tags-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+        #pinned-tags-list { display: flex; flex-direction: column; gap: 0; background: #111; border-radius: 6px; }
         .pinned-tag-row { border-radius: 0; cursor: pointer; }
         .pinned-tag-row.is-nl .tag-name { color: #b890ff; }
-        #pinned-selection-actions { display: none; gap: 6px; margin-top: 4px; }
+        #pinned-selection-actions { display: none; gap: 6px; margin-top: 4px; flex-shrink: 0; }
         #pinned-selection-actions .btn-multi { padding: 7px; font-size: 10px; }
 
         .list-pin-btn {
@@ -62,6 +68,11 @@
             border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center;
             justify-content: center; font-size: 12px;
         }
+
+        /* Resizer próprio do painel de Pin (mesmo visual dos outros .resizer do
+           app via a classe global .resizer.vertical, sem precisar tocar em
+           tagmanager_ui_core.js). Visibilidade controlada via JS junto com o painel. */
+        #resizer-pinned { display: none; }
     `;
     document.head.appendChild(style);
 
@@ -83,23 +94,81 @@
                 <div id="pinned-image-folder"></div>
                 <div id="pinned-tags-title">Tags (select, then Add / Add to All)</div>
                 <div id="pinned-tags-hint">Read-only here — cannot be edited or removed from this panel</div>
-                <div id="pinned-tags-list"></div>
-                <div id="pinned-selection-actions">
+                <div id="pinned-tags-scroll"><div id="pinned-tags-list"></div></div>
+                <div id="pinned-selection-actions" style="align-items:center;">
+                    <select id="pinned-add-pos" class="pos-select" title="Position when adding these tags" style="flex:0 0 auto;"><option value="bottom">Bot</option><option value="top">Top</option></select>
                     <button class="btn-multi btn-add-all" onclick="window.addPinnedSelectedTagsTo('selected')">➕ Add</button>
                     <button class="btn-multi btn-add-all" onclick="window.addPinnedSelectedTagsTo('all')">➕ Add to All</button>
                 </div>
             </div>
         `;
 
+        const resizer = document.createElement('div');
+        resizer.id = 'resizer-pinned';
+        resizer.className = 'resizer vertical';
+        resizer.title = 'Drag to resize the Pinned panel';
+
         const colList = document.getElementById('col-list');
         const workspace = document.getElementById('view-editor');
         if (workspace && colList) {
             workspace.insertBefore(panel, colList);
+            workspace.insertBefore(resizer, colList);
         } else if (workspace) {
             workspace.insertBefore(panel, workspace.firstChild);
+            workspace.insertBefore(resizer, panel.nextSibling);
         }
 
         document.getElementById('btn-unpin-image').onclick = () => window.unpinImage();
+
+        setupPinnedResizer(panel, resizer);
+        loadPinnedPanelWidth(panel);
+    }
+
+    /* ---------- RESIZER (arrastar a lateral do painel, igual aos outros da app) ---------- */
+    function setupPinnedResizer(panel, resizer) {
+        if (resizer.__pinResizerInit) return;
+        resizer.__pinResizerInit = true;
+
+        let isDragging = false;
+        let startX = 0;
+        let startWidth = 0;
+        let rafPending = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startWidth = panel.getBoundingClientRect().width;
+            document.body.classList.add('is-resizing');
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            if (rafPending) return;
+            rafPending = true;
+            requestAnimationFrame(() => {
+                let newWidth = startWidth + (e.clientX - startX);
+                if (newWidth < 160) newWidth = 160;
+                if (newWidth > 500) newWidth = 500;
+                panel.style.width = newWidth + 'px';
+                rafPending = false;
+            });
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                document.body.classList.remove('is-resizing');
+                if (panel.style.width && typeof window.saveSetting === 'function') {
+                    window.saveSetting('pinned-panel-width', panel.style.width);
+                }
+            }
+            isDragging = false;
+        });
+    }
+
+    async function loadPinnedPanelWidth(panel) {
+        if (typeof window.getSetting !== 'function') return;
+        const saved = await window.getSetting('pinned-panel-width', '230px');
+        if (saved) panel.style.width = saved;
     }
 
     /* ---------- HELPERS ---------- */
@@ -146,10 +215,17 @@
         if (!panelEl) return;
         const p = window.pinnedImage;
 
-        if (!p) { panelEl.style.display = 'none'; return; }
+        const resizerEl = document.getElementById('resizer-pinned');
+        if (!p) {
+            panelEl.style.display = 'none';
+            if (resizerEl) resizerEl.style.display = 'none';
+            return;
+        }
         panelEl.style.display = 'flex';
+        if (resizerEl) resizerEl.style.display = 'flex';
 
-        document.getElementById('pinned-image-preview').src = p.url;
+        const previewImg = document.getElementById('pinned-image-preview');
+        if (previewImg.src !== p.url) previewImg.src = p.url;
         document.getElementById('pinned-image-name').textContent = p.name;
         document.getElementById('pinned-image-folder').textContent = p.folderName ? `📂 ${p.folderName}` : '';
 
@@ -216,19 +292,19 @@
     window.addPinnedSelectedTagsTo = function (target) {
         if (window._pinnedSelectedTags.size === 0) return;
         const tagsToAdd = Array.from(window._pinnedSelectedTags);
+        // Painel do Pin agora tem seu PRÓPRIO seletor de posição (Top/Bot), em vez
+        // de depender do "active-add-pos" ou "master-add-pos" de outros painéis.
+        const posSelect = document.getElementById('pinned-add-pos');
+        const pos = posSelect ? posSelect.value : 'bottom';
 
         if (target === 'selected') {
             if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) {
                 if (window.showAlert) window.showAlert('Select an active image first!', 'warn');
                 return;
             }
-            const posSelect = document.getElementById('active-add-pos');
-            const pos = posSelect ? posSelect.value : 'bottom';
             tagsToAdd.forEach(tag => { if (typeof addTagToSelected === 'function') addTagToSelected(tag, pos); });
             if (window.showAlert) window.showAlert(`Added ${tagsToAdd.length} tag(s) from the pinned image.`, 'success');
         } else if (target === 'all') {
-            const posSelect = document.getElementById('master-add-pos');
-            const pos = posSelect ? posSelect.value : 'bottom';
             tagsToAdd.forEach(tag => { if (typeof addTagToAllImages === 'function') addTagToAllImages(tag, pos); });
             if (window.showAlert) window.showAlert(`Added ${tagsToAdd.length} tag(s) to all images.`, 'success');
         }
@@ -262,12 +338,18 @@
         });
     }
 
-    /* ---------- WRAP DE window.renderImageList ----------
-       Não editamos tagmanager_ui_core.js para isso: só "envelopamos" a
-       função original (mesmo padrão já usado em tagmanager_custom_rules.js
-       para o audit de IA), rodando-a normalmente e, na sequência,
-       injetando/atualizando o botão de pin em cada linha da lista. */
-    function wrapRenderImageList() {
+    /* ---------- HOOK PÓS-RENDER (via tagmanager_render_hooks.js) ----------
+       Antes, este arquivo fazia seu próprio wrap de window.renderImageList.
+       Agora só registra o callback no ponto central de hooks — 1 wrap só
+       pra todos os plugins, em vez de um por plugin empilhado em cima do
+       outro. Fallback: se por algum motivo render_hooks.js não tiver
+       carregado (ordem alterada no HTML), cai de volta pro wrap manual
+       antigo, pra nunca deixar de funcionar. */
+    function installPinHook() {
+        if (typeof window.registerPostRenderImageList === 'function') {
+            window.registerPostRenderImageList(injectPinButtons);
+            return;
+        }
         if (typeof window.renderImageList !== 'function' || window.renderImageList.__pinWrapped) return;
         const original = window.renderImageList;
         const wrapped = function () {
@@ -278,11 +360,7 @@
         window.renderImageList = wrapped;
     }
 
-    /* O painel precisa existir antes da 1ª renderização da lista, e o wrap
-       precisa ser aplicado assim que tagmanager_ui_core.js tiver definido
-       window.renderImageList — o que já aconteceu antes deste script rodar,
-       pois ele é carregado depois no HTML. */
     buildPanel();
-    wrapRenderImageList();
+    installPinHook();
 
 })();
