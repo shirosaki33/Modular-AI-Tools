@@ -403,15 +403,26 @@ window.renderEditor = function() {
                 }
             }
             
-            if (!isMultiSelected && !isMultiImageSelection) {
+            // Arrastar tags: continua bloqueado apenas quando o usuário tem VÁRIAS
+            // TAGS selecionadas ao mesmo tempo (isMultiSelected — outro modo de uso,
+            // com sua própria barra de ações). Com 1 ou várias IMAGENS selecionadas
+            // o drag agora funciona igual: window.reorderTags() abaixo já reordena
+            // usando o NOME da tag (não mais o índice fixo desta lista fundida),
+            // então cada imagem reordena dentro da SUA PRÓPRIA lista de tags.
+            if (!isMultiSelected) {
                 row.draggable = true;
                 row.ondragstart = (e) => { 
                     if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon')) return false;
-                    e.dataTransfer.setData('text/plain', i); draggedTagIndex = i; row.classList.add('dragging'); 
+                    e.dataTransfer.setData('text/plain', tag); draggedTagIndex = i; window._draggedTagName = tag; row.classList.add('dragging'); 
                 };
-                row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; };
+                row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; window._draggedTagName = null; };
                 row.ondragover = (e) => e.preventDefault();
-                row.ondrop = (e) => { e.preventDefault(); if (draggedTagIndex !== null && draggedTagIndex !== i && typeof window.reorderTags === 'function') window.reorderTags(draggedTagIndex, i); };
+                row.ondrop = (e) => {
+                    e.preventDefault();
+                    if (draggedTagIndex !== null && i !== draggedTagIndex && window._draggedTagName && window._draggedTagName !== tag && typeof window.reorderTags === 'function') {
+                        window.reorderTags(window._draggedTagName, tag);
+                    }
+                };
             }
  
             row.onclick = (e) => {
@@ -648,16 +659,44 @@ window.addTagToAllImages = function(newTag, position = 'bottom') {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
  
-window.reorderTags = function(fromIndex, toIndex) {
+/* ---------------------------------------------------------------------
+   REORDER POR NOME DE TAG (não mais por índice fixo)
+   ---------------------------------------------------------------------
+   Antes usava (fromIndex, toIndex) baseados na posição dentro da lista
+   FUNDIDA (sortedActiveTags — a união das tags de todas as imagens
+   selecionadas). Isso só fazia sentido com 1 imagem selecionada: com
+   várias imagens, o mesmo índice podia apontar pra tags completamente
+   diferentes em cada uma, corrompendo a ordem.
+
+   Agora recebe os NOMES das tags (fromTag = a que foi arrastada,
+   toTag = a que recebeu o drop) e, para CADA imagem selecionada,
+   reordena de forma independente DENTRO da própria lista de tags dela:
+   - Se a imagem tiver as duas tags, move fromTag para a posição de toTag.
+   - Se a imagem não tiver uma das duas (ex: conjuntos de tags diferentes
+     entre as imagens selecionadas), essa imagem simplesmente é ignorada
+     nesse reorder — nada quebra, ela só não é afetada.
+   Funciona igual para 1 imagem só (comportamento antigo preservado) e
+   para várias imagens ao mesmo tempo (novo). */
+window.reorderTags = function(fromTag, toTag) {
+    if (!fromTag || !toTag || fromTag === toTag) return;
+    const modifiedFiles = [];
     selectedIndices.forEach(idx => {
-        if (imageFiles[idx].type === 'tags') {
-            let tags = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t);
-            tags.splice(toIndex, 0, tags.splice(fromIndex, 1)[0]);
-            imageFiles[idx].content = tags.join(', ');
+        const img = imageFiles[idx];
+        if (!img || img.type !== 'tags' || !img.content) return;
+        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+        const fromIdx = tags.indexOf(fromTag);
+        const toIdx = tags.indexOf(toTag);
+        if (fromIdx === -1 || toIdx === -1) return; // esta imagem não tem as duas tags — pula
+        tags.splice(toIdx, 0, tags.splice(fromIdx, 1)[0]);
+        const newContent = tags.join(', ');
+        if (newContent !== img.content) {
+            img.content = newContent;
+            modifiedFiles.push(img);
         }
     });
-    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
-    if(typeof window.renderEditor === 'function') window.renderEditor();
+    if (modifiedFiles.length === 0) return;
+    if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
+    if (typeof window.renderEditor === 'function') window.renderEditor();
 }
  
 window.inlineAdd = function(source) {

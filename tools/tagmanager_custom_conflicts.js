@@ -1,7 +1,7 @@
 /* =========================================================================
-   CONFLICT / SIMILARITY / AUTO-MERGE MANAGER - v16
+   CONFLICT / SIMILARITY / AUTO-MERGE MANAGER - v16 (Modificado com Auto-Do)
    ---------------------------------------------------------------------
-   Standalone — Integra Conflitos, Similares e um Auto-Merge unificado.
+   Standalone — Integra Conflitos, Similares e um Auto-Do unificado.
    Com botões de "Restore Defaults" individuais por categoria e 
    ordenação que mantém regras Originais sempre no topo.
 ========================================================================= */
@@ -53,6 +53,10 @@
         { 
             name: 'clothing', 
             tags: ['shirt', 'dress', 'skirt', 'pants', 'shorts', 'jeans', 'jacket', 'coat', 'sweater', 'hoodie', 'cardigan', 'vest', 'blazer', 'uniform', 'suit', 'kimono', 'robe', 'gown', 'swimsuit', 'bikini', 'lingerie', 'underwear', 'panties', 'bra', 'boxers', 'briefs', 'socks', 'thighhighs', 'pantyhose', 'stockings', 'leggings', 'gloves', 'mittens', 'scarf', 'tie', 'necktie', 'bowtie', 'collar', 'hat', 'cap', 'hood', 'veil', 'mask', 'apron', 'overalls', 'romper', 'leotard', 'bodysuit', 'top', 'blouse', 'tank top', 'crop top', 'tube top', 'camisole', 'corset', 'harness', 'belt', 'shoes', 'boots', 'sandals', 'heels', 'sneakers', 'slippers', 'armor', 'clothes', 'clothing', 'outfit', 'costume'] 
+        },
+        {
+            name: 'solidbackground',
+            tags: ['simple background', 'white background', 'black background', 'transparent background', 'blue background', 'red background', 'green background', 'yellow background', 'pink background', 'purple background', 'grey background', 'brown background', 'orange background']
         }
     ];
 
@@ -122,6 +126,7 @@
                             item.removeTags = data.removeTags;
                             item.require = data.require;
                             item.exclude = data.exclude;
+                            item.isAutoFill = data.isAutoFill;
                             delete item.tags; delete item.target; delete item.fallback;
                         } else {
                             item.tags = data; 
@@ -194,9 +199,14 @@
         }
 
         if (hasRequired && !hasExcluded) {
-            let newTags = tagsArray.filter(t => 
-                !rule.removeTags.some(rem => rem.toLowerCase() === t.toLowerCase())
-            );
+            let newTags = [...tagsArray];
+            
+            if (!rule.isAutoFill) {
+                newTags = tagsArray.filter(t => 
+                    !rule.removeTags.some(rem => rem.toLowerCase() === t.toLowerCase())
+                );
+            }
+            
             if (rule.keepTag && rule.keepTag.trim() !== '') {
                 newTags.push(rule.keepTag.trim());
             }
@@ -217,15 +227,15 @@
         const rows = await getAllRules();
         
         const amRules = rows.filter(r => r.category === 'automerge').map(row => {
-            if (row.tags) return { keepTag: row.tags[0], removeTags: row.tags.slice(1), require: [], exclude: [] };
-            if (row.target) return { keepTag: row.fallback, removeTags: [row.target], require: row.exclude || [], exclude: row.require || [] };
+            if (row.tags) return { keepTag: row.tags[0], removeTags: row.tags.slice(1), require: [], exclude: [], isAutoFill: false };
+            if (row.target) return { keepTag: row.fallback, removeTags: [row.target], require: row.exclude || [], exclude: row.require || [], isAutoFill: false };
             return row;
         });
 
         const embeds = rows.filter(r => r.category === 'embed');
         
         if (amRules.length === 0) {
-            if (manual && window.showAlert) window.showAlert('No Auto-Merge rules configured.', 'warn');
+            if (manual && window.showAlert) window.showAlert('No Auto-Do rules configured.', 'warn');
             return;
         }
 
@@ -268,19 +278,12 @@
             if (typeof window.renderEditor === 'function') window.renderEditor();
             if (typeof window.applyFilters === 'function') window.applyFilters();
             
-            if (window.showAlert) window.showAlert(`Auto-Merge applied to ${changedCount} image(s)!`, 'success');
+            if (window.showAlert) window.showAlert(`Auto-Do applied to ${changedCount} image(s)!`, 'success');
         } else {
             if (manual && window.showAlert) window.showAlert('No matching tags found to automate.', 'info');
         }
     };
 
-    /* Antes: wrap próprio de renderImageList detectando troca de dataset e
-       disparando runAutoMergeOnDataset via setTimeout independente — rodava
-       ao mesmo tempo que o scan do Danbooru e o dup name fixer, sem
-       nenhuma coordenação entre eles (uma das causas de lentidão/falhas
-       intermitentes com datasets grandes). Agora registra na fila
-       serializada (tagmanager_auto_task_queue.js), que roda os 3 scans
-       automáticos em sequência, nunca em paralelo. */
     function hookAutoMergeLoader() {
         if (window._autoMergeHooked) return;
         if (typeof window.registerAutoDatasetTask === 'function') {
@@ -293,7 +296,6 @@
             window._autoMergeHooked = true;
             return;
         }
-        // Fallback (caso tagmanager_auto_task_queue.js não tenha carregado)
         let _lastImageFilesRef = null;
         const _origRender = window.renderImageList;
         if (typeof _origRender === 'function') {
@@ -343,7 +345,7 @@
     }
 
     async function checkAndInstallFactoryDefaults() {
-        const flag = 'rulesManager_v16_Installed';
+        const flag = 'rulesManager_v17_Installed';
         if (localStorage.getItem(flag)) return;
 
         const existingRules = await getAllRules();
@@ -360,14 +362,24 @@
             keepTag: 'nude',
             removeTags: ['completely nude'],
             require: [],
-            exclude: ['full body', '@clothing']
+            exclude: ['full body', '@clothing'],
+            isAutoFill: false
         }, true);
         
         await addRule('automerge', {
             keepTag: 'completely nude',
             removeTags: ['nude'],
             require: ['full body'],
-            exclude: ['@clothing']
+            exclude: ['@clothing'],
+            isAutoFill: false
+        }, true);
+        
+        await addRule('automerge', {
+            keepTag: 'tachi-e',
+            removeTags: ['visual novel cg'],
+            require: ['@solidbackground'],
+            exclude: [],
+            isAutoFill: true
         }, true);
 
         localStorage.setItem(flag, 'true');
@@ -408,9 +420,9 @@
     window.reloadUserConflictRules = applyUserRulesToGlobals;
 
     window.restoreDefaultRules = async function() {
-        if (!confirm('Restore ALL original default rules across ALL categories?\n\n- Your custom rules & embeds WILL BE KEPT intact!')) return;
+        if (!confirm("Restore ALL original default rules across ALL categories?\n\n- Your custom rules & embeds WILL BE KEPT intact!")) return;
         await clearDefaultRulesFromDB();
-        localStorage.removeItem('rulesManager_v16_Installed');
+        localStorage.removeItem('rulesManager_v17_Installed');
         await applyUserRulesToGlobals();
         if (document.getElementById('modal-conflict-manager')) await refreshModalBody(); 
         if (window.showAlert) window.showAlert('All original rules restored successfully!', 'success');
@@ -430,8 +442,9 @@
         } else if (category === 'similar') {
             for (let tags of FACTORY_SIMILAR) await addRule('similar', tags, true);
         } else if (category === 'automerge') {
-            await addRule('automerge', { keepTag: 'nude', removeTags: ['completely nude'], require: [], exclude: ['full body', '@clothing'] }, true);
-            await addRule('automerge', { keepTag: 'completely nude', removeTags: ['nude'], require: ['full body'], exclude: ['@clothing'] }, true);
+            await addRule('automerge', { keepTag: 'nude', removeTags: ['completely nude'], require: [], exclude: ['full body', '@clothing'], isAutoFill: false }, true);
+            await addRule('automerge', { keepTag: 'completely nude', removeTags: ['nude'], require: ['full body'], exclude: ['@clothing'], isAutoFill: false }, true);
+            await addRule('automerge', { keepTag: 'tachi-e', removeTags: ['visual novel cg'], require: ['@solidbackground'], exclude: [], isAutoFill: true }, true);
         }
 
         await applyUserRulesToGlobals();
@@ -440,7 +453,7 @@
     };
 
     window.clearAllRules = async function() {
-        if (!confirm('WARNING: This will delete ALL rules and embeds.\nAre you sure?')) return;
+        if (!confirm("WARNING: This will delete ALL rules and embeds.\nAre you sure?")) return;
         const rows = await getAllRules();
         for (let r of rows) await deleteRule(r.id);
         await applyUserRulesToGlobals();
@@ -451,28 +464,28 @@
     /* ---------- UI (INTERFACE PRINCIPAL) ---------- */
     const CATEGORY_META = {
         conflict: { 
-            label: '🚨 Conflicts (Red)', 
-            color: '#ff6060', 
-            hint: 'Tags that must never coexist in the same image.',
-            desc: 'Prevents contradictory tags. Highlights them in red to warn you of a logical error.'
+            label: "🚨 Conflicts (Red)", 
+            color: "#ff6060", 
+            hint: "Tags that must never coexist in the same image.",
+            desc: "Prevents contradictory tags. Highlights them in red to warn you of a logical error."
         },
         similar: { 
-            label: '🟨 Similar (Yellow)', 
-            color: '#ffcc66', 
-            hint: 'Redundant tags that trigger a visual warning.',
-            desc: 'Groups synonymous or overlapping tags. Highlights them in yellow to suggest keeping only one.'
+            label: "🟨 Similar (Yellow)", 
+            color: "#ffcc66", 
+            hint: "Redundant tags that trigger a visual warning.",
+            desc: "Groups synonymous or overlapping tags. Highlights them in yellow to suggest keeping only one."
         },
         automerge: { 
-            label: '⚡ Auto-Merge (Unified)', 
-            color: '#00ff99', 
-            hint: 'Consolidates redundant tags and applies advanced conditional checks.',
-            desc: 'If ANY of the Remove Tags exist in the image, it removes them and adds the Main Tag (provided conditions are met).'
+            label: "⚡ Auto-Do (Unified)", 
+            color: "#00ff99", 
+            hint: "Consolidates redundant tags and applies advanced conditional checks.",
+            desc: "Auto-Merge: Removes Trigger tags and adds Main Tag. Auto-Fill: Keeps Trigger tags and adds Main Tag."
         },
         highlight: {
-            label: '🎨 Custom Highlights',
-            color: '#4db8ff',
-            hint: 'Custom-colored groups of tags, shown with an icon + tint in the tag lists.',
-            desc: 'Two kinds live here: 🔒 Built-in Highlights (Favorite/Preset/Filter — color + on/off only, can\'t be deleted) and 📁 Custom Groups you create yourself (e.g. "eye orientation") with your own tags + color. Matching tags get tinted and, for custom groups, a 🔖 icon next to the star with "Belongs to: <group>" on hover — independent of the Conflicts/Similar toggle above.'
+            label: "🎨 Custom Highlights",
+            color: "#4db8ff",
+            hint: "Custom-colored groups of tags, shown with an icon + tint in the tag lists.",
+            desc: "Two kinds live here: 🔒 Built-in Highlights (Favorite/Preset/Filter — color + on/off only, can't be deleted) and 📁 Custom Groups you create yourself (e.g. 'eye orientation') with your own tags + color. Matching tags get tinted and, for custom groups, a 🔖 icon next to the star with 'Belongs to: <group>' on hover — independent of the Conflicts/Similar toggle above."
         }
     };
 
@@ -515,7 +528,7 @@
                         </div>
                     </div>
                     <div style="display:flex; gap:8px;">
-                        <button class="btn-top-action" onclick="window.runAutoMergeOnDataset(true)" style="background:#00aa66; border-color:#00cc88; color:#000;">▶ Run Auto-Merge Now</button>
+                        <button class="btn-top-action" onclick="window.runAutoMergeOnDataset(true)" style="background:#00aa66; border-color:#00cc88; color:#000;">▶ Run Auto-Do Now</button>
                         <button class="btn-top-action" onclick="window.restoreDefaultRules()">🔄 Restore ALL Defaults</button>
                         <button class="btn-top-action" onclick="window.restoreHighlightColorDefaults()" style="background:#151515; color:#4db8ff; border-color:#2a5a8c;" title="Reset Favorite/Preset/Filter/NL/Selection colors back to factory defaults (doesn't touch on/off state or custom groups)">🎨 Restore Highlight Colors</button>
                         <button class="btn-top-action" onclick="window.clearAllRules()" style="color:#ff6060; border-color:#7a222c;">🗑️ Clear All</button>
@@ -615,12 +628,18 @@
                 let rems = row.removeTags || [];
                 let reqs = row.require || [];
                 let excs = row.exclude || [];
+                let isAutoFill = row.isAutoFill || false;
+                
                 if (row.tags) { keep = row.tags[0]; rems = row.tags.slice(1); }
                 else if (row.target) { keep = row.fallback; rems = [row.target]; reqs = row.exclude || []; excs = row.require || []; }
 
+                const modeBadge = isAutoFill 
+                    ? '<span style="background:#1a3a5c; color:#4db8ff; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2a5a8c; margin-left:4px;">Fill</span>'
+                    : '<span style="background:#5c1a1a; color:#ff6060; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #7a222c; margin-left:4px;">Merge</span>';
+
                 item.innerHTML = `
                     <div style="flex:1; display:flex; flex-direction: column; gap: 6px; overflow: hidden;">
-                        <div>${badge} <b style="color:#ff6060; font-size:11px;">[${escapeHTML(rems.join(', '))}]</b> ${keep ? `<span style="color:#888; font-size:10px; margin: 0 4px;">→</span> <b style="color:#00ff99; font-size:12px;">${escapeHTML(keep)}</b>` : `<span style="color:#888; font-size:10px; margin-left:4px;">(Removed)</span>`}</div>
+                        <div>${badge}${modeBadge} <b style="color:${isAutoFill ? '#4db8ff' : '#ff6060'}; font-size:11px; margin-left:4px;">[${escapeHTML(rems.join(', '))}]</b> ${keep ? `<span style="color:#888; font-size:10px; margin: 0 4px;">→</span> <b style="color:#00ff99; font-size:12px;">${isAutoFill ? '+ ' : ''}${escapeHTML(keep)}</b>` : `<span style="color:#888; font-size:10px; margin-left:4px;">(Removed)</span>`}</div>
                         <div style="font-size:11px; color:#aaa; display:flex; gap:10px; flex-wrap:wrap;">
                             ${reqs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#00ff99;">Req:</span> ${escapeHTML(reqs.join(', '))}</span>` : ''}
                             ${excs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#ff6060;">Exc:</span> ${escapeHTML(excs.join(', '))}</span>` : ''}
@@ -634,8 +653,8 @@
                 
                 item.querySelector('.btn-conflict-edit').onclick = async () => {
                     const input = prompt(
-                        'Edit Rule:\nFormat: Main Tag | Remove Tags | Requires (comma-sep) | Excludes (comma-sep)\nLeave blank space between pipes for empty properties.', 
-                        `${keep} | ${rems.join(', ')} | ${reqs.join(', ')} | ${excs.join(', ')}`
+                        "Edit Rule:\nFormat: Main Tag | Triggers (Remove/Check) | Requires | Excludes | isAutoFill (true/false)", 
+                        `${keep} | ${rems.join(', ')} | ${reqs.join(', ')} | ${excs.join(', ')} | ${isAutoFill}`
                     );
                     if (input === null) return;
                     const parts = input.split('|').map(s => s.trim());
@@ -645,9 +664,10 @@
                         keepTag: parts[0],
                         removeTags: parts[1].split(',').map(t=>t.trim()).filter(t=>t),
                         require: parts[2] ? parts[2].split(',').map(t=>t.trim()).filter(t=>t) : [],
-                        exclude: parts[3] ? parts[3].split(',').map(t=>t.trim()).filter(t=>t) : []
+                        exclude: parts[3] ? parts[3].split(',').map(t=>t.trim()).filter(t=>t) : [],
+                        isAutoFill: parts[4] === 'true'
                     };
-                    if (data.removeTags.length === 0) { if (window.showAlert) window.showAlert('Remove Tags cannot be empty.', 'error'); return; }
+                    if (data.removeTags.length === 0) { if (window.showAlert) window.showAlert('Triggers cannot be empty.', 'error'); return; }
                     
                     await updateRule(row.id, data); 
                     await applyUserRulesToGlobals();
@@ -691,27 +711,26 @@
         addRow.className = 'inline-add-box';
         
         if (category === 'automerge') {
-            // Ajuste no cssText aqui:
             addRow.style.cssText = 'display: flex; flex-direction: column; gap: 8px; padding: 12px 15px; background: #111; align-items: stretch; flex: 0 0 auto; border-top: 1px solid #222;';
             addRow.innerHTML = `
                 <div style="display:flex; gap:6px;">
-                    <!-- Ajuste no min-width: 0; de cada input -->
-                    <input type="text" class="cond-keep" placeholder="Main Tag" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
-                    <input type="text" class="cond-remove" placeholder="Remove Tags" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                    <input type="text" class="cond-keep" placeholder="Main Tag (to add)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                    <input type="text" class="cond-remove" placeholder="Trigger Tags (comma-sep)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
                 </div>
                 <div style="display:flex; gap:6px;">
-                    <input type="text" class="cond-req" placeholder="Requires (comma-sep)" style="flex:2; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
-                    <input type="text" class="cond-exc" placeholder="Excludes (e.g. @clothing)" style="flex:2; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
-                    <button class="cond-add-btn" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; font-size:11px; padding:6px 14px; border-radius:4px; flex-shrink:0; font-weight:bold; cursor:pointer;">➕ Add</button>
+                    <input type="text" class="cond-req" placeholder="Requires (comma-sep)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                    <input type="text" class="cond-exc" placeholder="Excludes (e.g. @clothing)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                </div>
+                <div style="display:flex; gap:6px; justify-content: flex-end;">
+                    <button class="cond-add-fill-btn" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; font-size:11px; padding:6px 14px; border-radius:4px; font-weight:bold; cursor:pointer;">➕ Add Fill</button>
+                    <button class="cond-add-merge-btn" style="background:#5c1a1a; color:#ff6060; border:1px solid #7a222c; font-size:11px; padding:6px 14px; border-radius:4px; font-weight:bold; cursor:pointer;">➕ Add Merge</button>
                 </div>
             `;
             
-            const condBtn = addRow.querySelector('.cond-add-btn');
-            
-            condBtn.onclick = async () => {
+            const doAddAutoDo = async (isAutoFill) => {
                 const keep = addRow.querySelector('.cond-keep').value.trim();
                 const removeStr = addRow.querySelector('.cond-remove').value.trim();
-                if (!removeStr) { if (window.showAlert) window.showAlert('Remove Tags is required.', 'warn'); return; }
+                if (!removeStr) { if (window.showAlert) window.showAlert('Trigger Tags are required.', 'warn'); return; }
                 
                 const reqStr = addRow.querySelector('.cond-req').value;
                 const excStr = addRow.querySelector('.cond-exc').value;
@@ -720,7 +739,8 @@
                     keepTag: keep,
                     removeTags: removeStr.split(',').map(t=>t.trim()).filter(t=>t),
                     require: reqStr.split(',').map(t=>t.trim()).filter(t=>t),
-                    exclude: excStr.split(',').map(t=>t.trim()).filter(t=>t)
+                    exclude: excStr.split(',').map(t=>t.trim()).filter(t=>t),
+                    isAutoFill: isAutoFill
                 };
                 
                 await addRule(category, data, false); 
@@ -734,10 +754,12 @@
                 refreshModalBody();
             };
 
+            addRow.querySelector('.cond-add-fill-btn').onclick = () => doAddAutoDo(true);
+            addRow.querySelector('.cond-add-merge-btn').onclick = () => doAddAutoDo(false);
+
         } else {
             addRow.style.cssText = 'display: flex; gap: 8px; padding: 12px 15px; background: #111; align-items: center; flex: 0 0 auto; border-top: 1px solid #222;';
             addRow.innerHTML = `
-                <!-- Ajuste no min-width: 0; no input -->
                 <input type="text" class="conflict-add-input" placeholder="tag1, tag2..." style="flex:1; font-size:12px; background:#222; border:1px solid #444; padding:8px 10px; border-radius:6px; color:#fff; outline:none; min-width: 0;">
                 <button class="conflict-add-btn" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; font-size:12px; padding:8px 12px; border-radius:6px; flex-shrink:0; font-weight:bold; cursor:pointer;">➕ Add</button>
             `;
@@ -775,7 +797,6 @@
     }
 
     /* ---------- CUSTOM HIGHLIGHTS: PAINEL (4ª CATEGORIA) ---------- */
-    /* ---------- CUSTOM HIGHLIGHTS: PAINEL (4ª CATEGORIA) ---------- */
     function renderHighlightSection(rows) {
         const meta = CATEGORY_META.highlight;
         const catRows = rows.filter(r => r.category === 'highlight');
@@ -808,7 +829,6 @@
         list.className = 'panel-list-scroll';
         list.style.cssText = 'flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111; padding: 10px; gap: 6px;';
 
-        // --- SISTEMA DE COLLAPSE PARA OS BUILT-INS ---
         const builtinToggle = document.createElement('div');
         builtinToggle.style.cssText = 'font-size:10px; color:#aaa; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px; padding: 8px 10px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: 0.15s; margin-bottom: 2px;';
         builtinToggle.innerHTML = `<span>🔒 Built-in Highlights <span style="font-size:9px; color:#666; text-transform:none; margin-left:5px;">(color + on/off only)</span></span> <span class="toggle-icon" style="font-size: 12px;">▼</span>`;
@@ -819,7 +839,6 @@
         list.appendChild(builtinToggle);
 
         const builtinContainer = document.createElement('div');
-        // display: none para iniciar fechado como padrão
         builtinContainer.style.cssText = 'display: none; flex-direction: column; gap: 6px; margin-bottom: 6px;'; 
         
         builtinContainer.appendChild(buildLockedHighlightRow('favorite', '⭐ Favorite Tags', 'highlight-color-favorite', window._builtinHighlightCheckboxes && window._builtinHighlightCheckboxes.favorite));
@@ -836,7 +855,6 @@
             builtinToggle.querySelector('.toggle-icon').textContent = isCollapsed ? '▲' : '▼';
             builtinToggle.style.color = isCollapsed ? '#fff' : '#aaa';
         };
-        // ---------------------------------------------
 
         const divider = document.createElement('div');
         divider.style.cssText = 'border-top: 1px dashed #333; margin: 4px 2px 2px;';
@@ -960,7 +978,7 @@
     }
 
     window.restoreHighlightColorDefaults = async function () {
-        if (!confirm('Restore all Built-in Highlight colors (Favorite, Preset, Filter, NL, Selection) to their factory defaults?\nThis does NOT change their on/off state.')) return;
+        if (!confirm("Restore all Built-in Highlight colors (Favorite, Preset, Filter, NL, Selection) to their factory defaults?\nThis does NOT change their on/off state.")) return;
         for (const key of Object.keys(DEFAULT_HIGHLIGHT_COLORS)) {
             window._builtinHighlightColors[key] = DEFAULT_HIGHLIGHT_COLORS[key];
             if (typeof window.saveSetting === 'function') await window.saveSetting(`highlight-color-${key}`, DEFAULT_HIGHLIGHT_COLORS[key]);
@@ -1125,12 +1143,6 @@
         });
     }
 
-    /* Antes: 3 wraps próprios (renderEditor, renderMasterTagList,
-       renderImageList) empilhados em cima dos wraps de outros plugins.
-       Agora registra no ponto central de hooks (tagmanager_render_hooks.js)
-       — mesmo efeito, sem empilhar mais uma camada de closure por cima
-       das que já existiam. Fallback pro wrap manual se o arquivo central
-       não tiver carregado. */
     function wrapRenderersForHighlights() {
         const hasRegistry = typeof window.registerPostRenderEditor === 'function'
             && typeof window.registerPostRenderMasterTagList === 'function'
@@ -1191,7 +1203,7 @@
 
     /* ---------- EMBEDS MANAGER UI ---------- */
     window.restoreEmbedDefaults = async function() {
-        if (!confirm(`Restore original default embeds?\n\n- Your custom embeds will be kept.`)) return;
+        if (!confirm("Restore original default embeds?\n\n- Your custom embeds will be kept.")) return;
         const rows = await getAllRules();
         for (let r of rows) {
             if (r.category === 'embed' && r.isDefault) await deleteRule(r.id);
@@ -1345,7 +1357,7 @@
         rightBar.insertBefore(btn, anchor);
     }
 
-    window.addEventListener('DOMContentLoaded', async () => {
+    async function initTagManagerRules() {
         relocateBuiltinHighlightToggles();
         await loadBuiltinHighlightColors();
         wrapRenderersForHighlights();
@@ -1356,7 +1368,13 @@
             hookAutoMergeLoader();
         }, 0);
         await applyUserRulesToGlobals();
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', initTagManagerRules);
+    } else {
+        initTagManagerRules();
+    }
 
 })();
 
@@ -1389,7 +1407,6 @@ window.toggleCounterSimilar = function(skipSave = false) {
     window.updateActiveIssueCounters();
 };
 
-// Helper: calcula o total de tags problemáticas em uma única imagem
 window.getIssuesCountForTags = function(tagsArray) {
     let confCount = 0;
     let simCount = 0;
@@ -1419,7 +1436,7 @@ window.getIssuesCountForTags = function(tagsArray) {
 };
 
 // ==========================================
-// 1. ALL DATASET TAGS (CONTA IMAGENS)
+// 1. ALL DATASET TAGS
 // ==========================================
 window.updateGlobalIssueCounters = function() {
     const btnConf = document.getElementById('global-counter-conflict');
@@ -1454,7 +1471,7 @@ window.updateGlobalIssueCounters = function() {
 };
 
 // ==========================================
-// 2. ACTIVE IMAGE (CONTA PROBLEMAS NA FOTO)
+// 2. ACTIVE IMAGE
 // ==========================================
 window.updateActiveIssueCounters = function() {
     const spanConf = document.getElementById('active-counter-conflict');
@@ -1492,7 +1509,7 @@ window.updateActiveIssueCounters = function() {
 };
 
 // ==========================================
-// AÇÃO DE CLIQUE: Navega ciclicamente
+// AÇÃO DE CLIQUE
 // ==========================================
 window.selectIssueImage = function(type) {
     const arr = window.issueImagesMap[type];
@@ -1540,7 +1557,6 @@ window.selectIssueImage = function(type) {
 // INJEÇÃO NO DOM E HOOKS AUTOMÁTICOS
 // ==========================================
 function initIssueCounters() {
-    // 1. Injeta no Topbar do Active Image
     const activeHeaderLeft = document.querySelector('#col-editor .panel-header > div:first-child');
     if (activeHeaderLeft && !document.getElementById('active-counter-conflict')) {
         const activeCounters = document.createElement('div');
@@ -1552,7 +1568,6 @@ function initIssueCounters() {
         activeHeaderLeft.appendChild(activeCounters);
     }
 
-    // 2. Injeta no Topbar do All Dataset Tags
     const globalHeaderLeft = document.querySelector('#col-tools .panel-header > div:first-child');
     if (globalHeaderLeft && !document.getElementById('global-counter-conflict')) {
         const globalCounters = document.createElement('div');
@@ -1568,7 +1583,6 @@ function initIssueCounters() {
     window.updateActiveIssueCounters();
 }
 
-// 3. Injeção dos Checkboxes no Modal Manage Rules via Interceptação
 const _origOpenConflictManagerForCounters = window.openConflictManager;
 if (typeof _origOpenConflictManagerForCounters === 'function') {
     window.openConflictManager = async function() {
@@ -1609,8 +1623,6 @@ if (document.readyState === 'loading') {
     loadCounterSettingsAndInit();
 }
 
-// Hooks: Atualiza globais + contador ativo (via registro central de
-// tagmanager_render_hooks.js, em vez de mais 2 wraps próprios empilhados)
 if (typeof window.registerPostApplyFilters === 'function' && typeof window.registerPostRenderEditor === 'function') {
     window.registerPostApplyFilters(() => window.updateGlobalIssueCounters());
     window.registerPostRenderEditor(() => window.updateActiveIssueCounters());
@@ -1633,10 +1645,8 @@ if (typeof window.registerPostApplyFilters === 'function' && typeof window.regis
 
 /* =========================================================================
    HOVER HIGHLIGHT (GLOW) PARA CONFLITOS E SIMILARES
-   Restaura o efeito visual e estende aos novos contadores do Active Image
 ========================================================================= */
 
-// 1. Injeta o CSS que faz o "Glow" (brilho) acontecer
 const glowStyle = document.createElement('style');
 glowStyle.innerHTML = `
     .tag-row.glow-conflict, .master-tag-item.glow-conflict { 
@@ -1652,14 +1662,9 @@ glowStyle.innerHTML = `
 `;
 document.head.appendChild(glowStyle);
 
-// 2. Event Delegation: Monitora o mouse na tela inteira de forma eficiente
 document.addEventListener('mouseover', (e) => {
-    // A. Hover no contador de conflitos (Brilha a tag base E seus respectivos alvos)
     if (e.target.id === 'active-counter-conflict') {
-        // Mantém o fallback para as tags originais
         document.querySelectorAll('#tag-list-vertical .tag-row.conflict').forEach(el => el.classList.add('glow-conflict'));
-        
-        // Simula o hover varrendo os titles para acender os alvos cruzados
         document.querySelectorAll('#tag-list-vertical .conflict-warning').forEach(warning => {
             const title = warning.getAttribute('title');
             if (title && title.startsWith('Conflict with: ')) {
@@ -1671,12 +1676,8 @@ document.addEventListener('mouseover', (e) => {
             }
         });
     } 
-    // B. Hover no contador de similares (Brilha a tag base E seus respectivos alvos)
     else if (e.target.id === 'active-counter-similar') {
-        // Mantém o fallback para as tags originais
         document.querySelectorAll('#tag-list-vertical .tag-row.similar').forEach(el => el.classList.add('glow-similar'));
-        
-        // Simula o hover varrendo os titles para acender os alvos cruzados
         document.querySelectorAll('#tag-list-vertical .similar-warning').forEach(warning => {
             const title = warning.getAttribute('title');
             if (title && title.startsWith('Similar/Redundant to: ')) {
@@ -1688,7 +1689,6 @@ document.addEventListener('mouseover', (e) => {
             }
         });
     }
-    // C. Hover em um aviso ESPECÍFICO de conflito dentro de uma tag
     else if (e.target.classList.contains('conflict-warning')) {
         const parentRow = e.target.closest('.tag-row, .master-tag-item');
         if (parentRow) parentRow.classList.add('glow-conflict');
@@ -1702,7 +1702,6 @@ document.addEventListener('mouseover', (e) => {
             });
         }
     } 
-    // D. Hover em um aviso ESPECÍFICO de similaridade dentro de uma tag
     else if (e.target.classList.contains('similar-warning')) {
         const parentRow = e.target.closest('.tag-row, .master-tag-item');
         if (parentRow) parentRow.classList.add('glow-similar');
@@ -1718,7 +1717,6 @@ document.addEventListener('mouseover', (e) => {
     }
 });
 
-// 3. Remove os efeitos visuais quando o mouse sai de cima
 document.addEventListener('mouseout', (e) => {
     if (e.target.id === 'active-counter-conflict' || 
         e.target.id === 'active-counter-similar' || 

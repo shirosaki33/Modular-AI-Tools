@@ -20,6 +20,13 @@
      não custam nova chamada de rede.
    - Botão manual "🔍 Scan Dataset Tags" continua existindo dentro do
      popout, para forçar um recheck (🔄, ignora o cache) quando precisar.
+   - AUTOCOMPLETE NO CAMPO DE BUSCA MANUAL (dbpInput): antes o campo era
+     "cego" — sem sugestão nenhuma, só Enter/Search no achismo. Agora usa
+     a MESMA fonte de dados (window.dbSearchTagMatches, de
+     tagmanager_danbooru_core.js) já usada pelos outros campos de tag do
+     app (Active Image, All Dataset Tags, Presets, Replace), mostrando um
+     dropdown com nome/categoria/contagem (e seta ➜ para tags-alias)
+     enquanto o usuário digita. Clicar numa sugestão já dispara a busca.
 ========================================================================= */
 
 (function () {
@@ -137,6 +144,69 @@
         }
     }
 
+    /* ---------- AUTOCOMPLETE NO CAMPO DE BUSCA MANUAL (dbpInput) ----------
+       Reaproveita window.dbSearchTagMatches (tagmanager_danbooru_core.js),
+       a MESMA função/cache já usada pelos campos de tag "normais" do app
+       (Active Image, All Dataset Tags, Presets, Replace — ver
+       setupDanbooruAutocomplete em tagmanager_caption_tag.js). Mostra o
+       dropdown ".db-autocomplete" (classes/CSS já injetadas por
+       tagmanager_caption_tag.js) logo abaixo do campo; clicar numa
+       sugestão preenche o input E já dispara a busca/wiki. */
+    function setupDbpAutocomplete() {
+        const input = document.getElementById('dbpInput');
+        const wrap = document.getElementById('dbpInputWrap');
+        if (!input || !wrap || wrap.__dbpAutocompleteInit) return;
+        wrap.__dbpAutocompleteInit = true;
+
+        const suggBox = document.createElement('div');
+        suggBox.className = 'db-autocomplete direction-down';
+        suggBox.style.display = 'none';
+        wrap.appendChild(suggBox);
+        wrap._suggBox = suggBox;
+
+        let timeout = null;
+        input.addEventListener('input', (e) => {
+            clearTimeout(timeout);
+            const rawVal = e.target.value.trim().toLowerCase();
+            if (rawVal.length < 2) { suggBox.style.display = 'none'; return; }
+            const val = rawVal.replace(/ /g, '_');
+            timeout = setTimeout(async () => {
+                try {
+                    const results = typeof window.dbSearchTagMatches === 'function' ? await window.dbSearchTagMatches(val, 8) : [];
+                    suggBox.innerHTML = '';
+                    if (!results || results.length === 0) { suggBox.style.display = 'none'; return; }
+
+                    results.forEach(t => {
+                        const div = document.createElement('div');
+                        div.className = 'db-sugg-item';
+                        const color = DB_CAT_COLORS[t.category] || '#aaa';
+                        const displayName = t.name.replace(/_/g, ' ');
+                        const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${t.aliasTo.replace(/_/g, ' ')}</span>` : '';
+                        const countHtml = (t.post_count > 0)
+                            ? Number(t.post_count).toLocaleString()
+                            : (t.isDeprecated ? 'Deprecated' : '0');
+
+                        div.innerHTML = `<span style="color:${color}; font-weight:bold;">${displayName}${arrowHtml}</span><span style="color:#666;">${countHtml}</span>`;
+                        div.onclick = () => {
+                            suggBox.style.display = 'none';
+                            // Igual ao comportamento padrão dos outros campos (aliasClickBehavior
+                            // = 'replace' por padrão): clicar já resolve para a tag real quando é alias.
+                            const finalTag = (t.isAlias && window.aliasClickBehavior !== 'keep') ? t.aliasTo.replace(/_/g, ' ') : displayName;
+                            input.value = finalTag;
+                            dbpPerformSearch(finalTag);
+                        };
+                        suggBox.appendChild(div);
+                    });
+                    suggBox.style.display = 'block';
+                } catch (err) {}
+            }, 350);
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!wrap.contains(e.target)) suggBox.style.display = 'none';
+        });
+    }
+
     /* ---------- MODAL 1: BUSCA MANUAL + SCAN MANUAL ---------- */
     function buildMainModal() {
         if (document.getElementById('modal-danbooru')) return;
@@ -154,7 +224,9 @@
                 </h3>
 
                 <div class="dbp-row">
-                    <input type="text" id="dbpInput" class="dbp-input" placeholder="Search a tag... e.g. 1girl">
+                    <div id="dbpInputWrap" style="position:relative; flex:1; min-width:0;">
+                        <input type="text" id="dbpInput" class="dbp-input" placeholder="Search a tag... e.g. 1girl" autocomplete="off" style="width:100%; box-sizing:border-box;">
+                    </div>
                     <button class="dbp-btn" id="dbpSearchBtn">Search</button>
                     <button class="dbp-btn-detect" id="dbpDetectBtn" title="List all tags already in this dataset (❓ = already has wiki info cached)">🔍✨</button>
                 </div>
@@ -196,7 +268,13 @@
         document.body.appendChild(overlay);
 
         document.getElementById('dbpSearchBtn').onclick = () => dbpPerformSearch();
-        document.getElementById('dbpInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') dbpPerformSearch(); });
+        document.getElementById('dbpInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                dbpPerformSearch();
+                const wrap = document.getElementById('dbpInputWrap');
+                if (wrap && wrap._suggBox) wrap._suggBox.style.display = 'none';
+            }
+        });
         document.getElementById('dbpTranslateBtn').onclick = () => translateDescNode(document.getElementById('dbpTagDesc'));
         document.getElementById('dbpDetectBtn').onclick = () => dbpRunAutoDetect();
 
@@ -209,6 +287,8 @@
                 window.runDanbooruInfoScan(true);
             }
         };
+
+        setupDbpAutocomplete();
     }
 
     async function dbpPerformSearch(tagOverride) {
@@ -505,22 +585,7 @@
         refreshTagRenders();
     };
 
-    /* Antes: wrap próprio de renderImageList detectando troca de dataset e
-       disparando o scan em background via setTimeout independente — competia
-       por rede/CPU com o dup name fixer e o auto-merge rodando ao mesmo
-       tempo. Agora registra na fila serializada (tagmanager_auto_task_queue.js),
-       que roda os 3 scans automáticos em sequência. */
     function hookAutoDanbooruScan() {
-        if (typeof window.registerAutoDatasetTask === 'function') {
-            if (window._dbAutoScanRegistered) return;
-            window.registerAutoDatasetTask('danbooru-background-scan', async () => {
-                window._dbBackgroundScanCancelled = false;
-                await window.runDanbooruBackgroundScan();
-            });
-            window._dbAutoScanRegistered = true;
-            return;
-        }
-        // Fallback (caso tagmanager_auto_task_queue.js não tenha carregado)
         if (typeof window.renderImageList !== 'function' || window.renderImageList.__dbAutoScanWrapped) return;
         const original = window.renderImageList;
         const wrapped = function () {
@@ -628,27 +693,7 @@
         if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     }
 
-    /* Antes: 2 wraps próprios (renderEditor, renderMasterTagList) empilhados
-       em cima dos wraps de outros plugins. Agora registra no ponto central
-       de hooks (tagmanager_render_hooks.js). Fallback pro wrap manual se o
-       arquivo central não tiver carregado. */
     function wrapRenderersForDbInfo() {
-        if (typeof window.registerPostRenderEditor === 'function' && typeof window.registerPostRenderMasterTagList === 'function') {
-            if (window._dbInfoHooksRegistered) return;
-            window.registerPostRenderEditor(() => {
-                const el = document.getElementById('tag-list-vertical');
-                injectDbInfoIcons(el);
-                injectGhostDbInfoIcons(el, '.tag-row.ghost', computeActiveGhostTags, false);
-            });
-            window.registerPostRenderMasterTagList(() => {
-                const el = document.getElementById('master-tag-list');
-                injectDbInfoIcons(el);
-                injectGhostDbInfoIcons(el, '.master-tag-item.ghost', computeMasterGhostTags, true);
-            });
-            window._dbInfoHooksRegistered = true;
-            return;
-        }
-
         if (typeof window.renderEditor === 'function' && !window.renderEditor.__dbInfoWrapped) {
             const original = window.renderEditor;
             const wrapped = function () {
