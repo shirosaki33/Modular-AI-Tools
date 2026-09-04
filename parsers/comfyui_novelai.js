@@ -117,6 +117,9 @@
   function _cnDisplayModel(raw) {
     var s   = _cnTxt(raw).trim();
     var low = s.toLowerCase().replace(/[\s_]+/g, '-');
+    // V5 (released 2026-08-21)
+    if (/nai-diffusion-5-full/.test(low))       return 'NAI Diffusion 5 FULL';
+    if (/nai-diffusion-5-curated/.test(low))    return 'NAI Diffusion 5 Curated';
     if (/nai-diffusion-4-5-full|v4\.5.*4bde2a90/.test(low))    return 'NAI Diffusion 4.5 FULL';
     if (/nai-diffusion-4-5-curated|v4\.5.*c02d4f98/.test(low)) return 'NAI Diffusion 4.5 Curated';
     if (/nai-diffusion-4-full|v4.*37442fca/.test(low))          return 'NAI Diffusion 4.0 FULL';
@@ -169,6 +172,13 @@
 
   function _cnParseComfyNovelAI(text, json) {
     if (!_cnHasComfyNovelAI(json)) return null;
+    // This branch produces the richer "v4-shape" object (out.models/out.params/out.prompts)
+    // used internally by comfy.js. If comfy.js's helpers aren't loaded, skip silently
+    // instead of throwing — window.parseComfyNovelAI below is the self-contained path
+    // png_metadata_reader.html actually calls, and does not need any of this.
+    if (typeof makeParsedV4 !== 'function' || typeof addParamV4 !== 'function' || typeof addSizeParamV4 !== 'function') {
+      return null;
+    }
     var main   = _cnFirstNode(json, /^NovelAI(?:T2I|I2I)$/i)
               || _cnFirstNode(json, /^NovelAIT2I$/i)
               || _cnFirstNode(json, /^NovelAII2I$/i);
@@ -228,6 +238,113 @@
 
     return out;
   }
+
+  /* ──────────────────────────────────────────────────────────────────────
+     FLAT PARSER — self-contained, no dependency on comfy.js internals.
+     This is the function png_metadata_reader.html actually calls:
+       window.parseComfyNovelAI?.(cleanJsonString)
+     It returns the same flat { source, ckpt, pos, neg, steps, cfg, seed,
+     sampler, scheduler, size, loras, notes, source } shape produced by
+     parsers/novelai.js, so it plugs straight into applyMetadataToUI().
+     ────────────────────────────────────────────────────────────────── */
+
+  function _cnCleanPromptFlat(v) {
+    return (typeof cleanPrompt === 'function') ? cleanPrompt(_cnTxt(v)) : _cnTxt(v).trim();
+  }
+
+  function _cnBuildFlatMeta(json) {
+    var main = _cnFirstNode(json, /^NovelAI(?:T2I|I2I)$/i);
+    var inp  = (main && main.node && main.node.inputs) || {};
+
+    var pRef = _cnParamNode(json, main && main.node);
+    var p    = (pRef && pRef.node && pRef.node.inputs) || {};
+
+    var width  = p.width;
+    var height = p.height;
+
+    var pos = _cnResolveString(json, inp.prompt, 0, {});
+    var neg = _cnResolveString(json, inp.negative_prompt, 0, {});
+
+    var stackRef    = _cnInputNode(json, inp.characters) || _cnFirstNode(json, /^NovelAICharacterStack$/i);
+    var stackInputs = (stackRef && stackRef.node && stackRef.node.inputs) || {};
+    var stackMode   = stackInputs.position_mode;
+    var isRandomMode = /random/i.test(_cnTxt(stackMode));
+
+    // Walk character_1, character_2, ... in numeric order so the notes list
+    // matches generation order rather than object key order.
+    var notes = [];
+    var charKeys = Object.keys(stackInputs)
+      .filter(function (k) { return /^character_\d+$/i.test(k); })
+      .sort(function (a, b) {
+        return parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10);
+      });
+    // Fallback: no stack node found (single-character setups sometimes wire
+    // the character node straight into the generator), so just scan every
+    // NovelAICharacter node in the graph, in id order.
+    if (!charKeys.length) {
+      _cnFindNodes(json, /^NovelAICharacter$/i).forEach(function (ref, idx) {
+        charKeys.push('character_' + (idx + 1));
+        stackInputs['character_' + (idx + 1)] = [ref.id, 0];
+      });
+    }
+
+    charKeys.forEach(function (key) {
+      var link = stackInputs[key];
+      var charNode = null;
+      if (Array.isArray(link)) charNode = json[String(link[0])];
+      if (!charNode) return;
+      var ci = charNode.inputs || {};
+      if (ci.enabled === false || ci.enabled === 'false') return;
+
+      var cpos = _cnCleanPromptFlat(_cnResolveString(json, ci.prompt, 0, {}));
+      var cneg = _cnCleanPromptFlat(_cnResolveString(json, ci.negative, 0, {}));
+      if (!cpos && !cneg) return;
+
+      var label = '';
+      if (!isRandomMode) {
+        label = _cnFormatGridPosition(ci.position_col, ci.position_row).replace(/^→\s*/, '');
+      }
+      if (!label) label = 'Character ' + (notes.length + 1);
+      else label = 'Character ' + label;
+
+      var value = '';
+      if (cpos) value += 'Positive: ' + cpos;
+      if (cneg) value += (value ? '\n' : '') + 'Negative: ' + cneg;
+      notes.push({ name: label, value: value });
+    });
+
+    return {
+      source: 'NovelAI (ComfyUI)',
+      ckpt: _cnDisplayModel(p.model),
+      pos: _cnCleanPromptFlat(pos),
+      neg: _cnCleanPromptFlat(neg),
+      steps: p.steps !== undefined ? String(p.steps) : '',
+      cfg: p.cfg_scale !== undefined ? String(p.cfg_scale) : (p.scale !== undefined ? String(p.scale) : ''),
+      seed: p.seed !== undefined ? String(p.seed) : '',
+      sampler: p.sampler !== undefined ? String(p.sampler) : '',
+      scheduler: p.scheduler !== undefined ? String(p.scheduler) : (p.noise_schedule !== undefined ? String(p.noise_schedule) : ''),
+      size: (width && height) ? (width + ' x ' + height) : '',
+      loras: '', // NovelAI has no LoRA concept; keep empty so the LoRA box stays hidden
+      notes: notes
+    };
+  }
+
+  window.parseComfyNovelAI = function (text) {
+    if (!text) return null;
+    var json = null;
+    if (typeof text === 'object') {
+      json = text;
+    } else {
+      try { json = JSON.parse(text); } catch (e) { return null; }
+    }
+    if (!_cnHasComfyNovelAI(json)) return null;
+    try {
+      return _cnBuildFlatMeta(json);
+    } catch (e) {
+      console.warn('parseComfyNovelAI error:', e);
+      return null;
+    }
+  };
 
   // ── Hook into detectSource ──────────────────────────────────────────────
   if (typeof detectSource === 'function') {

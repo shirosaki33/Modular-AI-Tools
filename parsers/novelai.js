@@ -36,6 +36,9 @@
         
         const low = s.toLowerCase().replace(/[\s_]+/g, '-');
         
+        // V5 (released 2026-08-21)
+        if (/nai-diffusion-5-full/.test(low))    return 'NAI Diffusion 5 FULL';
+        if (/nai-diffusion-5-curated/.test(low)) return 'NAI Diffusion 5 Curated';
         // V4.5
         if (/nai-diffusion-4-5-full|v4\.5.*4bde2a90/.test(low))    return 'NAI Diffusion 4.5 FULL';
         if (/nai-diffusion-4-5-curated|v4\.5.*c02d4f98/.test(low)) return 'NAI Diffusion 4.5 Curated';
@@ -70,6 +73,27 @@
          - the string "NovelAI" anywhere in the text
          - the "v4_prompt" key in the raw text or in the parsed json
        ================================================================ */
+
+    /* ================================================================
+       GUARD: ComfyUI node-graph workflows
+       Workflows exported from ComfyUI (including ones that use the
+       custom NovelAI nodes: NovelAII2I, NovelAIParameters, etc.) are a
+       flat object keyed by numeric node ids, each with a "class_type".
+       That structure isn't the native NovelAI PNG metadata this parser
+       is built for, so we bail out and let parsers/comfyui_novelai.js
+       (which understands the node graph) handle it instead.
+       ================================================================ */
+
+    function looksLikeComfyWorkflow(json) {
+        if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+        const entries = Object.values(json);
+        if (!entries.length) return false;
+        let nodeLike = 0;
+        for (const v of entries) {
+            if (v && typeof v === 'object' && typeof v.class_type === 'string') nodeLike++;
+        }
+        return (nodeLike / entries.length) > 0.5;
+    }
 
     function isNovelAI(text, json) {
         const raw = String(text || '');
@@ -149,9 +173,11 @@
         // vamos inferir de qual versão se trata baseando-se na estrutura do JSON da imagem.
         if (modelName === 'NovelAI' || modelName.toLowerCase().includes('stable diffusion')) {
             const rawStr = String(text || '');
+            // V5 continua usando o payload "params_version":4 + v4_prompt, então só dá pra
+            // diferenciar de V4/V4.5 quando o campo "model" (nai-diffusion-5-*) está presente
+            // acima. Sem esse campo, caímos no rótulo genérico abaixo.
             if (rawStr.includes('"v4_prompt"') || (json && json.v4_prompt)) {
-                // A maioria das imagens V4.5 e V4 usam v4_prompt.
-                return 'NAI Diffusion V4 / V4.5';
+                return 'NAI Diffusion V4 / V4.5 / V5';
             }
             if (rawStr.includes('"sm_dyn"') || rawStr.includes('"sm"')) {
                 return 'NAI Diffusion V3';
@@ -182,6 +208,9 @@
         if (!json && raw.trim().startsWith('{')) {
             try { json = JSON.parse(raw); } catch (e) {}
         }
+
+        // Let the dedicated ComfyUI/NovelAI-node parser own workflow JSON.
+        if (looksLikeComfyWorkflow(json)) return null;
 
         if (!isNovelAI(raw, json)) return null;
 
