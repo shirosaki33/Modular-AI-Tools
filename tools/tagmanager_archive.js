@@ -1,32 +1,35 @@
 /* =========================================================================
    ARCHIVE MODULE (Standalone — não mexe nos outros arquivos)
    ---------------------------------------------------------------------
-   Diferença chave em relação à Lixeira (tagmanager_trash.js):
-   - A Lixeira pode apontar para uma pasta GLOBAL (fora do dataset) ou cair
-     no fallback local "_trash" dentro do root.
-   - O Arquivo é SEMPRE local: cria/usa uma subpasta "_archive" dentro da
-     MESMA pasta de onde a imagem veio (img.parentDirHandle). Ou seja, o
-     arquivo fica sempre dentro do próprio dataset, só que separado do
-     conjunto principal (não aparece mais na lista, igual a "hidden"/trash).
-   - "Excluir" dentro do painel do Arquivo NÃO apaga nada permanentemente:
-     ele reaproveita window.moveToGlobalTrash() (já existe em
-     tagmanager_trash.js) para mandar o item para a Lixeira de verdade,
-     de onde aí sim dá pra Restaurar ou Excluir Permanentemente.
-   - Como cada pasta de origem tem sua PRÓPRIA "_archive" (não é uma pasta
-     global compartilhada), não precisamos de prefixo único no nome do
-     arquivo: o namespace já é o mesmo da pasta original, então não há
-     colisão. Isso também deixa "mandar para a Lixeira" trivial: os nomes
-     dentro de "_archive" são idênticos aos nomes originais, então dá pra
-     reusar moveToGlobalTrash() passando a "_archive" como se fosse a
-     "pasta atual" da imagem.
+   O Arquivo é SEMPRE local: cria/usa uma subpasta "_archive" dentro da
+   MESMA pasta de onde a imagem veio (img.parentDirHandle). Ou seja, o
+   arquivo fica sempre dentro do próprio dataset, só que separado do
+   conjunto principal (não aparece mais na lista, igual a "hidden").
+
+   FIX (remoção do módulo de Trash): o sistema de Lixeira global
+   (tagmanager_trash.js) foi removido do app. Duas coisas dependiam dele:
+
+   1) "Excluir" dentro do painel do Arquivo — antes reaproveitava
+      window.moveToGlobalTrash() pra mandar o item pra Lixeira de
+      verdade (de onde ainda dava pra Restaurar ou Excluir Permanente).
+      Sem Trash, isso vira uma exclusão DIRETA e PERMANENTE dos arquivos
+      dentro de "_archive" — o botão agora é "🗑️ Delete Permanently" e
+      pede confirmação explícita, deixando claro que não tem volta. Note
+      que isso só afeta o arquivo já arquivado (dentro de "_archive");
+      nunca mexe no dataset principal.
+
+   2) Posicionamento no DOM: o botão "📦 Archive" da topbar e o botão
+      "📦" na barra de seleção da lista usavam elementos do Trash
+      (#btn-open-trash / o botão de Delete da lista) como referência de
+      onde se inserir. Agora ancoram direto em #btn-remove (topbar) e
+      no botão de Clone (barra de seleção) — os mesmos vizinhos que o
+      Trash usava antes dele existir.
 
    ---------------------------------------------------------------------
    FIX (isolamento de tamanho de miniatura): o slider de miniaturas deste
-   painel usava a MESMA variável CSS global "--thumb-size" do painel
-   principal (Dataset) e do Trash — mexer no slider aqui redimensionava
-   as miniaturas em TODOS os painéis. Agora este painel tem sua PRÓPRIA
-   variável ("--thumb-size-archive") e sua PRÓPRIA preferência salva
-   ("archive-thumb-size"), totalmente independente do Dataset e do Trash.
+   painel tem sua PRÓPRIA variável ("--thumb-size-archive") e sua PRÓPRIA
+   preferência salva ("archive-thumb-size"), totalmente independente do
+   painel principal (Dataset).
 ========================================================================= */
 
 (function () {
@@ -121,12 +124,9 @@
     /* ---------- MOVER PARA O ARQUIVO (chamado por window.archiveSelectedImages) ----------
        GARANTIA: a pasta "_archive" é SEMPRE criada dentro de
        img.parentDirHandle — a MESMA pasta de onde a imagem veio (o dataset
-       atual, seja o root ou uma subpasta). Não existe conceito de "pasta
-       global" pro Archive (isso é exclusivo do Trash, em tagmanager_trash.js).
-       Se img.parentDirHandle estiver ausente por qualquer motivo, a função
-       agora avisa claramente em vez de falhar em silêncio (antes retornava
-       `false` sem nenhuma explicação, o que podia parecer que a imagem
-       "sumiu" sem explicação). */
+       atual, seja o root ou uma subpasta). Se img.parentDirHandle estiver
+       ausente por qualquer motivo, a função agora avisa claramente em vez
+       de falhar em silêncio. */
     window.moveToArchive = async function (img) {
         if (!img || !img.parentDirHandle) {
             console.error('moveToArchive: missing image or parentDirHandle', img);
@@ -182,10 +182,10 @@
         }
     };
 
-    /* ---------- AÇÃO EM MASSA (mesmo padrão de window.deleteSelectedImages) ---------- */
+    /* ---------- AÇÃO EM MASSA (mesmo padrão de window.deleteSelectedImages, agora removido) ---------- */
     window.archiveSelectedImages = async function () {
         if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
-        if (!confirm(`Move ${selectedIndices.size} image(s) to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. You can restore them anytime from the Archive panel.\n\nNote: the Archive panel itself has a separate "🗑️ Send to Trash" button per item — that's a different, extra action for permanently discarding an already-archived item. It does NOT run automatically when you archive.`)) return;
+        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
 
         const indices = Array.from(selectedIndices).sort((a, b) => b - a);
         let archivedCount = 0;
@@ -257,50 +257,30 @@
         }
     };
 
-    /* ---------- "EXCLUIR" NO ARQUIVO = MANDA PRA LIXEIRA DE VERDADE ----------
-       Reaproveita window.moveToGlobalTrash() (tagmanager_trash.js) passando
-       um objeto de imagem "sintético" cuja parentDirHandle é a própria
-       pasta "_archive" — como os nomes lá dentro são idênticos aos
-       originais (sem prefixo), isso funciona sem duplicar nenhuma lógica
-       de movimentação de arquivo. */
-    window.sendArchiveEntryToTrash = async function (entry) {
-        if (!confirm(`This is a SEPARATE, optional action from Archiving.\n\nSend "${entry.originalName}" OUT of the Archive and into the Trash?\n(From there you can still restore it, or delete it permanently.)`)) return;
-
-        if (typeof window.moveToGlobalTrash !== 'function') {
-            if (window.showAlert) window.showAlert('Trash module not loaded.', 'error');
-            return;
-        }
+    /* ---------- "EXCLUIR" NO ARQUIVO — AGORA PERMANENTE DE VERDADE ----------
+       Antes reaproveitava window.moveToGlobalTrash() (tagmanager_trash.js,
+       removido do app) pra mandar o item pra uma Lixeira de verdade, de
+       onde ainda dava pra recuperar. Sem Trash, esta ação apaga os
+       arquivos DIRETAMENTE de dentro de "_archive" — não tem recuperação
+       depois disso. Só afeta o que já está arquivado; o dataset principal
+       nunca é tocado por esta função. */
+    window.deleteArchiveEntryPermanently = async function (entry) {
+        if (!confirm(`⚠️ PERMANENTLY delete "${entry.originalName}" from the Archive?\n\nThis removes the archived image and caption for good — it CANNOT be restored afterwards. The original dataset is not affected (this only touches the copy already sitting inside "_archive").`)) return;
 
         try {
-            const pseudoImg = {
-                parentDirHandle: entry.archiveDirHandle,
-                name: entry.archiveImageName,
-                baseName: entry.originalBaseName,
-                ext: entry.originalExt
-            };
-            const ok = await window.moveToGlobalTrash(pseudoImg);
-            if (!ok) {
-                if (window.showAlert) window.showAlert('Could not move this item to Trash.', 'error');
-                return;
-            }
+            try { await entry.archiveDirHandle.removeEntry(entry.archiveImageName); } catch (e) {}
+            for (const t of entry.archiveTextNames) { try { await entry.archiveDirHandle.removeEntry(t); } catch (e) {} }
             await deleteArchiveManifestEntry(entry.id);
-            if (window.showAlert) window.showAlert(`Sent "${entry.originalName}" to Trash 🗑️.`, 'info');
+            if (window.showAlert) window.showAlert(`"${entry.originalName}" permanently deleted from the Archive.`, 'info');
             await renderArchiveList();
-            if (typeof window.updateTrashButtonState === 'function') window.updateTrashButtonState();
+            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
         } catch (e) {
             console.error(e);
-            if (window.showAlert) window.showAlert('Error sending item to Trash.', 'error');
+            if (window.showAlert) window.showAlert('Error deleting file from the Archive.', 'error');
         }
     };
 
-    /* ---------- TAMANHO DE MINIATURA — ISOLADO DO DATASET E DO TRASH ----------
-       Antes: o slider deste painel chamava window.updateThumbSize(), que
-       escreve na variável CSS GLOBAL "--thumb-size" — a MESMA usada pelo
-       painel principal (Dataset) e pelo Trash. Resultado: mexer aqui
-       redimensionava as miniaturas em todo lugar.
-       Agora: variável própria ("--thumb-size-archive") + preferência salva
-       própria ("archive-thumb-size"), sem nenhuma dependência do slider
-       do Dataset ou do Trash. */
+    /* ---------- TAMANHO DE MINIATURA — ISOLADO DO DATASET ---------- */
     window.updateArchiveThumbSize = function (val, skipSave = false) {
         document.documentElement.style.setProperty('--thumb-size-archive', val + 'px');
         if (!skipSave && typeof window.saveSetting === 'function') window.saveSetting('archive-thumb-size', val);
@@ -321,19 +301,19 @@
         .archive-item button { font-size: 11px; padding: 6px 10px; flex-shrink: 0; }
         .btn-archive-restore { background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; }
         .btn-archive-restore:hover { background: #00aa66; color: #000; }
-        .btn-archive-trash { background: #2a0000; color: #ff6060; border: 1px solid #aa0000; }
-        .btn-archive-trash:hover { background: #ff4444; color: #fff; }
+        .btn-archive-delete-perm { background: #2a0000; color: #ff6060; border: 1px solid #aa0000; }
+        .btn-archive-delete-perm:hover { background: #ff4444; color: #fff; }
+        .btn-archive-pin { background: #0d1f2a; color: #66ccff; border: 1px solid #144a63; }
+        .btn-archive-pin:hover { background: #66ccff; color: #000; }
+        .btn-archive-pin.pinned-active { background: #00aa66; color: #000; border-color: #00cc88; }
         #archive-thumb-bar { display:flex; align-items:center; gap:10px; padding: 8px 0 2px; border-top: 1px solid #222; margin-top: 6px; flex-shrink: 0; }
 
         .list-archive-btn { background:#151515; border-color:#555; color:#aaa; }
 
         /* Zoom PRÓPRIO do Archive (não reaproveita o #modal-image/#image-popout
-           compartilhado pelo resto do app). Antes disso, dar dois-cliques numa
-           miniatura do Archive abria o modal global de zoom, mas como o overlay
-           do Archive é injetado no DOM DEPOIS dele, o zoom acabava renderizando
-           ATRÁS do painel do Archive (mesmo z-index, ordem no DOM decide quem
-           fica por cima) — parecia que o zoom "sumia". Um z-index dedicado e
-           mais alto resolve isso de vez, sem depender de ordem de inserção. */
+           compartilhado pelo resto do app). Um z-index dedicado evita que o
+           zoom renderize atrás do painel do Archive, já que o overlay dele é
+           injetado no DOM depois. */
         #modal-archive-zoom { z-index: 150; }
         #archive-zoom-wrapper { max-width: 90%; max-height: 90%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
         #archive-zoom-img { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); user-select: none; -webkit-user-drag: none; }
@@ -364,6 +344,77 @@
         document.getElementById('modal-archive-zoom').classList.add('active');
     };
 
+    /* ---------- PIN DIRETO DO ARQUIVO ----------
+       Reaproveita o painel de Pin já existente (tagmanager_pin_image.js —
+       precisa carregar ANTES deste arquivo), montando uma pseudo-imagem
+       lendo a legenda (.txt ou .json) e a miniatura direto de dentro da
+       pasta "_archive" — sem precisar restaurar o item pra conferir as
+       tags dele. Somente-leitura, não mexe em nada do Arquivo. */
+    async function buildArchivePseudoImage(entry) {
+        let content = '';
+        let ext = entry.originalExt || 'txt';
+
+        for (const tName of (entry.archiveTextNames || [])) {
+            try {
+                const fh = await entry.archiveDirHandle.getFileHandle(tName);
+                const text = await (await fh.getFile()).text();
+                const tExt = tName.slice(tName.lastIndexOf('.') + 1).toLowerCase();
+                if (tExt === 'json') {
+                    try {
+                        const obj = JSON.parse(text);
+                        content = obj.tags || obj.caption || '';
+                    } catch (e) { content = text; }
+                    ext = 'json';
+                } else {
+                    content = text;
+                    ext = 'txt';
+                }
+                break;
+            } catch (e) { /* essa legenda pode não existir — tenta a próxima */ }
+        }
+
+        let imageUrl = '';
+        try {
+            const fh = await entry.archiveDirHandle.getFileHandle(entry.archiveImageName);
+            imageUrl = URL.createObjectURL(await fh.getFile());
+            window._archiveObjectUrls.push(imageUrl);
+        } catch (e) {}
+
+        return {
+            baseName: entry.originalBaseName,
+            name: entry.originalName,
+            url: imageUrl,
+            content: content,
+            ext: ext,
+            parentDirHandle: entry.archiveDirHandle,
+            folderName: `📦 ${entry.folderLabel || 'Archive'}`
+        };
+    }
+
+    window.pinArchiveEntry = async function (entry, btnEl) {
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳'; }
+        try {
+            const pseudoImg = await buildArchivePseudoImage(entry);
+            if (!pseudoImg.url) {
+                if (window.showAlert) window.showAlert('Could not load this image to pin.', 'error');
+                return;
+            }
+            if (typeof window.pinImage !== 'function') {
+                if (window.showAlert) window.showAlert('Pin module not loaded.', 'error');
+                return;
+            }
+            window.pinImage(pseudoImg);
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.textContent = '📌';
+                if (typeof window.isImagePinned === 'function') {
+                    btnEl.classList.toggle('pinned-active', window.isImagePinned({ parentDirHandle: entry.archiveDirHandle, baseName: entry.originalBaseName }));
+                }
+            }
+        }
+    };
+
     function buildModal() {
         if (document.getElementById('modal-archive')) return;
 
@@ -379,7 +430,7 @@
                     <button onclick="window.closeModal('modal-archive')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
                 <div style="font-size:11px; color:#888; margin: -4px 0 10px;">
-                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. "Send to Trash" moves an item to the real Trash (recoverable from there too).
+                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. "Delete Permanently" removes the archived copy for good — this cannot be undone.
                 </div>
                 <div id="archive-list"><div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div></div>
                 <div id="archive-thumb-bar">
@@ -404,8 +455,6 @@
         window._archiveObjectUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         window._archiveObjectUrls = [];
 
-        // Tamanho de miniatura ISOLADO: lê a preferência PRÓPRIA do Archive
-        // (não copia mais o valor do slider do Dataset).
         const thumbSlider = document.getElementById('archive-thumb-slider');
         if (thumbSlider) {
             const savedSize = (typeof window.getSetting === 'function') ? await window.getSetting('archive-thumb-size', 70) : 70;
@@ -445,11 +494,19 @@
                     <div>${entry.originalName}</div>
                     <div style="color:#666; font-size:10px; margin-top:2px;">📂 ${entry.folderLabel || '—'} · ${dateStr}</div>
                 </div>
+                <button class="btn-archive-pin" title="Pin this image to view its tags in the Pinned panel — no need to restore it first">📌</button>
                 <button class="btn-archive-restore" title="Restore to the original folder">♻️ Restore</button>
-                <button class="btn-archive-trash" title="Permanently discard: moves this item OUT of the Archive and into the Trash (separate, optional action)">🗑️ Send to Trash</button>
+                <button class="btn-archive-delete-perm" title="Permanently delete this archived file — cannot be undone">🗑️ Delete Permanently</button>
             `;
+            const pinBtn = row.querySelector('.btn-archive-pin');
+            if (pinBtn) {
+                if (typeof window.isImagePinned === 'function') {
+                    pinBtn.classList.toggle('pinned-active', window.isImagePinned({ parentDirHandle: entry.archiveDirHandle, baseName: entry.originalBaseName }));
+                }
+                pinBtn.onclick = () => window.pinArchiveEntry(entry, pinBtn);
+            }
             row.querySelector('.btn-archive-restore').onclick = () => window.restoreArchiveEntry(entry);
-            row.querySelector('.btn-archive-trash').onclick = () => window.sendArchiveEntryToTrash(entry);
+            row.querySelector('.btn-archive-delete-perm').onclick = () => window.deleteArchiveEntryPermanently(entry);
 
             const imgEl = row.querySelector('img');
             if (imgEl && url) {
@@ -478,9 +535,11 @@
 
     /* ---------- BOTÕES INJETADOS ---------- */
 
-    // 1) Botão no topbar, ao lado do "🗑️ Trash Folder"
+    // 1) Botão no topbar. Antes ancorava em #btn-open-trash (criado pelo
+    //    tagmanager_trash.js, removido do app); agora ancora direto em
+    //    #btn-remove — o mesmo vizinho que o Trash usava antes de existir.
     function injectArchiveTopbarButton() {
-        const anchor = document.getElementById('btn-open-trash');
+        const anchor = document.getElementById('btn-remove');
         if (!anchor || document.getElementById('btn-open-archive')) return;
 
         const btn = document.createElement('button');
@@ -493,10 +552,12 @@
         window.updateArchiveButtonState();
     }
 
-    // 2) Botão na barra de ações da seleção (ao lado de Hide/Focus/Rename/Clone/Delete)
+    // 2) Botão na barra de ações da seleção (ao lado de Hide/Focus/Rename/Clone).
+    //    Antes ancorava no botão "Delete Selected" (removido junto com o
+    //    Trash, já que a Archive já cobre essa necessidade); agora ancora
+    //    logo depois do botão de Clone.
     function injectArchiveSelectionButton() {
         const bar = document.getElementById('list-selection-actions');
-        const deleteBtn = bar ? bar.querySelector('[onclick="window.deleteSelectedImages()"]') : null;
         if (!bar || document.getElementById('btn-archive-selected')) return;
 
         const btn = document.createElement('button');
@@ -507,7 +568,8 @@
         btn.textContent = '📦';
         btn.onclick = () => window.archiveSelectedImages();
 
-        if (deleteBtn) bar.insertBefore(btn, deleteBtn);
+        const cloneBtn = bar.querySelector('[onclick="window.openCloneModal()"]');
+        if (cloneBtn) cloneBtn.insertAdjacentElement('afterend', btn);
         else bar.appendChild(btn);
     }
 
@@ -518,7 +580,7 @@
         }, 0);
 
         // Aplica o tamanho de miniatura salvo do Archive já no carregamento,
-        // isolado do Dataset/Trash (independente do modal ter sido aberto).
+        // independente do modal ter sido aberto.
         if (typeof window.getSetting === 'function') {
             window.getSetting('archive-thumb-size', 70).then(savedSize => {
                 window.updateArchiveThumbSize(savedSize, true);

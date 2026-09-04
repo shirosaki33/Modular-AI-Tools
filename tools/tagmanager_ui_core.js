@@ -61,10 +61,11 @@ window.loadSettings = async function() {
     const autocompleteMaster = await window.getSetting('autocomplete-used-only-master', false);
     const autocompleteReplace = await window.getSetting('autocomplete-used-only-replace', false);
 
-    window.danbooruCache = await window.getSetting('danbooru_tag_cache', {});
-    const danbooruCounts = await window.getSetting('toggle-danbooru-counts', false);
-    window.showDanbooruCounts = danbooruCounts;
-    if (document.getElementById('toggle-danbooru-counts')) document.getElementById('toggle-danbooru-counts').checked = danbooruCounts;
+// "Show Danbooru Counts" não é mais uma opção desligável (removida do
+// Settings) — sempre ON. Quando e621 também está habilitado, o contador
+// mostrado já é o maior entre as duas fontes (window.pickBestTagCount,
+// em tagmanager_e621_core.js), sem precisar de nenhum toggle extra.
+window.showDanbooruCounts = true;
 
     const e621Setting = await window.getSetting('toggle-e621', false);
     const e621SfwSetting = await window.getSetting('toggle-e621-sfw', false);
@@ -169,19 +170,6 @@ window.updateNlWordThreshold = function(val, skipSave = false) {
     }
 };
 
-window.toggleDanbooruCounts = function(skipSave = false) {
-    const checkbox = document.getElementById('toggle-danbooru-counts');
-    if (checkbox) {
-        window.showDanbooruCounts = checkbox.checked;
-        if (!skipSave) window.saveSetting('toggle-danbooru-counts', checkbox.checked);
-    }
-    if (window.showDanbooruCounts && masterTagSet.size > 0) window.syncDanbooruTags(Array.from(masterTagSet));
-    else {
-        if (typeof window.renderEditor === 'function') window.renderEditor();
-        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    }
-};
-
 window.toggleE621 = function() {
     const checkbox = document.getElementById('toggle-e621');
     if (checkbox) { window.showE621 = checkbox.checked; window.saveSetting('toggle-e621', checkbox.checked); }
@@ -193,7 +181,6 @@ window.toggleE621Sfw = function() {
 };
 
 window.manualDanbooruSync = function() {
-    if (!window.showDanbooruCounts) { window.showAlert("Enable Danbooru counts in settings first.", "warn"); return; }
     window.syncDanbooruTags(Array.from(masterTagSet), true);
 };
 

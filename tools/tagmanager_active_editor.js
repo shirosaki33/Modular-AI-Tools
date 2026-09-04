@@ -311,16 +311,17 @@ window.renderEditor = function() {
             // O ícone ❓ original com a classe de estilo idêntica ao do painel!
             const dbAliasInfoHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL) ? `<span class="tag-alias-info-icon tag-db-info" title="View Alias Tag Info">❓</span>` : '';
 
-            // FEATURE 2: tag "real" (não-alias) mostra, do lado, os aliases já vistos que apontam pra ela
-            const reverseAliasesActive = (window.showAliasPreview !== false && !isCustomNL && !isConvertibleAlias)
-                ? window.computeReverseAliasesForTag(tagLower) : [];
-            const reverseAliasHtmlActive = reverseAliasesActive.length > 0
-                ? `<span class="tag-alias-reverse-list" title="Alias tag(s) pointing to this tag: ${reverseAliasesActive.join(', ')}">⟵ ${reverseAliasesActive.join(', ')}</span>` : '';
+            // FEATURE 2: tag "real" (não-alias) mostra os aliases unificados (Danbooru + e621)
+            const reverseAliasHtmlActive = (!isCustomNL && !isConvertibleAlias && typeof window.renderCombinedAliasPreviewHTML === 'function')
+                ? window.renderCombinedAliasPreviewHTML(tagLower) : '';
             
-            const dbCountHtml = (window.showDanbooruCounts && dbCached && dbCached.count !== undefined && !isCustomNL)
-                ? (dbCached.count > 0
-                    ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">${window.formatDbCount(dbCached.count)}</span>`
-                    : (dbCached.isDeprecated ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">Deprecated</span>` : ''))
+            const e621CachedForCount = window.showE621 && window.e621Cache ? (window.e621Cache[tagLower] || window.e621Cache[tag]) : null;
+            const bestCountInfo = (window.showDanbooruCounts && !isCustomNL && typeof window.pickBestTagCount === 'function')
+                ? window.pickBestTagCount(dbCached, e621CachedForCount) : null;
+            const dbCountHtml = bestCountInfo
+                ? (bestCountInfo.count > 0
+                    ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;" title="${bestCountInfo.source === 'e621' ? 'e621' : 'Danbooru'} count (highest of the two sources)">${window.formatDbCount(bestCountInfo.count)}</span>`
+                    : (bestCountInfo.deprecated ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">Deprecated</span>` : ''))
                 : '';
             const countInDataset = datasetTagCounts.get(tag) || 0;
             const dsCountHtml = `<span style="color:#555; font-size:10px; font-weight:bold; min-width:20px; text-align:left; margin-right:8px; user-select:none;" title="Times used in current dataset">${countInDataset}</span>`;
@@ -403,27 +404,26 @@ window.renderEditor = function() {
                 }
             }
             
-            // Arrastar tags: continua bloqueado apenas quando o usuário tem VÁRIAS
-            // TAGS selecionadas ao mesmo tempo (isMultiSelected — outro modo de uso,
-            // com sua própria barra de ações). Com 1 ou várias IMAGENS selecionadas
-            // o drag agora funciona igual: window.reorderTags() abaixo já reordena
-            // usando o NOME da tag (não mais o índice fixo desta lista fundida),
-            // então cada imagem reordena dentro da SUA PRÓPRIA lista de tags.
-            if (!isMultiSelected) {
-                row.draggable = true;
-                row.ondragstart = (e) => { 
-                    if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon')) return false;
-                    e.dataTransfer.setData('text/plain', tag); draggedTagIndex = i; window._draggedTagName = tag; row.classList.add('dragging'); 
-                };
-                row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; window._draggedTagName = null; };
-                row.ondragover = (e) => e.preventDefault();
-                row.ondrop = (e) => {
-                    e.preventDefault();
-                    if (draggedTagIndex !== null && i !== draggedTagIndex && window._draggedTagName && window._draggedTagName !== tag && typeof window.reorderTags === 'function') {
-                        window.reorderTags(window._draggedTagName, tag);
-                    }
-                };
-            }
+            // Drag-to-reorder agora funciona SEMPRE, mesmo com múltiplas tags
+            // selecionadas (isMultiSelected) ou múltiplas imagens selecionadas
+            // (isMultiImageSelection). Antes isso era bloqueado porque, com
+            // várias imagens, a lista mostrada é uma FUSÃO das tags de todas
+            // elas — e reorderTags() aplica fromIndex/toIndex (posições dessa
+            // lista fundida) diretamente no array de tags de CADA imagem, que
+            // pode ter tags diferentes/em posições diferentes. Isso pode
+            // reordenar a tag "errada" dentro de alguma imagem específica do
+            // grupo. Mantido assim de propósito (a pedido do usuário): o
+            // objetivo aqui é só subir/descer a ordem para uma visão geral
+            // melhor, aceitando que o resultado por imagem pode não ficar
+            // 100% coerente quando as imagens têm tags diferentes entre si.
+            row.draggable = true;
+            row.ondragstart = (e) => { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon')) return false;
+                e.dataTransfer.setData('text/plain', i); draggedTagIndex = i; row.classList.add('dragging'); 
+            };
+            row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; };
+            row.ondragover = (e) => e.preventDefault();
+            row.ondrop = (e) => { e.preventDefault(); if (draggedTagIndex !== null && draggedTagIndex !== i && typeof window.reorderTags === 'function') window.reorderTags(draggedTagIndex, i); };
  
             row.onclick = (e) => {
                 if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon') || e.target.classList.contains('tag-name-convertible')) { 
@@ -659,44 +659,16 @@ window.addTagToAllImages = function(newTag, position = 'bottom') {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
  
-/* ---------------------------------------------------------------------
-   REORDER POR NOME DE TAG (não mais por índice fixo)
-   ---------------------------------------------------------------------
-   Antes usava (fromIndex, toIndex) baseados na posição dentro da lista
-   FUNDIDA (sortedActiveTags — a união das tags de todas as imagens
-   selecionadas). Isso só fazia sentido com 1 imagem selecionada: com
-   várias imagens, o mesmo índice podia apontar pra tags completamente
-   diferentes em cada uma, corrompendo a ordem.
-
-   Agora recebe os NOMES das tags (fromTag = a que foi arrastada,
-   toTag = a que recebeu o drop) e, para CADA imagem selecionada,
-   reordena de forma independente DENTRO da própria lista de tags dela:
-   - Se a imagem tiver as duas tags, move fromTag para a posição de toTag.
-   - Se a imagem não tiver uma das duas (ex: conjuntos de tags diferentes
-     entre as imagens selecionadas), essa imagem simplesmente é ignorada
-     nesse reorder — nada quebra, ela só não é afetada.
-   Funciona igual para 1 imagem só (comportamento antigo preservado) e
-   para várias imagens ao mesmo tempo (novo). */
-window.reorderTags = function(fromTag, toTag) {
-    if (!fromTag || !toTag || fromTag === toTag) return;
-    const modifiedFiles = [];
+window.reorderTags = function(fromIndex, toIndex) {
     selectedIndices.forEach(idx => {
-        const img = imageFiles[idx];
-        if (!img || img.type !== 'tags' || !img.content) return;
-        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
-        const fromIdx = tags.indexOf(fromTag);
-        const toIdx = tags.indexOf(toTag);
-        if (fromIdx === -1 || toIdx === -1) return; // esta imagem não tem as duas tags — pula
-        tags.splice(toIdx, 0, tags.splice(fromIdx, 1)[0]);
-        const newContent = tags.join(', ');
-        if (newContent !== img.content) {
-            img.content = newContent;
-            modifiedFiles.push(img);
+        if (imageFiles[idx].type === 'tags') {
+            let tags = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t);
+            tags.splice(toIndex, 0, tags.splice(fromIndex, 1)[0]);
+            imageFiles[idx].content = tags.join(', ');
         }
     });
-    if (modifiedFiles.length === 0) return;
-    if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
-    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    if(typeof window.renderEditor === 'function') window.renderEditor();
 }
  
 window.inlineAdd = function(source) {

@@ -407,9 +407,86 @@
         .btn-trash-restore:hover { background: #00aa66; color: #000; }
         .btn-trash-delete { background: #2a0000; color: #ff6060; border: 1px solid #aa0000; }
         .btn-trash-delete:hover { background: #ff4444; color: #fff; }
+        .btn-trash-pin { background: #0d1f2a; color: #66ccff; border: 1px solid #144a63; }
+        .btn-trash-pin:hover { background: #66ccff; color: #000; }
+        .btn-trash-pin.pinned-active { background: #00aa66; color: #000; border-color: #00cc88; }
         #trash-thumb-bar { display:flex; align-items:center; gap:10px; padding: 8px 0 2px; border-top: 1px solid #222; margin-top: 6px; flex-shrink: 0; }
     `;
     document.head.appendChild(style);
+
+    /* ---------- PIN DIRETO DA LIXEIRA ----------
+       Reaproveita o painel de Pin já existente (tagmanager_pin_image.js —
+       precisa carregar ANTES deste arquivo). Monta um objeto "pseudo-imagem"
+       no mesmo formato que window.pinImage() espera (baseName, name, url,
+       content, ext, parentDirHandle, folderName), lendo a legenda (.txt ou
+       .json) e a miniatura DIRETO de dentro da pasta da Lixeira (o item nem
+       precisa ser restaurado pra você conferir as tags dele no painel de
+       Pin). Como o painel de Pin é somente-leitura, não há risco de
+       acidentalmente editar/mover nada da Lixeira por essa via. */
+    async function buildTrashPseudoImage(entry) {
+        let content = '';
+        let ext = entry.originalExt || 'txt';
+
+        for (const tName of (entry.trashTextNames || [])) {
+            try {
+                const fh = await entry.trashDirHandle.getFileHandle(tName);
+                const text = await (await fh.getFile()).text();
+                const tExt = tName.slice(tName.lastIndexOf('.') + 1).toLowerCase();
+                if (tExt === 'json') {
+                    try {
+                        const obj = JSON.parse(text);
+                        content = obj.tags || obj.caption || '';
+                    } catch (e) { content = text; }
+                    ext = 'json';
+                } else {
+                    content = text;
+                    ext = 'txt';
+                }
+                break;
+            } catch (e) { /* essa legenda pode não existir — tenta a próxima */ }
+        }
+
+        let imageUrl = '';
+        try {
+            const fh = await entry.trashDirHandle.getFileHandle(entry.trashImageName);
+            imageUrl = URL.createObjectURL(await fh.getFile());
+            window._trashObjectUrls.push(imageUrl);
+        } catch (e) {}
+
+        return {
+            baseName: entry.originalBaseName,
+            name: entry.originalName,
+            url: imageUrl,
+            content: content,
+            ext: ext,
+            parentDirHandle: entry.trashDirHandle,
+            folderName: `🗑️ ${entry.folderLabel || 'Trash'}`
+        };
+    }
+
+    window.pinTrashEntry = async function (entry, btnEl) {
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳'; }
+        try {
+            const pseudoImg = await buildTrashPseudoImage(entry);
+            if (!pseudoImg.url) {
+                if (window.showAlert) window.showAlert('Could not load this image to pin.', 'error');
+                return;
+            }
+            if (typeof window.pinImage !== 'function') {
+                if (window.showAlert) window.showAlert('Pin module not loaded.', 'error');
+                return;
+            }
+            window.pinImage(pseudoImg);
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.textContent = '📌';
+                if (typeof window.isImagePinned === 'function') {
+                    btnEl.classList.toggle('pinned-active', window.isImagePinned({ parentDirHandle: entry.trashDirHandle, baseName: entry.originalBaseName }));
+                }
+            }
+        }
+    };
 
     function buildModal() {
         if (document.getElementById('modal-trash')) return;
@@ -536,9 +613,17 @@
                     <div>${entry.originalName}</div>
                     <div style="color:#666; font-size:10px; margin-top:2px;">📂 ${entry.folderLabel || '—'}${modeTag} · ${dateStr}</div>
                 </div>
+                <button class="btn-trash-pin" title="Pin this image to view its tags in the Pinned panel — no need to restore it first">📌</button>
                 <button class="btn-trash-restore" title="Restore to the original folder">♻️ Restore</button>
                 <button class="btn-trash-delete" title="Delete this item permanently">🗑️ Delete</button>
             `;
+            const pinBtn = row.querySelector('.btn-trash-pin');
+            if (pinBtn) {
+                if (typeof window.isImagePinned === 'function') {
+                    pinBtn.classList.toggle('pinned-active', window.isImagePinned({ parentDirHandle: entry.trashDirHandle, baseName: entry.originalBaseName }));
+                }
+                pinBtn.onclick = () => window.pinTrashEntry(entry, pinBtn);
+            }
             row.querySelector('.btn-trash-restore').onclick = () => window.restoreTrashEntry(entry);
             row.querySelector('.btn-trash-delete').onclick = () => window.deleteTrashEntryPermanently(entry);
 

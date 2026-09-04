@@ -1,0 +1,1726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoRA Gallery</title>
+    
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+
+    <style>
+        body {
+            margin: 0; padding: 0;
+            background-color: #111; color: #eee;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+        
+        /* === TOPBAR === */
+        #topbar {
+            background: #1b1b1b; padding: 12px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid #222; z-index: 20;
+        }
+        .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+        .topbar-section.left { justify-content: flex-start; flex-wrap: nowrap; }
+        .topbar-section.center { justify-content: center; text-align: center; }
+        .topbar-section.right { justify-content: flex-end; }
+        
+        #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+        
+        button, select {
+            background: #333; color: #fff; border: none; 
+            padding: 8px 15px; border-radius: 8px; cursor: pointer; transition: 0.15s; 
+            font-family: inherit; font-size: 13px; font-weight: bold;
+        }
+        button:hover, select:hover { background: #00aa66; color: #000; }
+        
+        /* Ajuste visual das caixas (Selects) */
+        select { 
+            outline: none; min-width: 140px; max-width: 200px; border: 1px solid #444; 
+            text-overflow: ellipsis; white-space: nowrap; overflow: hidden; 
+        }
+        
+        #filter-tag, #batch-tag-input, #rename-input, #path-label-input {
+            background: #111; color: #00ff99; border: 1px solid #444; 
+            padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none;
+        }
+        #filter-tag { width: 140px; }
+        #filter-tag:focus, #batch-tag-input:focus, #rename-input:focus, #path-label-input:focus { border-color: #00aa66; }
+
+        #btn-remove { background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; padding: 8px 12px; }
+        #btn-remove:hover { background: #6a1822; color: #fff; }
+        #btn-batch-json { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; }
+        #btn-batch-json:hover { background: #1e4a78; color: #fff; }
+        #btn-refresh { background: #263b5a; color: #9ecfff; border: 1px solid #1a3a5c; padding: 8px 12px; }
+        #btn-refresh:hover { background: #4db8ff; color: #000; }
+        #btn-path-label { background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; padding: 8px 12px; }
+        #btn-path-label:hover { background: #b890ff; color: #000; }
+        
+        #workspace { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 0px; } 
+        
+        #left-col { 
+            flex: 1; display: flex; flex-direction: column; overflow: hidden; 
+            background: #1b1b1b; border-radius: 12px; padding: 15px; position: relative;
+        }
+        
+        /* === GRID MODES & ITEM WRAPPER === */
+        #grid-view { 
+            overflow-y: auto; flex: 1; padding-right: 5px; 
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); 
+            gap: 15px; align-content: start; 
+            align-items: start;
+        }
+        
+        .grid-item-wrapper { 
+            border-radius: 10px; cursor: pointer; border: 2px solid transparent; 
+            transition: 0.1s; background-color: #0d0d0d; position: relative;
+            display: flex; flex-direction: column;
+        }
+        .grid-item-wrapper:hover { border-color: #00ff99; transform: scale(1.02); }
+        .grid-item { width: 100%; height: auto; display: block; border-radius: 8px; object-fit: cover; aspect-ratio: 1/1; }
+
+        /* Estilo da Legenda do Arquivo */
+        .grid-item-label {
+            font-size: 11px; color: #888; text-align: center; padding: 6px 4px;
+            background: #0d0d0d; border-radius: 0 0 8px 8px; border-top: 1px solid #222;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold;
+        }
+        .grid-item-wrapper:hover .grid-item-label { color: #00ff99; }
+        #grid-view.hide-filenames .grid-item-label { display: none; }
+        #grid-view:not(.hide-filenames) .grid-item { border-radius: 8px 8px 0 0; }
+
+        .tag-checkbox, .rename-checkbox {
+            position: absolute; top: 10px; left: 10px;
+            width: 20px; height: 20px; cursor: pointer; z-index: 10; accent-color: #00ff99;
+        }
+        .rename-checkbox { accent-color: #b890ff; }
+
+        /* === RESIZERS === */
+        .resizer { display: flex; align-items: center; justify-content: center; z-index: 10; flex-shrink: 0; cursor: pointer; }
+        .resizer::after { content: ''; background: #333; transition: 0.2s; border-radius: 2px; }
+        .resizer.vertical { width: 16px; cursor: col-resize; }
+        .resizer.vertical::after { width: 4px; height: 40px; }
+        .resizer:hover::after, .resizer.dragging::after { background: #00ff99; }
+        
+        #resizer-right { width: 20px; }
+
+        /* === DETAIL VIEW & THUMBNAILS === */
+        #detail-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+        #main-image-container {
+            flex: 1; display: flex; justify-content: center; align-items: center;
+            background-color: #0d0d0d; border-radius: 10px; margin: 0; margin-bottom: 15px;
+            position: relative; overflow: hidden; min-width: 0; min-height: 0;
+        }
+        #detail-view.thumb-left #main-image-container { margin-bottom: 0; margin-left: 15px; }
+
+        #main-image { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; }
+        
+        #btn-close {
+            position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); 
+            color: #aaa; border: 2px solid #555; border-radius: 50%;
+            width: 32px; height: 32px; font-weight: bold; font-size: 14px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer; padding: 0;
+        }
+        #btn-close:hover { background: #00aa66; border-color: #00cc88; color: #000; }
+        
+        #btn-layout {
+            position: absolute; top: 10px; right: 50px; background: rgba(0,0,0,0.7); 
+            color: #aaa; border: 2px solid #555; border-radius: 8px;
+            width: 32px; height: 32px; font-weight: bold; font-size: 16px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer; padding: 0;
+        }
+        #btn-layout:hover { background: #00aa66; border-color: #00cc88; color: #000; }
+
+        #thumbnail-strip { height: 80px; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; flex-shrink: 0; padding-bottom: 5px; }
+        .thumb { height: 100%; width: auto; border-radius: 6px; cursor: pointer; border: 2px solid transparent; opacity: 0.5; transition: 0.15s; object-fit: cover; aspect-ratio: 1/1;}
+        .thumb:hover, .thumb.active { border-color: #00ff99; opacity: 1; }
+        
+        /* Thumb Left Mode */
+        #detail-view.thumb-left { flex-direction: row-reverse; }
+        #detail-view.thumb-left #thumbnail-strip { width: 110px; height: 100%; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding-bottom: 0; padding-right: 5px;}
+        #detail-view.thumb-left .thumb { width: 100%; height: auto; }
+        
+        /* === RIGHT COLUMN === */
+        #right-col {
+            width: 380px; flex-shrink: 0; background: #1b1b1b; border-radius: 12px;
+            padding: 15px; display: none; flex-direction: column; gap: 15px; overflow-y: auto;
+            position: relative;
+        }
+        
+        /* --- ALERTS --- */
+        #alertBar {
+            display: none; border-radius: 8px;
+            padding: 8px 16px; margin-bottom: 5px; font-size: 12px;
+            line-height: 1.5; text-align: center; font-weight: bold;
+        }
+        #alertBar.error   { background:#2a0000; border:1px solid #aa0000; color:#ff6060; }
+        #alertBar.warn    { background:#2a1a00; border:1px solid #aa6600; color:#ffcc66; }
+        #alertBar.info    { background:#001a2a; border:1px solid #0066aa; color:#66ccff; }
+        #alertBar.success { background:#0d2a18; border:1px solid #00aa66; color:#00ff99; }
+        
+        #sourceBar {
+            display: none; border-radius: 8px; padding: 8px 16px; margin-bottom: -5px; font-size: 12px;
+            line-height: 1.5; text-align: center; font-weight: bold;
+            background:#001a2a; border:1px solid #0066aa; color:#66ccff;
+        }
+        #sourceBar.json-source {
+            background: #0d2a18; border: 1px solid #00aa66; color: #00ff99;
+        }
+        
+        #btn-reset-json {
+            background: rgba(0, 0, 0, 0.3); border: 1px solid currentColor; color: inherit;
+            border-radius: 4px; padding: 2px 8px; margin-left: 10px; cursor: pointer;
+            font-size: 11px; font-weight: bold; transition: 0.15s; vertical-align: middle;
+        }
+        #btn-reset-json:hover { background: rgba(255, 255, 255, 0.2); }
+
+        .promptBlock { background: #0d0d0d; border-radius: 8px; padding: 12px; }
+        .promptTitle { display: flex; justify-content: space-between; align-items: center; color: #aaa; margin-bottom: 6px; font-size: 14px; font-weight: bold; }
+        .promptTitle-actions { display: flex; gap: 5px; align-items: center; }
+        .copy-btn, .collapse-btn { background: none; border: none; color: #555; cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 14px; transition: 0.15s; }
+        .collapse-btn { font-size: 12px; }
+        .copy-btn:hover, .collapse-btn:hover { color: #00cc88; background: #1a2a22; }
+        .copy-btn.copied { color: #00cc88; }
+        
+        .note-title-input { 
+            background: transparent; border: 1px dashed transparent; color: #aaa; font-weight: bold; font-size: 14px; outline: none; width: 60%; transition: 0.2s; font-family: inherit;
+        }
+        .note-title-input:not([readonly]) { border-bottom-color: #444; color: #eee; }
+        .note-title-input:not([readonly]):focus { border-bottom-color: #00aa66; }
+
+        textarea, input.meta-input {
+            background: #0d0d0d; color: #00ff99; border: 1px solid #222;
+            border-radius: 8px; padding: 12px; width: 100%; box-sizing: border-box; 
+            font-family: inherit; font-size: 13px; outline: none; transition: 0.15s;
+        }
+        textarea { resize: none; min-height: 60px; max-height: 380px; overflow-y: auto; }
+        input.meta-input { color: #eee; } 
+        textarea:focus, input.meta-input:focus { border-color: #00aa66; }
+        textarea:not([readonly]), input.meta-input:not([readonly]) { background: #111; border-color: #00aa66; color: #fff; }
+        
+        .meta-table { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        .meta-table-full { grid-column: span 2; }
+        .meta-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; font-weight: bold; }
+        .meta-table input { padding: 8px; font-size: 12px; min-height: 0; }
+        
+        #right-col:not(.is-editing) .meta-table.hide-extras .extra-field { display: none; }
+        #right-col:not(.is-editing) #tag-block.hide-tag { display: none; }
+
+        #notes-container { display: flex; flex-direction: column; gap: 15px; }
+
+        .action-buttons { display: flex; gap: 10px; margin-top: auto; }
+        .btn-action {
+            background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;
+            padding: 12px; border-radius: 8px; cursor: pointer; transition: 0.15s; font-weight: bold; font-size: 12px;
+        }
+        .btn-action:hover { background: #1e4a78; }
+        #btn-manual.edit-mode { background: #00aa66; color: #000; border-color: #00cc88; }
+        
+        #btn-save { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
+        #btn-save:hover { filter: brightness(1.2); }
+        
+        #btn-delete-img { flex: 0.2; background: #4a1118; color: #ffb6c0; border-color: #7a222c; font-size: 16px; display: flex; justify-content: center; align-items: center; }
+        #btn-delete-img:hover { background: #6a1822; color: #fff; }
+
+        /* === FOOTER === */
+        .footerbar { margin-top: 20px; text-align: center; font-size: 13px; }
+        .footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
+        .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
+        .footer-copy { margin-bottom: 20px; text-align: center; font-size: 11px; color: #555; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1b1b1b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00aa66; }
+
+        #btn-rename-top, #btn-settings, #btn-sort, #btn-batch-tag { background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer;}
+        #btn-sort { font-size: 14px; }
+        #btn-rename-top:hover, #btn-settings:hover, #btn-sort:hover, #btn-batch-tag:hover { color: #00ff99; border-color:#00ff99; }
+        #btn-batch-tag.active { background: #00aa66; color: #000; border-color: #00cc88; }
+        #btn-rename-top.active { background: #b890ff; color: #000; border-color: #9060cc; }
+
+        .settings-dropdown {
+            display: none; position: absolute; top: 55px; right: 20px; background: #111827; border: 1px solid #263b5a; border-radius: 8px;
+            padding: 14px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.6); min-width: 220px; flex-direction: column; gap: 10px;
+        }
+        .settings-dropdown.open { display: flex; }
+        .settings-dropdown label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
+        .settings-dropdown input[type="checkbox"] { width: auto; margin: 0; }
+    </style>
+</head>
+<body>
+
+<datalist id="all-tags-list"></datalist>
+
+<div id="topbar">
+    <div class="topbar-section left">
+        <button onclick="addDirectory()">+ Add Directory</button>
+        <select id="dir-list" onchange="loadSelectedDirectory()">
+            <option value="">Select a directory...</option>
+        </select>
+        <select id="sub-dir-1" onchange="loadSubDir1()" style="display:none;" title="Subfolders">
+            <option value="">-- Root --</option>
+        </select>
+        <select id="sub-dir-2" onchange="loadSubDir2()" style="display:none;" title="Inner Folders">
+            <option value="">-- Current Folder --</option>
+        </select>
+        
+        <button id="btn-refresh" onclick="refreshCurrentFolder()" style="display:none;" title="Refresh Current Folder">↻</button>
+        <button id="btn-path-label" onclick="togglePathMode()" style="display:none;" title="Definir Rota Manual">📍 Path</button>
+        <button id="btn-remove" onclick="removeDirectory()" style="display:none;" title="Remove Root Path">Remove Path</button>
+        <button id="btn-batch-json" onclick="batchUpdateJSONs()" style="display:none;" title="Create or Update all JSONs in this folder">Batch Update JSONs</button>
+        <input type="text" id="filter-tag" placeholder="Filter by tag..." list="all-tags-list" oninput="filterGallery()" style="display:none;" title="Type a tag to filter the gallery">
+    </div>
+    
+    <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
+        <span id="app-title">🖼️️‍ LoRA Gallery 🖼️️‍</span>
+        <span id="path-display" style="color: #555; font-size: 11px; font-weight: bold; margin-top: 2px; min-height: 13px; display: block;"></span>
+    </div>
+    
+    <div class="topbar-section right" id="topbar-right">
+        <button id="btn-rename-top" onclick="toggleRenameBalloon()" title="Rename Current File" style="display:none; font-size: 15px;">✏️</button>
+        
+        <button id="btn-batch-tag" onclick="toggleBatchTagMode()" title="Add Tag to Multiple Files" style="display:none;">🏷️ Tag</button>
+        <button id="btn-sort" onclick="toggleSort()" title="Sort Gallery">🔀 Normal</button>
+        <button id="btn-settings" onclick="toggleSettings()" title="Settings">⚙️</button>
+    </div>
+</div>
+
+<div id="tag-dropdown" class="settings-dropdown" style="right: 130px; width: 230px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Add Tag:</span>
+    <input type="text" id="batch-tag-input" placeholder="Enter tag name..." list="all-tags-list" onkeydown="if(event.key === 'Enter') applyBatchTags()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="applyBatchTags()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="cancelBatchTags()" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="path-dropdown" class="settings-dropdown" style="left: 200px; width: 320px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Set Visual Path:</span>
+    <input type="text" id="path-label-input" placeholder="Ex: C:\Minha\Pasta\Modelos" onkeydown="if(event.key === 'Enter') applyPathLabel()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px; margin-top: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="applyPathLabel()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1; font-family: inherit;">Confirm</button>
+        <button onclick="document.getElementById('path-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1; font-family: inherit;">Cancel</button>
+    </div>
+</div>
+
+<div id="rename-dropdown" class="settings-dropdown" style="right: 170px; width: 230px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Rename File:</span>
+    <input type="text" id="rename-input" placeholder="New name..." onkeydown="if(event.key === 'Enter') renameCurrentFile()" style="background: #111; color: #00ff99; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; outline: none; margin-bottom: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="renameCurrentFile()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="document.getElementById('rename-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="settings-dropdown" class="settings-dropdown">
+    <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields()"> Show Extra Gen Data</label>
+    <label><input type="checkbox" id="toggle-tag-field" onchange="toggleTagField()"> Show Image Tag</label>
+    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField()" checked> Show File Names</label>
+    <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay()" checked> Show Visual Path</label>
+    <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon()"> Show Path Button</label>
+    <label><input type="checkbox" id="toggle-count-field" onchange="updateGridCounters()" checked> Show File Count</label>
+    <label><input type="checkbox" id="toggle-json-count-field" onchange="updateGridCounters()"> Show JSON Count</label>
+</div>
+
+<div id="workspace">
+    <div id="left-col">
+        <div id="grid-view"></div>
+        <div id="detail-view">
+            <div id="main-image-container">
+                <button id="btn-layout" onclick="toggleThumbPosition()" title="Toggle Thumbnail Layout">◧</button>
+                <button id="btn-close" onclick="backToGrid()">X</button>
+                 <img id="main-image" src="">
+            </div>
+            <div id="thumbnail-strip"></div>
+        </div>
+        
+        <div id="grid-counters" style="position: absolute; bottom: 15px; right: 25px; display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 12px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
+            <span id="image-count-display" style="color: #9ecfff; font-size: 13px; font-weight: bold; display: none;"></span>
+            <span id="json-count-display" style="color: #00ff99; font-size: 13px; font-weight: bold; display: none;"></span>
+        </div>
+
+        <div id="pagination-controls" style="position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 14px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
+            <button id="btn-page-prev" onclick="changePage(-1)" style="padding: 5px 12px; font-size: 12px;">◀ Ant</button>
+            <span id="page-info" style="color: #9ecfff; font-size: 13px; font-weight: bold; white-space: nowrap;">Pág 1 de 1</span>
+            <button id="btn-page-next" onclick="changePage(1)" style="padding: 5px 12px; font-size: 12px;">Prox ▶</button>
+        </div>
+    </div>
+    
+    <div class="resizer vertical" id="resizer-right" style="display:none;"></div>
+
+    <div id="right-col">
+        <div id="alertBar"></div>
+        
+        <div id="sourceBar">
+            Source: <span id="source-text"></span>
+            <button id="btn-reset-json" onclick="resetLoraParameters()" style="display:none;" title="Rescan safetensors and reset parameters (keeps notes and tags)">↺ Reset</button>
+        </div>
+        
+        <!-- BLOCKS COM OS PARÂMETROS -->
+        
+        <div class="promptBlock">
+            <div class="promptTitle"><span>General</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+            <div class="collapsible-content meta-table">
+                <div class="meta-table-full"><div class="meta-label">Base Model</div><input type="text" id="v-base_model" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Pred. Type</div><input type="text" id="v-prediction_type" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Batch</div><input type="text" id="v-batch_size" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Grad. Acc.</div><input type="text" id="v-gradient_accumulation_steps" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Resolution</div><input type="text" id="v-resolution" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Clip Skip</div><input type="text" id="v-clip_skip" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Epoch</div><input type="text" id="v-epoch" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Steps</div><input type="text" id="v-steps" class="meta-input" readonly></div>
+            </div>
+        </div>
+
+        <div class="promptBlock">
+            <div class="promptTitle"><span>Network</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+            <div class="collapsible-content meta-table">
+                <div class="meta-table-full"><div class="meta-label">Module</div><input type="text" id="v-network_module" class="meta-input" readonly></div>
+                <div class="meta-table-full"><div class="meta-label">Algorithm</div><input type="text" id="v-network_args_algo" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Dim / Alpha</div><input type="text" id="v-dim_alpha" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Conv Dim/Alpha</div><input type="text" id="v-conv_dim_alpha" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Dropout</div><input type="text" id="v-network_dropout" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">IP Noise</div><input type="text" id="v-ip_noise_gamma" class="meta-input" readonly></div>
+            </div>
+        </div>
+
+        <div class="promptBlock" id="block-optimizer">
+            <div class="promptTitle"><span>Optimizer</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+            <div class="collapsible-content meta-table">
+                <div class="meta-table-full"><div class="meta-label">Type</div><input type="text" id="v-optimizer_type" class="meta-input" readonly></div>
+                <div class="meta-table-full"><div class="meta-label">Scheduler</div><input type="text" id="v-lr_scheduler" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Learning Rate</div><input type="text" id="v-learning_rate" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">TE LR</div><input type="text" id="v-text_encoder_lr" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">UNET LR</div><input type="text" id="v-unet_lr" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">SNR Gamma</div><input type="text" id="v-min_snr_gamma" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Warmup Steps</div><input type="text" id="v-lr_warmup_steps" class="meta-input" readonly></div>
+                <div class="meta-table-full"><div class="meta-label">Args</div><input type="text" id="v-optimizer_args" class="meta-input" readonly></div>
+            </div>
+        </div>
+        
+        <div class="promptBlock" id="block-training">
+            <div class="promptTitle"><span>Training Info & System</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+            <div class="collapsible-content meta-table">
+                <div class="extra-field"><div class="meta-label">Train Date</div><input type="text" id="v-train_date" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Train Time</div><input type="text" id="v-train_time" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Total Images</div><input type="text" id="v-total_images" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Tool</div><input type="text" id="v-system_tool" class="meta-input" readonly></div>
+                <div class="meta-table-full"><div class="meta-label">Source</div><input type="text" id="v-system_source" class="meta-input" readonly></div>
+            </div>
+        </div>
+
+        <div class="promptBlock hide-tag" id="tag-block">
+            <div class="promptTitle"><span>Personal Tag</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+             <div class="collapsible-content"><input type="text" id="val-tag" class="meta-input" placeholder="Ex: anime" list="all-tags-list" readonly title="Add one tag for this LoRA"></div>
+        </div>
+        
+        <div id="notes-container"></div>
+        
+        <div id="edit-controls" style="display: none; justify-content: flex-end; gap: 10px; margin-bottom: 10px;">
+            <button class="btn-action" style="padding: 6px 12px; flex: none;" onclick="addNote()">+ Note</button>
+        </div>
+        
+        <input type="hidden" id="file-name">
+        
+        <div class="action-buttons">
+            <button id="btn-manual" class="btn-action" onclick="toggleManualEdit()">Edit</button>
+            <button id="btn-save" class="btn-action" onclick="saveSidecarFile()">Save JSON</button>
+            <button id="btn-delete-img" onclick="deleteCurrentFile()" title="Excluir Safetensors e JSON">🗑️</button>
+        </div>
+    </div>
+</div>
+
+<div class="footerbar" style="margin-top:-10px;">
+    <a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a>
+</div>
+<div class="footer-copy">© 2026 shirosaki33</div>
+
+<script src="tools/quick_links.js"></script>
+<script src="tools/gallery_tag_system.js"></script>
+<script src="tools/gallery_path_saver.js"></script>
+<script src="tools/gallery_file_manager.js"></script>
+
+<script>
+/* ================================================================
+   LORA METADATA READER EXTRACTION LOGIC
+   ================================================================ */
+const FIELDS = {
+    'v-prediction_type':            ['modelspec.prediction_type','ss_v_pred_model','ss_prediction_type','prediction_type','v_parameterization'],
+    'v-batch_size':                 ['ss_batch_size_per_device','ss_total_batch_size','train_batch_size','batch_size'],
+    'v-gradient_accumulation_steps':['ss_gradient_accumulation_steps','gradient_accumulation_steps'],
+    'v-resolution':                 ['ss_resolution','resolution'],
+    'v-clip_skip':                  ['ss_clip_skip','clip_skip'],
+    'v-epoch':                      ['ss_epoch','ss_num_train_epochs','num_train_epochs'],
+    'v-steps':                      ['ss_steps','ss_max_train_steps','max_train_steps'],
+    'v-network_module':             ['ss_network_module','network_module'],
+    'v-network_args_algo':          ['ss_network_args','network_args'],
+    'v-network_dropout':            ['ss_network_dropout','network_dropout'],
+    'v-ip_noise_gamma':             ['ss_ip_noise_gamma','ip_noise_gamma'],
+    'v-optimizer_type':             ['ss_optimizer','ss_optimizer_type','optimizer_type'],
+    'v-lr_scheduler':               ['ss_lr_scheduler','lr_scheduler'],
+    'v-learning_rate':              ['ss_learning_rate','learning_rate'],
+    'v-text_encoder_lr':            ['ss_text_encoder_lr','text_encoder_lr'],
+    'v-unet_lr':                    ['ss_unet_lr','unet_lr'],
+    'v-optimizer_args':             ['ss_optimizer_args','optimizer_args'],
+    'v-min_snr_gamma':              ['ss_min_snr_gamma','min_snr_gamma'],
+    'v-lr_warmup_steps':            ['ss_lr_warmup_steps','lr_warmup_steps']
+};
+
+const JOIN_FIELDS = {
+    'v-dim_alpha':     [['ss_network_dim','network_dim'],   ['ss_network_alpha','network_alpha']],
+    'v-conv_dim_alpha':[['ss_conv_dim','conv_dim'],         ['ss_conv_alpha','conv_alpha']],
+};
+
+function findVal(meta, keys) {
+    if(!meta) return null;
+    for (const k of keys) {
+        if (meta[k] !== undefined && meta[k] !== null && meta[k] !== '') return String(meta[k]);
+    }
+    return null;
+}
+
+function parseJsonMeta(raw) {
+    if (!raw || raw === 'None' || raw === 'null') return null;
+    try { return JSON.parse(raw); } catch { try { return JSON.parse(String(raw).replace(/'/g, '"')); } catch { return null; } }
+}
+
+function parseMetaDate(raw) {
+    if (!raw || raw === 'None' || raw === 'null') return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    if (/^\d{10}(?:\.\d+)?$/.test(s)) { const d = new Date(parseFloat(s) * 1000); return isNaN(d.getTime()) ? null : d; }
+    if (/^\d{13}$/.test(s)) { const d = new Date(parseInt(s, 10)); return isNaN(d.getTime()) ? null : d; }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+}
+
+function parseTrainingStartFromOutputName(meta) {
+    const raw = findVal(meta, ['ss_output_name','output_name','modelspec.title','name']);
+    if (!raw) return null;
+    const m = String(raw).match(/(20\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{0,3})/);
+    if (!m) return null;
+    const [, y, mo, d, h, mi, se, msRaw] = m;
+    const ms = msRaw ? parseInt(msRaw.padEnd(3, '0').slice(0, 3), 10) : 0;
+    const dt = new Date(parseInt(y,10), parseInt(mo,10) - 1, parseInt(d,10), parseInt(h,10), parseInt(mi,10), parseInt(se,10), ms);
+    return isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatTrainingDateTime(d) {
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDurationFromSeconds(seconds, estimated = false) {
+    const secs = Math.max(0, Math.round(seconds));
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    let dur = '';
+    if (h > 0) dur += h + 'h ';
+    if (m > 0 || h > 0) dur += m + 'm ';
+    dur += s + 's';
+    return (estimated ? '≈ ' : '') + dur.trim();
+}
+
+function detectTrainingTiming(meta) {
+    const endRaw = findVal(meta, ['ss_training_finished_at', 'training_finished_at', 'training_date', 'modelspec.date', 'date', 'created_at', 'createdAt']);
+    const startRaw = findVal(meta, ['ss_training_started_at', 'training_started_at', 'started_at', 'startedAt']);
+
+    const end = parseMetaDate(endRaw);
+    const explicitStart = parseMetaDate(startRaw);
+    const estimatedStart = explicitStart ? null : parseTrainingStartFromOutputName(meta);
+    const start = explicitStart || estimatedStart;
+
+    let dateText = null;
+    let timeText = null;
+    if (end) {
+        dateText = formatTrainingDateTime(end);
+        if (start && end.getTime() > start.getTime()) {
+            timeText = formatDurationFromSeconds((end.getTime() - start.getTime()) / 1000, !!estimatedStart);
+        } else {
+            timeText = end.toLocaleTimeString('en-GB', { hour12: false });
+        }
+    } else if (endRaw) { dateText = endRaw; }
+    return { dateText, timeText };
+}
+
+function normalizeSoftwareName(name) {
+    const n = String(name || '').trim();
+    const low = n.toLowerCase();
+    if (/ai[-_\s]?toolkit/.test(low)) return 'ai-toolkit';
+    if (/lora[-_\s]?easy|lora_easy_training_scripts|easy[-_\s]?lora|loraeasy/.test(low)) return 'EasyLoRA';
+    if (/sd[-_\s]?scripts|kohya/.test(low)) return 'kohya / sd-scripts';
+    if (/one[-_\s]?trainer/.test(low)) return 'OneTrainer';
+    if (/simple[-_\s]?tuner/.test(low)) return 'SimpleTuner';
+    if (/musubi/.test(low)) return 'Musubi Tuner';
+    if (/flux\s*gym|fluxgym/.test(low)) return 'FluxGym';
+    if (/everydream/.test(low)) return 'EveryDream';
+    if (/diffusers/.test(low)) return 'Diffusers';
+    if (/citron/.test(low)) return 'Citron Trainer';
+    if (/sd[-_\s]?scripts[-_\s]?compatible/.test(low)) return 'sd-scripts compatible metadata';
+    return n;
+}
+
+function normalizeTrainingSource(source) {
+    const s = String(source || '').trim();
+    if (!s || s === 'None' || s === 'null') return '';
+    const low = s.toLowerCase();
+    if (/civitai\s+spine\s+controller/.test(low)) return 'Civitai Spine Controller';
+    if (/civitai/.test(low)) return 'Civitai';
+    if (/hugging\s*face|huggingface/.test(low)) return 'Hugging Face';
+    if (/local/.test(low)) return 'Local';
+    return s;
+}
+
+function detectTrainingSource(meta, searchable = '') {
+    const direct = findVal(meta, ['training_source', 'source', 'platform', 'training_platform', 'ss_training_source', 'modelspec.source', 'modelspec.source_platform']);
+    const notes = findVal(meta, ['notes','ss_training_comment','training_comment','comment']) || '';
+    const haystack = (String(notes) + '\n' + String(direct || '') + '\n' + String(searchable || '')).toLowerCase();
+    if (/civitai\s+spine\s+controller/.test(haystack)) return 'Civitai Spine Controller';
+    if (/civitai/.test(haystack) && /(training|trainer|spine|job|via)/.test(haystack)) return 'Civitai';
+    return normalizeTrainingSource(direct);
+}
+
+function detectSystemInfo(meta) {
+    const searchable = Object.entries(meta || {}).map(([k, v]) => k + ': ' + v).join('\n');
+    const source = detectTrainingSource(meta, searchable);
+    const low = searchable.toLowerCase();
+
+    const softwareRaw = findVal(meta, ['software','ss_software','training_software','trainer','tool']);
+    const software = parseJsonMeta(softwareRaw);
+    if (software && typeof software === 'object') {
+        const name = software.name || software.tool || software.software || software.package;
+        const version = software.version || software.ver || software.release;
+        let label = name ? normalizeSoftwareName(name) : null;
+        if (label) return { label, version, source };
+    } else if (softwareRaw) {
+        const label = normalizeSoftwareName(softwareRaw);
+        if (label) return { label, version: '', source };
+    }
+
+    const opt = String(findVal(meta, ['ss_optimizer','ss_optimizer_type','optimizer_type']) || '');
+    const easySignals = [ /LoraEasyCustomOptimizer/i, /LoRA[_\s-]?Easy[_\s-]?Training[_\s-]?Scripts/i, /\bEasyLoRA\b/i, /\bLoraEasy\b/i ];
+    if (easySignals.some(rx => rx.test(opt) || rx.test(searchable))) return { label: 'EasyLoRA', version: '', source };
+
+    if (/ai[-_\s]?toolkit|ostris\/ai-toolkit/.test(low)) return { label: 'ai-toolkit', version: '', source };
+    if (/one[-_\s]?trainer/.test(low)) return { label: 'OneTrainer', version: '', source };
+    if (/simple[-_\s]?tuner|simpletuner/.test(low)) return { label: 'SimpleTuner', version: '', source };
+    if (/musubi[-_\s]?tuner|musubi/.test(low)) return { label: 'Musubi Tuner', version: '', source };
+    if (/flux\s*gym|fluxgym/.test(low)) return { label: 'FluxGym', version: '', source };
+    if (/everydream/.test(low)) return { label: 'EveryDream', version: '', source };
+    if (/lora_anima|anima-preview/.test(low)) return { label: 'Citron Trainer', version: '', source };
+    if (meta['ss_sd_scripts_commit_hash'] || /sd[-_\s]?scripts|kohya[-_\s]?ss|\bkohya\b/.test(low)) return { label: 'kohya / sd-scripts', version: '', source };
+
+    if (source) return { label: source, version: '', source: '' };
+    return null;
+}
+
+function resolvePredictionType(meta) {
+    const direct = findVal(meta, ['modelspec.prediction_type','ss_prediction_type','prediction_type']);
+    if (direct) return direct;
+    const vpred = findVal(meta, ['ss_v_pred_model','v_parameterization','v_pred']);
+    if (vpred && (vpred === '1' || vpred === 'true' || vpred === 'True')) return 'v_prediction';
+    return 'epsilon';
+}
+
+function resolveBatch(meta) {
+    const direct = ['ss_batch_size_per_device', 'ss_total_batch_size', 'train_batch_size', 'batch_size', 'per_device_train_batch_size'];
+    for (const k of direct) {
+        const v = meta[k];
+        if (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'None') return String(v);
+    }
+    if (meta.ss_datasets && Array.isArray(meta.ss_datasets)) {
+        const ds = meta.ss_datasets[0];
+        if (ds?.batch_size_per_device) return String(ds.batch_size_per_device);
+    }
+    return null;
+}
+
+function resolveResolution(meta) {
+    const keys = ['modelspec.resolution', 'ss_resolution', 'resolution', 'image_size', 'train_resolution'];
+    let raw = null;
+    for (const k of keys) {
+        const v = meta[k];
+        if (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'None') { raw = String(v); break; }
+    }
+    if (!raw && meta.ss_datasets && Array.isArray(meta.ss_datasets) && meta.ss_datasets[0]?.resolution) {
+        const r = meta.ss_datasets[0].resolution;
+        raw = Array.isArray(r) ? r.join('x') : String(r);
+    }
+    if (!raw) return null;
+    const mX = raw.match(/^(\d+)\s*[xX×]\s*(\d+)$/);
+    if (mX) return mX[1] + 'x' + mX[2];
+    const mT = raw.match(/(\d+)\D+(\d+)/);
+    if (mT) return mT[1] + 'x' + mT[2];
+    const mS = raw.match(/^(\d+)$/);
+    if (mS) return mS[1] + 'x' + mS[1];
+    return raw;
+}
+
+function parseDatasetDirs(raw) {
+    try {
+        const obj = JSON.parse(raw);
+        let totalImgs = 0;
+        Object.entries(obj).forEach(([name, info]) => {
+            const imgCount = info.img_count || info.num_images || (name.match(/\((\d+)\)\s*$/) ? parseInt(name.match(/\((\d+)\)\s*$/)[1]) : 0);
+            totalImgs += imgCount;
+        });
+        return { totalImgs };
+    } catch {
+        return { totalImgs: 0 };
+    }
+}
+
+async function readSafetensorsHeader(file) {
+    try {
+        const lenBuf = await file.slice(0, 8).arrayBuffer();
+        const headerLen = Number(new DataView(lenBuf).getBigUint64(0, true));
+        if (headerLen <= 0 || headerLen > 200000000) return null;
+        const hdrBuf = await file.slice(8, 8 + headerLen).arrayBuffer();
+        const parsed = JSON.parse(new TextDecoder().decode(hdrBuf));
+        return parsed.__metadata__ || {};
+    } catch(e) {
+        return null;
+    }
+}
+
+function extractSafetensorsParams(meta) {
+    if (!meta) return {};
+    let d = {};
+
+    d['v-base_model'] = findVal(meta, ['ss_sd_model_name','ss_base_model_version','base_model','checkpoint','sd_model_name']) || '';
+
+    for (const [id, keys] of Object.entries(FIELDS)) {
+        let val = findVal(meta, keys);
+        
+        if (id === 'v-network_args_algo' && val) {
+            try {
+                const obj = JSON.parse(val);
+                val = obj.algo || obj.algorithm || obj.network_args_algo || null;
+                if (!val) {
+                    const dora = obj.use_dora || obj.dora || obj.dora_linear_layer || null;
+                    val = (dora === true || dora === 'True' || dora === '1' || dora === 1) ? 'DoRA' : null;
+                }
+                if (!val) val = Object.entries(obj).filter(([k]) => k !== 'use_dora' && k !== 'dora').map(([k,v]) => k + ':' + v).join(', ') || null;
+            } catch {
+                const m = val.match(/algo["'\s:=]+([^\s"',}]+)/i);
+                val = m ? m[1] : val;
+            }
+        }
+
+        if (id === 'v-network_args_algo' && (!val || val === '—')) {
+            const doraKey = findVal(meta, ['ss_use_dora','use_dora','ss_dora','dora']);
+            if (doraKey && (doraKey === '1' || doraKey.toLowerCase() === 'true')) val = 'DoRA';
+        }
+
+        if (id === 'v-optimizer_type' && val) {
+            let clean = String(val).trim().split(',')[0].trim().replace(/\s*\([^)]*\)?/g, '').trim();
+            const dotParts = clean.split('.');
+            clean = dotParts[dotParts.length - 1].split('_')[0].split('-')[0].trim();
+            val = clean || val;
+        }
+        
+        d[id] = val || '';
+    }
+
+    d['v-prediction_type'] = resolvePredictionType(meta) || d['v-prediction_type'];
+    d['v-batch_size'] = resolveBatch(meta) || d['v-batch_size'];
+    d['v-resolution'] = resolveResolution(meta) || d['v-resolution'];
+    
+    const epochCur   = findVal(meta, ['ss_epoch']);
+    const epochTotal = findVal(meta, ['ss_num_train_epochs','num_train_epochs']);
+    if (epochCur && epochTotal && epochCur !== epochTotal) d['v-epoch'] = epochCur + ' of ' + epochTotal;
+    else if (epochCur || epochTotal) d['v-epoch'] = epochCur || epochTotal;
+
+    const stepsCur   = findVal(meta, ['ss_steps']);
+    const stepsTotal = findVal(meta, ['ss_max_train_steps','max_train_steps']);
+    if (stepsCur && stepsTotal && stepsCur !== stepsTotal) d['v-steps'] = stepsCur + ' of ' + stepsTotal;
+    else if (stepsCur || stepsTotal) d['v-steps'] = stepsCur || stepsTotal;
+
+    const rawOptArgs = findVal(meta, ['ss_optimizer_args','optimizer_args']);
+    if (rawOptArgs) {
+        try { d['v-optimizer_args'] = JSON.stringify(JSON.parse(rawOptArgs)); }
+        catch { d['v-optimizer_args'] = rawOptArgs; }
+    } else {
+        const rawOpt = findVal(meta, ['ss_optimizer','ss_optimizer_type','optimizer_type']);
+        if (rawOpt) {
+            const m = rawOpt.match(/\(([^)]+)\)/);
+            if (m) {
+                const obj = {};
+                m[1].split(',').forEach(p => { const [k, v] = p.split('=').map(s => s.trim()); if (k) obj[k] = v || ''; });
+                d['v-optimizer_args'] = JSON.stringify(obj);
+            }
+        }
+    }
+
+    for (const [id, [k1arr, k2arr]] of Object.entries(JOIN_FIELDS)) {
+        const v1 = findVal(meta, k1arr), v2 = findVal(meta, k2arr);
+        if (v1 || v2) d[id] = (v1||'?') + ' / ' + (v2||'?');
+    }
+
+    const trainTiming = detectTrainingTiming(meta);
+    d['v-train_date'] = trainTiming.dateText || '';
+    d['v-train_time'] = trainTiming.timeText || '';
+
+    const sys = detectSystemInfo(meta);
+    if (sys) {
+        d['v-system_tool'] = sys.label + (sys.version ? ' ' + sys.version : '');
+        d['v-system_source'] = sys.source || '';
+    }
+
+    const dsRaw = findVal(meta, ['ss_dataset_dirs','dataset_dirs']);
+    let datasetImgCount = 0;
+    if (dsRaw) {
+        const { totalImgs } = parseDatasetDirs(dsRaw);
+        datasetImgCount = totalImgs;
+    }
+    const ni = findVal(meta, ['ss_num_train_images','num_train_images']);
+    if (datasetImgCount > 0) d['v-total_images'] = String(datasetImgCount);
+    else if (ni && !ni.startsWith('{')) d['v-total_images'] = ni;
+
+    return d;
+}
+
+const ALL_PARAM_KEYS = Object.keys(FIELDS).concat(Object.keys(JOIN_FIELDS), ['v-base_model', 'v-train_date', 'v-train_time', 'v-system_tool', 'v-system_source', 'v-total_images']);
+
+/* ================================================================
+   BLOCK 1 — UI UTILITIES & SETTINGS
+   ================================================================ */
+function autoResize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+
+function copyText(btn, id) { 
+    let el = id ? document.getElementById(id) : btn.closest('.promptBlock').querySelector('.collapsible-content textarea, .collapsible-content input'); 
+    if (!el || !el.value) return; 
+    navigator.clipboard.writeText(el.value).then(() => { 
+        const old = btn.innerText; btn.innerText = '✓'; btn.classList.add('copied'); 
+        setTimeout(() => { btn.innerText = old; btn.classList.remove('copied'); }, 1500); 
+    }); 
+}
+
+function setCollapseState(block, isCollapsed) { 
+    if (!block) return; 
+    const btn = block.querySelector('.collapse-btn'); 
+    const content = block.querySelector('.collapsible-content'); 
+    if (!btn || !content) return; 
+    if (isCollapsed) { 
+        content.style.display = 'none'; btn.textContent = '▶'; 
+    } else { 
+        content.style.display = ''; btn.textContent = '▼'; 
+        const textareas = content.querySelectorAll('textarea'); 
+        textareas.forEach(ta => autoResize(ta)); 
+    } 
+}
+
+function toggleCollapse(btn) { 
+    const block = btn.closest('.promptBlock'); 
+    const content = block.querySelector('.collapsible-content'); 
+    const isCollapsed = content.style.display === 'none'; 
+    setCollapseState(block, !isCollapsed); 
+}
+
+let alertTimeout;
+let deferredSourceBarUpdate = null;
+
+function showAlert(msg, type) {
+    const bar = document.getElementById('alertBar'); 
+    clearTimeout(alertTimeout);
+    
+    if (deferredSourceBarUpdate) {
+        clearTimeout(deferredSourceBarUpdate);
+        deferredSourceBarUpdate = null;
+    }
+
+    if (!msg) { 
+        bar.style.display = 'none'; bar.className = ''; bar.textContent = ''; 
+        return; 
+    }
+    
+    if (msg.includes('JSON') && !msg.includes('not found') && !msg.includes('Error')) {
+       document.getElementById('sourceBar').style.display = 'none'; bar.className = 'success';
+       
+       if (msg.includes('loaded from sidecar')) {
+           deferredSourceBarUpdate = setTimeout(() => {
+               const sourceBar = document.getElementById('sourceBar');
+               const sourceText = document.getElementById('source-text');
+               sourceText.textContent = 'JSON Sidecar';
+               sourceBar.className = 'json-source';
+               sourceBar.style.display = 'block';
+           }, 5000);
+       }
+       
+    } else if (msg.includes('extracted from') || msg.includes('Processing batch')) {
+        document.getElementById('sourceBar').style.display = 'none'; bar.className = 'info'; 
+
+        deferredSourceBarUpdate = setTimeout(() => {
+           const sourceBar = document.getElementById('sourceBar');
+           sourceBar.className = '';
+           sourceBar.style.display = 'block';
+        }, 5000);
+    } else if (msg.includes('not found') || msg.includes('Error') || type === 'error' || msg.includes('⚠️') || msg.includes('❌') || msg.includes('🗑️')) {
+         bar.className = 'error';
+         if(type === 'success') bar.className = 'success'; 
+    } else {
+         bar.className = type || 'info';
+    }
+
+    bar.textContent = msg; 
+    bar.style.display = 'block';
+    
+    alertTimeout = setTimeout(() => { 
+        bar.style.display = 'none'; 
+    }, 5000); 
+}
+
+function toggleSettings() { document.getElementById('settings-dropdown').classList.toggle('open'); }
+
+function toggleExtraFields() { 
+    const isChecked = document.getElementById('toggle-extra-fields').checked; 
+    const tables = document.querySelectorAll('.meta-table'); 
+    tables.forEach(table => {
+        if (isChecked) table.classList.remove('hide-extras'); else table.classList.add('hide-extras'); 
+    });
+}
+
+function toggleTagField() { 
+    const isChecked = document.getElementById('toggle-tag-field').checked; 
+    const block = document.getElementById('tag-block'); 
+    if (isChecked) block.classList.remove('hide-tag'); else block.classList.add('hide-tag'); 
+}
+
+function toggleFilenameField() { 
+    const isChecked = document.getElementById('toggle-filename-field').checked; 
+    const grid = document.getElementById('grid-view'); 
+    if (isChecked) grid.classList.remove('hide-filenames'); else grid.classList.add('hide-filenames'); 
+}
+
+function togglePathDisplay() {
+    const isChecked = document.getElementById('toggle-path-field').checked;
+    const displayElement = document.getElementById('path-display');
+    if (isChecked) {
+        displayElement.style.display = 'block';
+    } else {
+        displayElement.style.display = 'none';
+    }
+}
+
+function togglePathIcon() {
+    const isChecked = document.getElementById('toggle-path-icon').checked;
+    const btn = document.getElementById('btn-path-label');
+    if (isChecked && typeof rootHandle !== 'undefined' && rootHandle) {
+        btn.style.display = 'inline-block';
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+function updateGridCounters() {
+    const container = document.getElementById('grid-counters');
+    const imgDisplay = document.getElementById('image-count-display');
+    const jsonDisplay = document.getElementById('json-count-display');
+    
+    if (!currentHandle || document.getElementById('grid-view').style.display === 'none') {
+        if (container) container.style.display = 'none';
+        return;
+    }
+
+    const showImg = document.getElementById('toggle-count-field').checked;
+    const showJson = document.getElementById('toggle-json-count-field').checked;
+
+    if (!showImg && !showJson) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'flex';
+    
+    if (showImg) {
+        imgDisplay.textContent = `📁 ${currentFiles.length} LoRAs`;
+        imgDisplay.style.display = 'inline-block';
+    } else {
+        imgDisplay.style.display = 'none';
+    }
+
+    if (showJson) {
+        let jCount = 0;
+        currentFiles.forEach(f => {
+            const base = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
+            if (currentJsonFiles.has(base + '.json')) jCount++;
+        });
+        jsonDisplay.textContent = `📄 ${jCount} JSONs`;
+        jsonDisplay.style.display = 'inline-block';
+    } else {
+        jsonDisplay.style.display = 'none';
+    }
+}
+
+function toggleThumbPosition() {
+    const detailView = document.getElementById('detail-view');
+    const btn = document.getElementById('btn-layout');
+    detailView.classList.toggle('thumb-left');
+
+    if (detailView.classList.contains('thumb-left')) {
+        btn.innerHTML = '⬒';
+    } else {
+        btn.innerHTML = '◧';
+    }
+}
+
+document.addEventListener('click', (e) => { 
+    const dropdownSettings = document.getElementById('settings-dropdown'); 
+    const btnSettings = document.getElementById('btn-settings'); 
+    if (dropdownSettings && dropdownSettings.classList.contains('open') && !dropdownSettings.contains(e.target) && !btnSettings.contains(e.target)) {
+        dropdownSettings.classList.remove('open');
+    }
+
+    const dropdownRename = document.getElementById('rename-dropdown'); 
+    const btnRename = document.getElementById('btn-rename-top'); 
+    if (dropdownRename && dropdownRename.classList.contains('open') && !dropdownRename.contains(e.target) && !btnRename.contains(e.target)) {
+        dropdownRename.classList.remove('open');
+    }
+    
+    const dropdownTag = document.getElementById('tag-dropdown'); 
+    const btnTag = document.getElementById('btn-batch-tag'); 
+    if (dropdownTag && dropdownTag.classList.contains('open') && !dropdownTag.contains(e.target) && !btnTag.contains(e.target)) {
+        dropdownTag.classList.remove('open');
+    }
+    
+    const dropdownPath = document.getElementById('path-dropdown'); 
+    const btnPath = document.getElementById('btn-path-label'); 
+    if (dropdownPath && dropdownPath.classList.contains('open') && !dropdownPath.contains(e.target) && !btnPath.contains(e.target)) {
+        dropdownPath.classList.remove('open');
+    }
+});
+
+let isDraggingRight = false;
+window.addEventListener('DOMContentLoaded', () => {
+    toggleExtraFields();
+    toggleTagField();
+    toggleFilenameField();
+    togglePathDisplay();
+    togglePathIcon();
+    updateGridCounters();
+
+    const resizerRight = document.getElementById('resizer-right');
+    const rightCol = document.getElementById('right-col');
+
+    resizerRight.addEventListener('mousedown', () => {
+        isDraggingRight = true;
+        resizerRight.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (isDraggingRight) {
+            let newWidth = window.innerWidth - e.clientX - 20; 
+            if (newWidth < 250) newWidth = 250;
+            if (newWidth > window.innerWidth * 0.6) newWidth = window.innerWidth * 0.6; 
+            rightCol.style.width = newWidth + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDraggingRight = false;
+        resizerRight.classList.remove('dragging');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+    });
+});
+
+/* ================================================================
+   BLOCK 2 — DYNAMIC NOTES
+   ================================================================ */
+function addNote(name = 'Note', value = '') {
+    const container = document.getElementById('notes-container');
+    const block = document.createElement('div'); 
+    block.className = 'promptBlock note-block'; 
+    const rmStyle = isEditing ? 'inline-block' : 'none';
+    const readonlyAttr = isEditing ? '' : 'readonly';
+    block.innerHTML = `
+        <div class="promptTitle">
+            <input type="text" class="note-title-input" value="${name}" ${readonlyAttr}>
+            <div class="promptTitle-actions">
+                <button class="copy-btn" onclick="copyText(this)" title="Copy">⧉</button>
+                <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+                 <button class="remove-btn" style="display:${rmStyle}; color:#ff6060; background:none; border:none; cursor:pointer; font-size:12px; margin-left:5px; padding:0 3px;" onclick="this.closest('.note-block').remove()" title="Remove Note">✖</button>
+            </div>
+        </div>
+        <div class="collapsible-content">
+            <textarea class="val-note-input" ${readonlyAttr} oninput="autoResize(this)">${value}</textarea>
+        </div>`;
+    container.appendChild(block); 
+    setTimeout(() => autoResize(block.querySelector('textarea')), 10);
+}
+
+/* ================================================================
+   BLOCK 3 — MANUAL EDITING CONTROL
+   ================================================================ */
+let isEditing = false;
+const EDITABLE_FIELDS = ALL_PARAM_KEYS.concat(['val-tag']);
+
+function toggleManualEdit() {
+    const btn = document.getElementById('btn-manual'); 
+    const rightCol = document.getElementById('right-col');
+    isEditing = !isEditing;
+    if (isEditing) { 
+        rightCol.classList.add('is-editing'); 
+        setCollapseState(document.getElementById('tag-block'), false); 
+        document.querySelectorAll('.meta-table').forEach(tbl => {
+            setCollapseState(tbl.closest('.promptBlock'), false); 
+        });
+    } else { 
+        rightCol.classList.remove('is-editing'); 
+    }
+    
+    EDITABLE_FIELDS.forEach(id => { 
+        const el = document.getElementById(id); 
+        if (el) {
+            if (isEditing) el.removeAttribute('readonly'); 
+            else el.setAttribute('readonly', 'true'); 
+        }
+    });
+    
+    document.querySelectorAll('.note-title-input').forEach(el => { if (isEditing) el.removeAttribute('readonly'); else el.setAttribute('readonly', 'true'); });
+    document.querySelectorAll('.val-note-input').forEach(el => { if (isEditing) el.removeAttribute('readonly'); else el.setAttribute('readonly', 'true'); });
+    
+    document.getElementById('edit-controls').style.display = isEditing ? 'flex' : 'none';
+    document.querySelectorAll('.remove-btn').forEach(b => b.style.display = isEditing ? 'inline-block' : 'none');
+
+    if (isEditing) { 
+        btn.textContent = 'Save to UI'; 
+        btn.classList.add('edit-mode'); 
+        showAlert(null); 
+    } else { 
+        btn.textContent = 'Edit'; 
+        btn.classList.remove('edit-mode'); 
+    }
+}
+
+function fillFields(d) {
+    // Fill dynamic parameters
+    ALL_PARAM_KEYS.forEach(k => {
+        const el = document.getElementById(k);
+        if (el) el.value = d ? (d[k] || '') : '';
+    });
+    
+    // Tag
+    const tagEl = document.getElementById('val-tag');
+    if (tagEl) tagEl.value = d?.tag || '';
+
+    // Process Notes
+    document.getElementById('notes-container').innerHTML = '';
+    if (d?.notes && Array.isArray(d.notes) && d.notes.length > 0) {
+        d.notes.forEach((n, i) => {
+            if (typeof n === 'string') {
+                addNote(`Note ${i + 1}`, n);
+            } else if (n && typeof n === 'object') {
+                addNote(n.name || `Note ${i + 1}`, n.value || '');
+            }
+        });
+    } else if (d?.note) {
+        addNote('Note 1', typeof d.note === 'string' ? d.note : (d.note.value || ''));
+    } else {
+        addNote('Note', '');
+    }
+
+    // Collapse specifically the Optimizer and Training sections by default to save space
+    const optBlock = document.getElementById('block-optimizer');
+    const trainBlock = document.getElementById('block-training');
+    if (optBlock) setCollapseState(optBlock, true);
+    if (trainBlock) setCollapseState(trainBlock, true);
+    
+    let srcName = d?.source || '';
+
+    const sourceBar = document.getElementById('sourceBar'); 
+    const sourceText = document.getElementById('source-text');
+    const btnReset = document.getElementById('btn-reset-json');
+    
+    sourceBar.className = '';
+    if (btnReset) btnReset.style.display = 'none';
+
+    if (srcName === 'json') {
+        sourceText.textContent = 'JSON Sidecar';
+        sourceBar.className = 'json-source';
+        if (btnReset) btnReset.style.display = 'inline-block'; 
+        
+        if(!document.getElementById('alertBar').style.display || document.getElementById('alertBar').style.display === 'none') {
+            sourceBar.style.display = 'block';
+        }
+    } else if (srcName) {
+        sourceText.textContent = srcName;
+        if(!document.getElementById('alertBar').style.display || document.getElementById('alertBar').style.display === 'none') {
+            sourceBar.style.display = 'block';
+        }
+    } else { 
+        sourceBar.style.display = 'none';
+    }
+}
+
+// === RESCAN FUNCTION ===
+async function resetLoraParameters() {
+    const fileName = document.getElementById('file-name').value;
+    if (!fileName) return;
+    const fileItem = currentFiles.find(a => a.name === fileName);
+    if (!fileItem?.file) {
+        showAlert('❌ Original LoRA not found in cache.', 'error');
+        return;
+    }
+
+    const notesArray = Array.from(document.querySelectorAll('.note-block')).map(block => {
+        return {
+            name: block.querySelector('.note-title-input').value,
+            value: block.querySelector('.val-note-input').value
+        };
+    }).filter(n => n.value.trim() !== '' || n.name.trim() !== 'Note');
+
+    const currentTag = document.getElementById('val-tag').value.trim();
+
+    showAlert('🔍 Scanning LoRA...', 'info');
+
+    try {
+        const meta = await readSafetensorsHeader(fileItem.file);
+        if (meta) {
+            const extracted = extractSafetensorsParams(meta);
+            extracted.tag = currentTag;
+            extracted.notes = notesArray.length > 0 ? notesArray : [];
+            extracted.source = 'Safetensors Metadata';
+            
+            fillFields(extracted);
+            showAlert('✔ Parameters reloaded from LoRA (Notes and Tags preserved). Remember to save.', 'success');
+        } else {
+            showAlert('⚠️ No metadata found in the LoRA.', 'warn');
+        }
+    } catch (e) {
+        console.error(e);
+        showAlert('❌ Error trying to read original file.', 'error');
+    }
+}
+
+// === DELETE FILE FUNCTION ===
+async function deleteCurrentFile() {
+    if (!currentHandle) return;
+    const fname = document.getElementById('file-name').value;
+    if (!fname) return;
+    
+    if (!confirm(`Are you sure you want to permanently delete the file:\n${fname}\n(and its JSON if it exists)?`)) return;
+
+    try {
+        await currentHandle.removeEntry(fname);
+        
+        // Tenta deletar o sidecar
+        const baseName = fname.substring(0, fname.lastIndexOf('.')) || fname;
+        try { await currentHandle.removeEntry(baseName + '.json'); } catch(e) {}
+        
+        tagsPerFile.delete(fname);
+        currentFiles = currentFiles.filter(f => f.name !== fname);
+        currentJsonFiles.delete(baseName + '.json'); // Limpa do contador
+        
+        showAlert('🗑️ File successfully deleted.', 'success');
+        backToGrid();
+        renderGrid();
+    } catch (e) {
+        console.error(e);
+        showAlert('❌ Error deleting file. Check permissions.', 'error');
+    }
+}
+
+/* ================================================================
+   BLOCK 5 — JSON SIDECAR (save & batch update)
+   ================================================================ */
+async function saveSidecarFile() {
+    if (!currentHandle) { alert('No directory loaded.'); return; }
+    const fname = document.getElementById('file-name').value;
+    if (!fname) { alert('No file selected.'); return; }
+
+    const baseName = fname.substring(0, fname.lastIndexOf('.')) || fname;
+    const sidecarName = baseName + '.json';
+    const savedTag = document.getElementById('val-tag').value.trim();
+
+    const notesArray = Array.from(document.querySelectorAll('.note-block')).map(block => {
+        return {
+            name: block.querySelector('.note-title-input').value,
+            value: block.querySelector('.val-note-input').value
+        };
+    }).filter(n => n.value.trim() !== '');
+    
+    const dataObj = { file_name: fname, tag: savedTag, notes: notesArray };
+    ALL_PARAM_KEYS.forEach(k => {
+        const el = document.getElementById(k);
+        if (el) dataObj[k] = el.value;
+    });
+    
+    try {
+        const fh = await currentHandle.getFileHandle(sidecarName, { create: true });
+        const writable = await fh.createWritable(); await writable.write(JSON.stringify(dataObj, null, 2)); await writable.close();
+        
+        currentJsonFiles.add(sidecarName);
+        
+        const btnSave = document.getElementById('btn-save');
+        btnSave.textContent = 'Update JSON';
+        btnSave.style.background = '#0d2a18';
+        btnSave.style.borderColor = '#00aa66';
+        btnSave.style.color = '#00ff99';
+        
+        updateGridCounters();
+        
+        showAlert(`✅ JSON File saved: ${sidecarName}`, 'success');
+        if (typeof tagsPerFile !== 'undefined') {
+            tagsPerFile.set(fname, savedTag);
+            if (savedTag) allTags.add(savedTag);
+            updateTagsDatalist();
+        }
+    } catch (e) { console.error(e); showAlert('❌ Error saving. Check directory permissions.', 'error'); }
+}
+
+/* ================================================================
+   BLOCK 6 — DIRECTORY LOGIC & SORTING & GRID MODE (RECURSIVE CASCADING)
+   ================================================================ */
+const dbName    = 'GalleryDBLoRA';
+const storeName = 'directories';
+
+// VARIÁVEIS DE CONTROLE DE NÍVEIS
+let rootHandle    = null; 
+let currentHandle = null; 
+let sub1Handles   = new Map(); 
+let sub2Handles   = new Map(); 
+
+let currentFiles  = [];
+let currentJsonFiles = new Set(); 
+let sortMode = 0;
+let currentPage = 1;
+const itemsPerPage = 100;
+const PLACEHOLDER_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%230d0d0d"/><text x="50" y="55" font-size="14" fill="%2300ff99" text-anchor="middle" font-family="Arial, sans-serif" font-weight="bold">LoRA</text></svg>';
+
+function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
+async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
+async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
+async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.oncomplete = r; }); }
+
+window.onload = async () => {
+    try {
+        await updateSelect();
+        const handles = await getHandles();
+        if (handles.length > 0) {
+            const h = handles[0].handle;
+            if ((await h.queryPermission({ mode: 'readwrite' })) === 'granted') {
+                document.getElementById('dir-list').value = handles[0].name;
+                loadGallery(h);
+            }
+        }
+    } catch (e) {}
+};
+
+async function updateSelect() {
+    const list = document.getElementById('dir-list'); list.innerHTML = '<option value="">Select a directory...</option>';
+    const handles = await getHandles(); handles.forEach(h => { const opt = document.createElement('option'); opt.value = h.name; opt.textContent = h.name; list.appendChild(opt); });
+}
+
+async function addDirectory() { 
+    try { 
+        const dh = await window.showDirectoryPicker({ mode: 'readwrite' }); 
+        await saveHandle(dh.name, dh); 
+        await updateSelect(); 
+        document.getElementById('dir-list').value = dh.name; 
+        loadGallery(dh); 
+    } catch (e) { if (e.name !== 'AbortError') alert('Permission error.'); } 
+}
+
+async function removeDirectory() { 
+    if (!rootHandle) return; 
+    await deleteHandle(rootHandle.name); 
+    
+    rootHandle = null; 
+    currentHandle = null; 
+    currentJsonFiles.clear();
+    
+    document.getElementById('btn-remove').style.display = 'none'; 
+    document.getElementById('btn-path-label').style.display = 'none'; 
+    document.getElementById('path-display').textContent = '';
+    document.getElementById('btn-batch-json').style.display = 'none'; 
+    document.getElementById('btn-batch-tag').style.display = 'none'; 
+    document.getElementById('btn-rename-top').style.display = 'none'; 
+    document.getElementById('filter-tag').style.display = 'none'; 
+    document.getElementById('btn-refresh').style.display = 'none'; 
+    document.getElementById('sub-dir-1').style.display = 'none';
+    document.getElementById('sub-dir-2').style.display = 'none';
+    
+    document.getElementById('grid-view').innerHTML = ''; 
+    updateGridCounters();
+    backToGrid(); 
+    await updateSelect(); 
+}
+
+async function loadSelectedDirectory() {
+    const name = document.getElementById('dir-list').value; if (!name) return; const handles = await getHandles();
+    const h = handles.find(x => x.name === name)?.handle;
+    if (h) { 
+        if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') await h.requestPermission({ mode: 'readwrite' }); 
+        loadGallery(h); 
+    }
+}
+
+// Helper para compilar Loras e Thumbnails
+async function processDirEntries(dirHandle, isRecursive, depth, pathPrefix) {
+    if (depth > 10) return;
+    let localLoras = [];
+    let localImages = new Map();
+
+    for await (const entry of dirHandle.values()) {
+        if (entry.kind === 'directory') {
+            if (isRecursive) {
+                const fullPath = pathPrefix ? pathPrefix + '/' + entry.name : entry.name;
+                sub2Handles.set(fullPath, entry);
+                await processDirEntries(entry, true, depth + 1, fullPath);
+            } else {
+                sub1Handles.set(entry.name, entry);
+            }
+        } else if (entry.kind === 'file') {
+            if (entry.name.match(/\.safetensors$/i)) {
+                localLoras.push({ name: entry.name, handle: entry });
+            } else if (entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                localImages.set(entry.name, entry);
+            } else if (entry.name.match(/\.json$/i)) {
+                currentJsonFiles.add(entry.name);
+            }
+        }
+    }
+
+    for (let f of localLoras) {
+        f.file = await f.handle.getFile();
+        const base = f.name.substring(0, f.name.lastIndexOf('.'));
+        const exts = ['.png', '.jpg', '.jpeg', '.webp', '.preview.png'];
+        let found = false;
+        for (let ext of exts) {
+            if (localImages.has(base + ext)) {
+                const imgFile = await localImages.get(base + ext).getFile();
+                f.url = URL.createObjectURL(imgFile);
+                found = true; break;
+            }
+        }
+        if (!found) f.url = PLACEHOLDER_SVG;
+        currentFiles.push(f);
+    }
+}
+
+// --- CARREGA O NÍVEL 1 (RAIZ) ---
+async function loadGallery(dirHandle) {
+    currentPage = 1;
+    rootHandle = dirHandle; 
+    currentHandle = dirHandle; 
+    currentFiles = [];
+    currentJsonFiles.clear();
+    
+    document.getElementById('btn-remove').style.display = 'inline-block';
+    if (document.getElementById('toggle-path-icon').checked) {
+        document.getElementById('btn-path-label').style.display = 'inline-block';
+    }
+    if (typeof loadSavedPathDisplay === 'function') loadSavedPathDisplay(dirHandle);
+    document.getElementById('btn-batch-json').style.display = 'inline-block';
+    document.getElementById('btn-batch-tag').style.display = 'inline-block';
+    document.getElementById('btn-rename-top').style.display = 'inline-block';
+    document.getElementById('btn-refresh').style.display = 'inline-block';
+    document.getElementById('filter-tag').style.display = 'inline-block'; 
+    document.getElementById('filter-tag').value = ''; 
+    
+    const sel1 = document.getElementById('sub-dir-1');
+    const sel2 = document.getElementById('sub-dir-2');
+    sel1.style.display = 'none';
+    sel2.style.display = 'none';
+    sub1Handles.clear();
+    
+    await processDirEntries(dirHandle, false, 0, "");
+    
+    if (sub1Handles.size > 0) {
+        sel1.style.display = 'inline-block';
+        sel1.innerHTML = '<option value="">-- Root --</option>';
+        for (let name of Array.from(sub1Handles.keys()).sort((a,b) => a.localeCompare(b))) {
+            sel1.innerHTML += `<option value="${name}">${name}</option>`;
+        }
+    }
+
+    if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    renderGrid(); backToGrid();
+}
+
+// --- CARREGA O NÍVEL 2 (SUBPASTAS IMEDIATAS) ---
+window.loadSubDir1 = async function() {
+    currentPage = 1;
+    const val = document.getElementById('sub-dir-1').value;
+    const sel2 = document.getElementById('sub-dir-2');
+
+    if (!val) {
+        await loadGallery(rootHandle);
+        return;
+    }
+
+    currentHandle = sub1Handles.get(val);
+    sub2Handles.clear();
+    sel2.style.display = 'none';
+    sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
+
+    showAlert('Reading subfolders... please wait.', 'info');
+    currentFiles = [];
+    currentJsonFiles.clear();
+    
+    await processDirEntries(currentHandle, true, 0, "");
+
+    if (sub2Handles.size > 0) {
+        sel2.style.display = 'inline-block';
+        for (let path of Array.from(sub2Handles.keys()).sort((a,b) => a.localeCompare(b))) {
+            sel2.innerHTML += `<option value="${path}">${path}</option>`;
+        }
+    }
+
+    if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    renderGrid(); backToGrid();
+    showAlert(null); 
+};
+
+// --- CARREGA O NÍVEL 3 (RECURSIVIDADE DA PASTA ESCOLHIDA) ---
+window.loadSubDir2 = async function() {
+    currentPage = 1;
+    const val = document.getElementById('sub-dir-2').value;
+
+    if (!val) {
+        const val1 = document.getElementById('sub-dir-1').value;
+        currentHandle = sub1Handles.get(val1);
+    } else {
+        currentHandle = sub2Handles.get(val);
+    }
+
+    showAlert('Loading files...', 'info');
+    currentFiles = [];
+    currentJsonFiles.clear();
+    
+    await processDirEntries(currentHandle, false, 0, "");
+
+    if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    renderGrid(); backToGrid();
+    showAlert(null);
+};
+
+window.refreshCurrentFolder = async function() {
+    const val2 = document.getElementById('sub-dir-2').value;
+    const val1 = document.getElementById('sub-dir-1').value;
+
+    if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { 
+        await loadSubDir2(); 
+    } else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { 
+        await loadSubDir1(); 
+    } else { 
+        await loadSelectedDirectory(); 
+    }
+};
+
+function toggleSort() {
+    sortMode = (sortMode + 1) % 3; const btn = document.getElementById('btn-sort');
+    if (sortMode === 0) btn.innerHTML = '🔀 Normal'; else if (sortMode === 1) btn.innerHTML = '⬇️ A-Z';
+    else if (sortMode === 2) btn.innerHTML = '⬆️ Z-A';
+    renderGrid();
+}
+
+function renderGrid() {
+    const grid = document.getElementById('grid-view');
+    grid.innerHTML = '';
+    
+    let arrRender = [...currentFiles];
+    if (sortMode === 1) arrRender.sort((a,b) => a.name.localeCompare(b.name));
+    else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
+
+    // --- LÓGICA DE PAGINAÇÃO ---
+    const totalItems = arrRender.length;
+    if (totalItems > itemsPerPage) {
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        if (currentPage > totalPages) currentPage = totalPages;
+        
+        const start = (currentPage - 1) * itemsPerPage;
+        const end = start + itemsPerPage;
+        arrRender = arrRender.slice(start, end);
+    } else {
+        currentPage = 1; 
+    }
+    // -----------------------------------------------------------------
+
+    arrRender.forEach(fileItem => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'grid-item-wrapper';
+
+        const img = document.createElement('img');
+        img.src = fileItem.url; img.className = 'grid-item'; img.dataset.filename = fileItem.name; 
+        
+        const label = document.createElement('div');
+        label.className = 'grid-item-label';
+		const nameOnly = fileItem.name.substring(0, fileItem.name.lastIndexOf('.')) || fileItem.name;
+        label.textContent = nameOnly; 
+        label.title = nameOnly;
+        
+        if (typeof isTagMode !== 'undefined' && isTagMode || typeof isRenameMode !== 'undefined' && isRenameMode) {
+            img.onclick = () => { const cb = wrapper.querySelector('input[type="checkbox"]'); cb.checked = !cb.checked; };
+            const cb = document.createElement('input'); 
+            cb.type = 'checkbox'; 
+            cb.className = isRenameMode ? 'rename-checkbox' : 'tag-checkbox'; 
+            cb.dataset.filename = fileItem.name;
+            wrapper.appendChild(img); wrapper.appendChild(cb);
+        } else {
+            img.onclick = () => openDetailView(fileItem.name);
+            wrapper.appendChild(img);
+        }
+        
+        wrapper.appendChild(label);
+        grid.appendChild(wrapper);
+    });
+    
+    updateGridCounters();
+    updatePaginationControls(); 
+    if (typeof filterGallery === 'function') filterGallery(); 
+}
+
+function updatePaginationControls() {
+    const container = document.getElementById('pagination-controls');
+    if (!container) return;
+
+    if (!currentHandle || document.getElementById('grid-view').style.display === 'none' || currentFiles.length <= itemsPerPage) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'flex';
+    const totalPages = Math.ceil(currentFiles.length / itemsPerPage);
+    document.getElementById('page-info').textContent = `Pág ${currentPage} de ${totalPages}`;
+    
+    const prevBtn = document.getElementById('btn-page-prev');
+    const nextBtn = document.getElementById('btn-page-next');
+    
+    prevBtn.disabled = (currentPage === 1);
+    nextBtn.disabled = (currentPage === totalPages);
+    
+    prevBtn.style.opacity = (currentPage === 1) ? "0.4" : "1";
+    prevBtn.style.cursor = (currentPage === 1) ? "default" : "pointer";
+    nextBtn.style.opacity = (currentPage === totalPages) ? "0.4" : "1";
+    nextBtn.style.cursor = (currentPage === totalPages) ? "default" : "pointer";
+}
+
+function changePage(direction) {
+    const totalPages = Math.ceil(currentFiles.length / itemsPerPage);
+    currentPage += direction;
+    
+    if (currentPage < 1) currentPage = 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+    
+    document.getElementById('grid-view').scrollTop = 0;
+    renderGrid();
+}
+
+/* ================================================================
+   BLOCK 7 — LORA OPEN
+   ================================================================ */
+let detailSessionId = 0; 
+
+async function openDetailView(fileName) {
+    const currentSession = ++detailSessionId;
+
+    if (isEditing) toggleManualEdit();
+    if (typeof isTagMode !== 'undefined' && isTagMode) cancelBatchTags();
+
+    const fileItem = currentFiles.find(a => a.name === fileName);
+    if (!fileItem) return;
+
+    document.getElementById('grid-view').style.display = 'none';
+    document.getElementById('detail-view').style.display = 'flex';
+    document.getElementById('right-col').style.display = 'flex';
+    document.getElementById('resizer-right').style.display = 'flex'; 
+    document.getElementById('main-image').src = fileItem.url;
+    document.getElementById('file-name').value = fileName;
+    showAlert(null);
+    updateGridCounters(); 
+    updatePaginationControls(); 
+
+    // === LÓGICA DO BOTÃO DE SAVE/UPDATE ===
+    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+    const btnSave = document.getElementById('btn-save');
+    if (currentJsonFiles.has(baseName + '.json')) {
+        btnSave.textContent = 'Update JSON';
+        btnSave.style.background = '#0d2a18';
+        btnSave.style.borderColor = '#00aa66';
+        btnSave.style.color = '#00ff99';
+    } else {
+        btnSave.textContent = 'Save JSON';
+        btnSave.style.background = '';
+        btnSave.style.borderColor = '';
+        btnSave.style.color = '';
+    }
+    // ======================================
+
+    const strip = document.getElementById('thumbnail-strip');
+    if (strip.children.length === 0 || strip.children.length !== currentFiles.length) {
+        strip.innerHTML = '';
+        let arrThumb = [...currentFiles];
+        if (sortMode === 1) arrThumb.sort((a,b) => a.name.localeCompare(b.name));
+        else if (sortMode === 2) arrThumb.sort((a,b) => b.name.localeCompare(a.name));
+        
+        arrThumb.forEach(f => {
+            const imageTag = (typeof tagsPerFile !== 'undefined' ? (tagsPerFile.get(f.name) || '') : '').toLowerCase();
+            const term = document.getElementById('filter-tag').value.toLowerCase().trim();
+            if (term !== '' && !imageTag.includes(term)) return;
+            
+            const img = document.createElement('img'); 
+            img.src = f.url; img.className = 'thumb'; 
+            if (f.name === fileName) img.classList.add('active'); 
+            img.onclick = () => openDetailView(f.name); 
+            strip.appendChild(img);
+        });
+    } else {
+        Array.from(strip.children).forEach(img => {
+            if (img.src === fileItem.url) {
+                img.classList.add('active');
+                img.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            } else {
+                img.classList.remove('active');
+            }
+        });
+    }
+
+    fillFields(null);
+
+    try {
+        const jh = await currentHandle.getFileHandle(baseName + '.json'); const jf = await jh.getFile(); const jd = JSON.parse(await jf.text());
+        if (currentSession !== detailSessionId) return; 
+        
+        jd.source = 'json';
+        fillFields(jd);
+        showAlert('✔ Metadata loaded from sidecar JSON.', 'success'); return; 
+    } catch {}
+
+    if (fileItem?.file) {
+        try {
+            const meta = await readSafetensorsHeader(fileItem.file);
+            if (currentSession !== detailSessionId) return; 
+
+            if (meta) { 
+                const extracted = extractSafetensorsParams(meta);
+                extracted.source = 'Safetensors Metadata';
+                fillFields(extracted);
+                showAlert(`✔ Metadata extracted from LoRA.`, 'info'); return; 
+            }
+        } catch (e) { console.warn('Safetensors parser error:', e); }
+    }
+
+    if (currentSession !== detailSessionId) return;
+    showAlert('⚠️ Metadata not found. Fill manually or generate a JSON sidecar.', 'error');
+}
+
+function backToGrid() {
+    if (isEditing) toggleManualEdit();
+    if (typeof isTagMode !== 'undefined' && isTagMode) cancelBatchTags();
+    document.getElementById('detail-view').style.display = 'none';
+    document.getElementById('right-col').style.display = 'none';
+    document.getElementById('resizer-right').style.display = 'none'; 
+    document.getElementById('grid-view').style.display = 'grid'; 
+    updateGridCounters(); 
+    updatePaginationControls();
+    if (typeof filterGallery === 'function') filterGallery(); 
+}
+</script>
+</body>
+</html>

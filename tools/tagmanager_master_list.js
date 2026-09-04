@@ -176,16 +176,17 @@ window.renderMasterTagList = function() {
             const dbAliasArrowHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL)
                 ? `<span class="tag-alias-arrow${isConvertibleAliasMaster ? ' tag-name-convertible' : ''}" title="${isConvertibleAliasMaster ? `Click to convert this alias tag globally to '${dbCached.aliasTo}'` : `Danbooru redirects this tag to '${dbCached.aliasTo}'`}">➜ ${dbCached.aliasTo}</span>` : '';
 
-            // FEATURE 2: tag "real" (não-alias) mostra, do lado, os aliases já vistos que apontam pra ela
-            const reverseAliasesMaster = (window.showAliasPreview !== false && !isCustomNL && !isConvertibleAliasMaster)
-                ? window.computeReverseAliasesForTag(tag.toLowerCase()) : [];
-            const reverseAliasHtmlMaster = reverseAliasesMaster.length > 0
-                ? `<span class="tag-alias-reverse-list" title="Alias tag(s) pointing to this tag: ${reverseAliasesMaster.join(', ')}">⟵ ${reverseAliasesMaster.join(', ')}</span>` : '';
+            // FEATURE 2: tag "real" (não-alias) mostra os aliases unificados (Danbooru + e621)
+            const reverseAliasHtmlMaster = (!isCustomNL && !isConvertibleAliasMaster && typeof window.renderCombinedAliasPreviewHTML === 'function')
+                ? window.renderCombinedAliasPreviewHTML(tag.toLowerCase()) : '';
             
-            const dbCountHtml = (window.showDanbooruCounts && dbCached && dbCached.count !== undefined && !isCustomNL)
-                ? (dbCached.count > 0
-                    ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">${window.formatDbCount(dbCached.count)}</span>`
-                    : (dbCached.isDeprecated ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">Deprecated</span>` : ''))
+            const e621CachedForCount = window.showE621 && window.e621Cache ? (window.e621Cache[tag.toLowerCase()] || window.e621Cache[tag]) : null;
+            const bestCountInfo = (window.showDanbooruCounts && !isCustomNL && typeof window.pickBestTagCount === 'function')
+                ? window.pickBestTagCount(dbCached, e621CachedForCount) : null;
+            const dbCountHtml = bestCountInfo
+                ? (bestCountInfo.count > 0
+                    ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;" title="${bestCountInfo.source === 'e621' ? 'e621' : 'Danbooru'} count (highest of the two sources)">${window.formatDbCount(bestCountInfo.count)}</span>`
+                    : (bestCountInfo.deprecated ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">Deprecated</span>` : ''))
                 : '';
  
             const isAlreadyPreset = !isCustomNL && window._presetTagsSet && window._presetTagsSet.has(tag);

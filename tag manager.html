@@ -248,20 +248,14 @@
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
 
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-	
-	<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
-    <h4 style="margin: 0 0 10px 0; color: #fff; font-size: 13px;">NL / Caption Rules</h4>
-    <label class="setting-label" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; cursor: pointer;">
-        <input type="checkbox" id="toggle-auto-nl" onchange="window.toggleAutoNl()">
-        Auto-detect NL in Hybrid Mode
+
+    <div class="settings-group-label">📝 NL / Caption Rules</div>
+    <label><input type="checkbox" id="toggle-auto-nl" onchange="window.toggleAutoNl()"> Auto-detect NL in Hybrid Mode</label>
+    <label style="margin-left: 15px;">Words needed to trigger NL:
+        <input type="number" id="nl-word-threshold" onchange="window.updateNlWordThreshold(this.value)" style="width: 50px; margin-left: 4px;" min="2" max="50">
     </label>
-    <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; margin-top: 8px;">
-        Words needed to trigger NL:
-        <input type="number" id="nl-word-threshold" onchange="window.updateNlWordThreshold(this.value)" style="width: 50px; background: #111; color: #fff; border: 1px solid #4a2a8c; border-radius: 4px; padding: 2px 6px;" min="2" max="50">
-    </label>
-	</div>
-	
-	<hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
     <div class="settings-group-label">🎨 Highlights &amp; Visual Effects</div>
     <label><input type="checkbox" id="toggle-fav-highlight" onchange="window.toggleFavHighlight()" checked> Enable Favorite Tags Highlight (⭐)</label>
@@ -273,20 +267,13 @@
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
     <div class="settings-group-label">🌐 Danbooru</div>
-    <label><input type="checkbox" id="toggle-danbooru-counts" onchange="window.toggleDanbooruCounts()"> Show Danbooru Counts</label>
     <button onclick="window.manualDanbooruSync()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; font-size: 11px; width: 100%; margin-top: 5px;" title="Manually fetches missing tag counts from Danbooru for the current dataset.">🔄 Sync Danbooru (Dataset)</button>
-    
+
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-    
+
     <div class="settings-group-label">🦊 e621</div>
     <label><input type="checkbox" id="toggle-e621" onchange="window.toggleE621()"> Enable e621 (Furry) Suggestions</label>
     <label style="margin-left: 15px;"><input type="checkbox" id="toggle-e621-sfw" onchange="window.toggleE621Sfw()"> 🛡️ Force Safe-for-Work (e926)</label>
-    
-    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-
-    <div class="settings-group-label">🔧 Duplicate Filenames</div>
-    <label title="If two images share the same name with only the extension different (e.g. cat.png + cat.jpg), automatically rename the extra one(s) so captions don't get mixed up between them. Uses a safe staging folder ('_rename_cache') — nothing is ever overwritten without a backup copy first."><input type="checkbox" id="toggle-dup-name-fixer" onchange="window.toggleDupNameFixer()"> Auto-Fix Duplicate Base Names</label>
-    <button onclick="window.runDupNameFixer(true)" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; font-size: 11px; width: 100%; margin-top: 5px;" title="Manually scans the current dataset for duplicate base names and fixes them right now.">🔍 Scan &amp; Fix Now</button>
 
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
@@ -345,8 +332,7 @@
                     <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
                     <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
-                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
-                    <button class="btn-save-local" style="background:#2a0000; border-color:#aa0000; color:#ff6060; padding: 2px 6px; font-size: 14px;" onclick="window.deleteSelectedImages()" title="Delete Selected">🗑️</button>
+                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>                    
                     <button class="btn-save-local" id="btn-img-filter-sel" style="background:#151515; border-color:#555; color:#aaa; padding: 2px 6px; font-size: 14px;" onclick="window.cycleImageFilter()" title="Filter Images by Type">🏷️ All</button>
                 </div>
             </div>
@@ -653,10 +639,16 @@
 <script src="tools/tagmanager_globals.js"></script>
 <script src="tools/tagmanager_db.js"></script>
 <script src="tools/tagmanager_danbooru_core.js"></script>
+<script src="tools/tagmanager_e621_core.js"></script>
 <script src="tools/tagmanager_batch_tagger.js"></script>
 <script src="tools/tagmanager_caption_tag.js"></script>
 <script src="tools/tagmanager_danbooru_autocomplete.js"></script>
 <script src="tools/tagmanager_danbooru_alias.js"></script>
+
+<!-- NOVOS SCRIPTS DE ALIAS E PONTE (BRIDGE) INJETADOS AQUI -->
+<script src="tools/tagmanager_e621_alias.js"></script>
+<script src="tools/tagmanager_alias_bridge.js"></script>
+
 <script src="tools/tagmanager_nl_inline_editor.js"></script>
 <script src="tools/tagmanager_active_editor.js"></script>
 <script src="tools/tagmanager_master_list.js"></script>
@@ -667,11 +659,14 @@
 <script src="tools/tagmanager_auto_task_queue.js"></script>
 <script src="tools/tagmanager_pin_image.js"></script>
 <script src="tools/tagmanager_compact_view.js"></script>
-<script src="tools/tagmanager_custom_conflicts.js"></script>
-<script src="tools/tagmanager_trash.js"></script>
+<script src="tools/tagmanager_rule_conflict.js"></script>
+<script src="tools/tagmanager_rule_similar.js"></script>
+<script src="tools/tagmanager_rule_automerge.js"></script>
+<script src="tools/tagmanager_rule_highlight.js"></script>
 <script src="tools/tagmanager_archive.js"></script>
 <script src="tools/tagmanager_danbooru_panel.js"></script>
-<script src="tools/tagmanager_dup_name_fixer.js"></script>
+<script src="tools/tagmanager_duplicate_name_alert.js"></script>
+<script src="tools/tagmanager_rule_embed_quickadd.js"></script>
 
 </body>
 </html>

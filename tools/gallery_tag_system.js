@@ -69,10 +69,9 @@ function updateViewModeButtonUI() {
             btn.classList.remove('active');
         }
     }
-    const filterInput = document.getElementById('filter-tag');
-    if (filterInput) {
-        filterInput.style.display = (galleryViewMode === 'galeria') ? 'none' : 'inline-block';
-    }
+    // The name filter stays visible and usable in both modes — it filters by
+    // filename within whatever is currently shown (the whole folder in the
+    // free grid, or just the selected gallery when tags are shown).
 }
 
 /* ----------------------------------------------------------------

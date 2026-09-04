@@ -1,51 +1,68 @@
 /* =========================================================================
-   DANBOORU TAG INFO PANEL (Standalone — usa tagmanager_danbooru_core.js)
+   TAG INTERROGATOR PANEL (Standalone — usa tagmanager_danbooru_core.js e
+   tagmanager_e621_core.js)
    ---------------------------------------------------------------------
    Não faz NENHUM fetch() direto à API — tudo passa pelas funções
-   compartilhadas de tagmanager_danbooru_core.js, que já cuida do cache
-   único (window.danbooruCache), reaproveitado também pelo autocomplete
-   e pelo sync de contagens.
+   compartilhadas dos arquivos _core, que já cuidam dos caches próprios
+   (window.danbooruCache / window.e621Cache), reaproveitados também pelo
+   autocomplete e pelo sync de contagens.
 
-   - Botão 📖 Danbooru no topbar abre um popout (mesmo estilo
+   - Botão 🏷️ Tag Interrogator no topbar abre um popout (mesmo estilo
      .modal-overlay/.tool-modal usado por Trash/Archive) com busca manual
-     de 1 tag + descrição da wiki.
-   - Toda tag com wiki cacheada ganha um ❓ ao lado do × de remover,
-     tanto na "Active Image" quanto em "All Dataset Tags".
+     de 1 tag + descrição da wiki. Um switch dentro do popout troca a
+     fonte da busca manual entre 🅱️ Danbooru e 🦊 e621.
+   - Toda tag com wiki cacheada no Danbooru ganha um ❓ ao lado do × de
+     remover; se também tiver wiki cacheada no e621 (com "Enable e621
+     Suggestions" ligado em Settings), ganha um ❔ separado do lado. Os
+     dois podem aparecer juntos na mesma tag quando as duas fontes têm
+     dado — cada um abre o popout da sua própria fonte.
+   - O contador numérico ao lado da tag mostra o MAIOR valor entre
+     Danbooru e e621 (ver window.pickBestTagCount em tagmanager_e621_core.js).
    - BACKGROUND SCAN AUTOMÁTICO: assim que um dataset novo é carregado
      (detectado via troca de referência de window.imageFiles, mesmo
      padrão de tagmanager_custom_conflicts.js), dispara sozinho — em
-     segundo plano, sem alertas — um scan que vai preenchendo os ❓
+     segundo plano, sem alertas — um scan que vai preenchendo os ❓/❔
      incrementalmente conforme cada tag é resolvida. Tags já vistas
      antes (autocomplete, sync de contagem, busca manual) dentro do TTL
      não custam nova chamada de rede.
    - Botão manual "🔍 Scan Dataset Tags" continua existindo dentro do
      popout, para forçar um recheck (🔄, ignora o cache) quando precisar.
-   - AUTOCOMPLETE NO CAMPO DE BUSCA MANUAL (dbpInput): antes o campo era
-     "cego" — sem sugestão nenhuma, só Enter/Search no achismo. Agora usa
-     a MESMA fonte de dados (window.dbSearchTagMatches, de
-     tagmanager_danbooru_core.js) já usada pelos outros campos de tag do
-     app (Active Image, All Dataset Tags, Presets, Replace), mostrando um
-     dropdown com nome/categoria/contagem (e seta ➜ para tags-alias)
-     enquanto o usuário digita. Clicar numa sugestão já dispara a busca.
+   - AUTOCOMPLETE NO CAMPO DE BUSCA MANUAL (dbpInput): usa a fonte
+     selecionada no switch (window.dbSearchTagMatches ou
+     window.e621SearchTagMatches), mostrando um dropdown com nome/
+     categoria/contagem (e seta ➜ para tags-alias) enquanto o usuário
+     digita. Clicar numa sugestão já dispara a busca.
 ========================================================================= */
 
 (function () {
 
     const style = document.createElement('style');
     style.innerHTML = `
-        #btn-open-danbooru-info { color: #4db8ff; margin-left: 5px; }
-        #btn-open-danbooru-info:hover { color: #fff; border-color: #4db8ff; }
+        #btn-open-tag-interrogator { color: #4db8ff; margin-left: 5px; }
+        #btn-open-tag-interrogator:hover { color: #fff; border-color: #4db8ff; }
 
         .tag-db-info {
             color: #4db8ff; cursor: pointer; font-weight: bold; font-size: 1em;
             padding: 0 0.35em; flex-shrink: 0; opacity: 0.85; user-select: none;
         }
         .tag-db-info:hover { color: #fff; transform: scale(1.2); opacity: 1; }
+        .tag-e621-info {
+            color: #ffb74d; cursor: pointer; font-weight: bold; font-size: 1em;
+            padding: 0 0.35em; flex-shrink: 0; opacity: 0.85; user-select: none;
+        }
+        .tag-e621-info:hover { color: #fff; transform: scale(1.2); opacity: 1; }
         /* Ghost rows (💡 sugestões) usam um container flex com gap maior —
-           sem margem própria o ❓ ficaria colado demais no ✓/×. */
-        .tag-row.ghost .tag-db-info, .master-tag-item.ghost .tag-db-info { margin-right: -2px; }
+           sem margem própria os ícones ficariam colados demais no ✓/×. */
+        .tag-row.ghost .tag-db-info, .master-tag-item.ghost .tag-db-info,
+        .tag-row.ghost .tag-e621-info, .master-tag-item.ghost .tag-e621-info { margin-right: -2px; }
 
-        #modal-danbooru .tool-modal, #modal-db-tag-info .tool-modal { width: 700px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
+        .dbp-source-toggle { display: flex; gap: 6px; margin-bottom: 10px; }
+        .dbp-source-btn { background: #151515; border: 1px solid #444; color: #aaa; padding: 6px 12px; font-size: 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .dbp-source-btn:hover { color: #fff; border-color: #666; }
+        .dbp-source-btn.active-danbooru { background: #0a2a4c; border-color: #4db8ff; color: #4db8ff; }
+        .dbp-source-btn.active-e621 { background: #3a2a10; border-color: #ffb74d; color: #ffb74d; }
+
+        #modal-danbooru .tool-modal, #modal-db-tag-info .tool-modal, #modal-e621-tag-info .tool-modal { width: 700px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
 
         .dbp-row { display: flex; gap: 8px; }
         .dbp-input {
@@ -89,6 +106,11 @@
 
     const DB_CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
     const DB_CAT_LABELS = { 0: "General", 1: "Artist", 3: "Copyright", 4: "Character", 5: "Meta" };
+
+    // Fonte usada pela busca MANUAL do popout (switch 🅱️/🦊). Não afeta os
+    // ícones ❓/❔ nas tags (esses sempre checam as duas fontes independente
+    // do switch) nem o autocomplete dos outros campos do app.
+    window.tagInterrogatorSource = window.tagInterrogatorSource || 'danbooru';
 
     window.danbooruInfoEnabled = window.danbooruInfoEnabled !== undefined ? window.danbooruInfoEnabled : true;
     window.danbooruInfoShowIcons = window.danbooruInfoShowIcons !== undefined ? window.danbooruInfoShowIcons : true;
@@ -170,16 +192,30 @@
             const rawVal = e.target.value.trim().toLowerCase();
             if (rawVal.length < 2) { suggBox.style.display = 'none'; return; }
             const val = rawVal.replace(/ /g, '_');
+            
+            const isE621 = window.tagInterrogatorSource === 'e621';
+            const delay = isE621 ? 800 : 350; 
+            
             timeout = setTimeout(async () => {
                 try {
-                    const results = typeof window.dbSearchTagMatches === 'function' ? await window.dbSearchTagMatches(val, 8) : [];
+                    const searchFn = isE621 ? window.e621SearchTagMatches : window.dbSearchTagMatches;
+                    const catColors = isE621 ? window.E621_CAT_COLORS : DB_CAT_COLORS;
+                    
+                    const results = typeof searchFn === 'function' ? await searchFn(val, 8) : [];
+                    
+                    const currentValue = input.value.trim().toLowerCase();
+                    if (currentValue.length < 2 || currentValue !== rawVal) { 
+                        suggBox.style.display = 'none'; 
+                        return; 
+                    }
+
                     suggBox.innerHTML = '';
                     if (!results || results.length === 0) { suggBox.style.display = 'none'; return; }
 
                     results.forEach(t => {
                         const div = document.createElement('div');
                         div.className = 'db-sugg-item';
-                        const color = DB_CAT_COLORS[t.category] || '#aaa';
+                        const color = catColors[t.category] || '#aaa';
                         const displayName = t.name.replace(/_/g, ' ');
                         const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${t.aliasTo.replace(/_/g, ' ')}</span>` : '';
                         const countHtml = (t.post_count > 0)
@@ -187,11 +223,12 @@
                             : (t.isDeprecated ? 'Deprecated' : '0');
 
                         div.innerHTML = `<span style="color:${color}; font-weight:bold;">${displayName}${arrowHtml}</span><span style="color:#666;">${countHtml}</span>`;
+                        
                         div.onclick = () => {
                             suggBox.style.display = 'none';
-                            // Igual ao comportamento padrão dos outros campos (aliasClickBehavior
-                            // = 'replace' por padrão): clicar já resolve para a tag real quando é alias.
-                            const finalTag = (t.isAlias && window.aliasClickBehavior !== 'keep') ? t.aliasTo.replace(/_/g, ' ') : displayName;
+                            const aliasBehavior = isE621 ? (window.e621AliasClickBehavior || 'replace') : (window.aliasClickBehavior || 'replace');
+                            const finalTag = (t.isAlias && aliasBehavior !== 'keep') ? t.aliasTo.replace(/_/g, ' ') : displayName;
+                            
                             input.value = finalTag;
                             dbpPerformSearch(finalTag);
                         };
@@ -199,13 +236,38 @@
                     });
                     suggBox.style.display = 'block';
                 } catch (err) {}
-            }, 350);
+            }, delay);
         });
 
+        // 1. REABRIR A LISTA: Quando o usuário clica ou foca na caixa de texto novamente
+        const showSuggBoxIfValid = () => {
+            if (input.value.trim().length >= 2 && suggBox.children.length > 0) {
+                suggBox.style.display = 'block';
+            }
+        };
+        input.addEventListener('focus', showSuggBoxIfValid);
+        input.addEventListener('click', showSuggBoxIfValid);
+
+        // 2. FECHAR A LISTA: Quando o usuário clica em qualquer lugar de fora
         document.addEventListener('click', (e) => {
-            if (!wrap.contains(e.target)) suggBox.style.display = 'none';
-        });
+            if (!wrap.contains(e.target) && suggBox.style.display === 'block') {
+                suggBox.style.display = 'none';
+            }
+        }, true); // O 'true' garante a interceptação prioritária do clique
     }
+
+    // BUG FIX: a lista do "🔍✨ Auto-detect" (#dbpDetectList) só fechava se o
+    // usuário clicasse num chip — clicar em qualquer outro lugar (inclusive
+    // fora do modal) deixava ela aberta tampando o texto abaixo. Agora fecha
+    // ao clicar fora dela e fora do botão que a abre.
+    document.addEventListener('click', (e) => {
+        const listEl = document.getElementById('dbpDetectList');
+        const btnEl = document.getElementById('dbpDetectBtn');
+        if (!listEl || !listEl.classList.contains('open')) return;
+        if (listEl.contains(e.target)) return;
+        if (btnEl && btnEl.contains(e.target)) return;
+        listEl.classList.remove('open');
+    });
 
     /* ---------- MODAL 1: BUSCA MANUAL + SCAN MANUAL ---------- */
     function buildMainModal() {
@@ -219,16 +281,21 @@
         overlay.innerHTML = `
             <div class="tool-modal" onclick="event.stopPropagation()">
                 <h3 style="display:flex; justify-content:space-between; align-items:center;">
-                    <span>📖 Danbooru Tag Info</span>
+                    <span>🏷️ Tag Interrogator</span>
                     <button onclick="window.closeModal('modal-danbooru')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
+
+                <div class="dbp-source-toggle">
+                    <button class="dbp-source-btn" id="dbpSourceDanbooru" title="Search manually on Danbooru">🅱️ Danbooru</button>
+                    <button class="dbp-source-btn" id="dbpSourceE621" title="Search manually on e621">🦊 e621</button>
+                </div>
 
                 <div class="dbp-row">
                     <div id="dbpInputWrap" style="position:relative; flex:1; min-width:0;">
                         <input type="text" id="dbpInput" class="dbp-input" placeholder="Search a tag... e.g. 1girl" autocomplete="off" style="width:100%; box-sizing:border-box;">
                     </div>
                     <button class="dbp-btn" id="dbpSearchBtn">Search</button>
-                    <button class="dbp-btn-detect" id="dbpDetectBtn" title="List all tags already in this dataset (❓ = already has wiki info cached)">🔍✨</button>
+                    <button class="dbp-btn-detect" id="dbpDetectBtn" title="List all tags already in this dataset (❓ Danbooru / ❔ e621 = already has wiki info cached)">🔍✨</button>
                 </div>
                 <div class="dbp-detect-list" id="dbpDetectList"></div>
                 <div class="dbp-result" id="dbpResult">
@@ -248,11 +315,12 @@
 
                 <div style="font-size:11px; color:#888; margin-bottom:8px; line-height:1.5;">
                     Runs automatically in the background whenever a dataset is loaded
-                    (uses the same shared cache as autocomplete and Danbooru counts —
+                    (uses the same shared caches as autocomplete and tag counts —
                     tags already seen elsewhere won't be re-fetched). Tags with a wiki
-                    entry get a <b style="color:#4db8ff;">❓</b> icon next to their
-                    remove (×) button. Use the buttons below to force a manual
-                    scan / recheck.
+                    entry get a <b style="color:#4db8ff;">❓</b> (Danbooru) and/or a
+                    <b style="color:#ffb74d;">❔</b> (e621) icon next to their remove (×)
+                    button — both can show up together on shared tags. Use the buttons
+                    below to force a manual scan / recheck (covers both sources).
                 </div>
                 <div style="display:flex; gap:8px;">
                     <button class="dbp-btn-scan" id="dbpScanBtn" style="flex:1;">🔍 Scan Dataset Tags</button>
@@ -278,6 +346,10 @@
         document.getElementById('dbpTranslateBtn').onclick = () => translateDescNode(document.getElementById('dbpTagDesc'));
         document.getElementById('dbpDetectBtn').onclick = () => dbpRunAutoDetect();
 
+        document.getElementById('dbpSourceDanbooru').onclick = () => setTagInterrogatorSource('danbooru');
+        document.getElementById('dbpSourceE621').onclick = () => setTagInterrogatorSource('e621');
+        applySourceToggleUI();
+
         // Scan manual "normal": respeita o TTL/cache, igual ao background scan.
         document.getElementById('dbpScanBtn').onclick = () => window.runDanbooruInfoScan(false);
 
@@ -291,6 +363,25 @@
         setupDbpAutocomplete();
     }
 
+    /* ---------- SWITCH DE FONTE (busca manual) ---------- */
+    function applySourceToggleUI() {
+        const btnDb = document.getElementById('dbpSourceDanbooru');
+        const btnE6 = document.getElementById('dbpSourceE621');
+        if (!btnDb || !btnE6) return;
+        const isE621 = window.tagInterrogatorSource === 'e621';
+        btnDb.classList.toggle('active-danbooru', !isE621);
+        btnE6.classList.toggle('active-e621', isE621);
+    }
+
+    function setTagInterrogatorSource(source) {
+        window.tagInterrogatorSource = source;
+        applySourceToggleUI();
+        if (typeof window.saveSetting === 'function') window.saveSetting('tag-interrogator-source', source);
+        // Limpa o resultado atual — a fonte mudou, o resultado anterior não pertence mais a ela.
+        const resultBox = document.getElementById('dbpResult');
+        if (resultBox) resultBox.classList.remove('open');
+    }
+
     async function dbpPerformSearch(tagOverride) {
         const input = document.getElementById('dbpInput');
         const resultBox = document.getElementById('dbpResult');
@@ -299,17 +390,26 @@
         input.value = tag;
         resultBox.classList.remove('open');
 
-        const info = await window.dbLookupSingleTag(tag);
+        const isE621 = window.tagInterrogatorSource === 'e621';
+        const host = isE621 ? e621HostForLinks() : 'danbooru.donmai.us';
+        const lookupFn = isE621 ? window.e621LookupSingleTag : window.dbLookupSingleTag;
+        const catColors = isE621 ? window.E621_CAT_COLORS : DB_CAT_COLORS;
+        const catLabels = isE621 ? window.E621_CAT_LABELS : DB_CAT_LABELS;
+        const siteName = isE621 ? 'e621' : 'Danbooru';
+
+        const info = await lookupFn(tag);
         if (!info) {
-            if (window.showAlert) window.showAlert(`Tag "${tag}" not found on Danbooru.`, 'warn');
+            if (window.showAlert) window.showAlert(`Tag "${tag}" not found on ${siteName}.`, 'warn');
             return;
         }
 
         const key = tag.trim().toLowerCase().replace(/_/g, ' ');
         document.getElementById('dbpTagName').textContent = key;
         const deprecatedBadge0 = (info.isDeprecated) ? ` <span style="color:#888;">· Deprecated</span>` : '';
-        document.getElementById('dbpTagCat').innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge0}`;
-        document.getElementById('dbpTagLink').href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}`;
+        document.getElementById('dbpTagCat').innerHTML = `<span style="color:${catColors[info.category] || '#888'}">● ${catLabels[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge0}`;
+        const linkEl = document.getElementById('dbpTagLink');
+        linkEl.href = `https://${host}/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}`;
+        linkEl.textContent = `Open on ${siteName} ↗`;
 
         const descEl = document.getElementById('dbpTagDesc');
         descEl.innerHTML = "Loading full wiki description...";
@@ -317,14 +417,14 @@
         resultBox.classList.add('open');
 
         try {
-            const wRes = await fetch(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}.json`);
+            const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}.json`);
             if (wRes.ok) {
                 const wData = await wRes.json();
                 if (wData && wData.body && wData.body.trim()) {
                     descEl.dataset.original = wData.body;
                     descEl.innerHTML = window.formatDanbooruDText(wData.body);
                 } else {
-                    descEl.innerHTML = "No wiki description available on Danbooru.";
+                    descEl.innerHTML = `No wiki description available on ${siteName}.`;
                 }
             } else {
                  descEl.innerHTML = "Wiki not found or error loading.";
@@ -333,6 +433,10 @@
             descEl.textContent = info.hasWikiInfo ? info.description : 'No wiki description available.';
             descEl.dataset.original = info.hasWikiInfo ? info.description : '';
         }
+    }
+
+    function e621HostForLinks() {
+        return window.showE621Sfw ? 'e926.net' : 'e621.net';
     }
 
     /* ---------- AUTO-DETECÇÃO (🔍✨) ---------- */
@@ -356,21 +460,27 @@
         const withInfo = [];
         const withoutInfo = [];
         tags.forEach(t => {
-            const info = window.dbGetCachedTag(t.toLowerCase());
-            if (info && info.hasWikiInfo) withInfo.push(t); else withoutInfo.push(t);
+            const dbInfo = window.dbGetCachedTag(t.toLowerCase());
+            const e6Info = window.e621GetCachedTag ? window.e621GetCachedTag(t.toLowerCase()) : null;
+            const hasAny = (dbInfo && dbInfo.hasWikiInfo) || (e6Info && e6Info.hasWikiInfo);
+            if (hasAny) withInfo.push(t); else withoutInfo.push(t);
         });
         withInfo.sort();
         withoutInfo.sort();
 
         [...withInfo, ...withoutInfo].forEach(t => {
             const key = t.toLowerCase();
-            const info = window.dbGetCachedTag(key);
-            const hasInfo = !!(info && info.hasWikiInfo);
+            const dbInfo = window.dbGetCachedTag(key);
+            const e6Info = window.e621GetCachedTag ? window.e621GetCachedTag(key) : null;
+            const hasDb = !!(dbInfo && dbInfo.hasWikiInfo);
+            const hasE6 = !!(e6Info && e6Info.hasWikiInfo);
+            const hasInfo = hasDb || hasE6;
+            const prefix = (hasDb ? '❓' : '') + (hasE6 ? '❔' : '');
 
             const chip = document.createElement('span');
             chip.className = 'dbp-detect-item' + (hasInfo ? ' has-info' : '');
-            chip.textContent = (hasInfo ? '❓ ' : '') + t;
-            chip.title = hasInfo ? 'Already has wiki info — click to view it' : 'Click to look this tag up';
+            chip.textContent = (prefix ? prefix + ' ' : '') + t;
+            chip.title = hasInfo ? 'Already has wiki info — click to look it up again' : 'Click to look this tag up';
             chip.onclick = () => {
                 listEl.classList.remove('open');
                 document.getElementById('dbpInput').value = t;
@@ -486,6 +596,90 @@
         }
     };
 
+    /* ---------- MODAL 3: POPOUT DE INFO DO E621 (aberto pelo ❔) ----------
+       Espelha o modal-db-tag-info, mas em modal PRÓPRIO — assim, se a tag
+       tiver info nas duas fontes, os ícones ❓ e ❔ abrem popouts distintos
+       (nunca um "pisa" no conteúdo do outro). */
+    function buildE621TagInfoModal() {
+        if (document.getElementById('modal-e621-tag-info')) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'modal-e621-tag-info';
+        overlay.className = 'modal-overlay';
+        overlay.onclick = () => window.closeModal('modal-e621-tag-info');
+
+        overlay.innerHTML = `
+            <div class="tool-modal" onclick="event.stopPropagation()">
+                <h3 style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#ffb74d;">❔ e621 Tag Info</span>
+                    <button onclick="window.closeModal('modal-e621-tag-info')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
+                </h3>
+
+                <div><span class="dbp-tag-cat" id="e621iTagCat"></span></div>
+                <div class="dbp-desc" id="e621iTagDesc"></div>
+
+                <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+                    <button id="e621iTranslateBtn" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer;">🌐 Translate</button>
+                    <a href="#" target="_blank" id="e621iTagLink" style="color: #ffb74d; text-decoration: none; border: 1px solid #aa7722; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block;">Open on e621 ↗</a>
+                </div>
+
+                <div class="modal-buttons" style="margin-top: 15px;">
+                    <button class="btn-cancel" onclick="window.closeModal('modal-e621-tag-info')">Close</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        document.getElementById('e621iTranslateBtn').onclick = () => translateDescNode(document.getElementById('e621iTagDesc'));
+    }
+
+    window.openE621TagInfoPopout = async function (tagLower) {
+        buildE621TagInfoModal();
+
+        const catEl = document.getElementById('e621iTagCat');
+        const descEl = document.getElementById('e621iTagDesc');
+        const linkEl = document.getElementById('e621iTagLink');
+        const host = e621HostForLinks();
+
+        descEl.innerHTML = "Loading full wiki description...";
+        descEl.dataset.original = "";
+        catEl.innerHTML = '';
+        linkEl.href = `https://${host}/wiki_pages/${encodeURIComponent(tagLower.replace(/ /g, '_'))}`;
+
+        window.openModal('modal-e621-tag-info');
+
+        let info = window.e621GetCachedTag(tagLower);
+        if (!info || info.count === undefined) {
+            if (window.e621LookupSingleTag) info = await window.e621LookupSingleTag(tagLower);
+        }
+
+        if (info) {
+            const deprecatedBadge = (info.isDeprecated) ? ` <span style="color:#888;">· Deprecated</span>` : '';
+            catEl.innerHTML = `<span style="color:${window.E621_CAT_COLORS[info.category] || '#888'}">● ${window.E621_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge}`;
+        }
+
+        try {
+            const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent((info && info.wikiName) ? info.wikiName : tagLower.replace(/ /g, '_'))}.json`);
+            if (wRes.ok) {
+                const wData = await wRes.json();
+                if (wData && wData.body && wData.body.trim()) {
+                    descEl.dataset.original = wData.body;
+                    descEl.innerHTML = window.formatDanbooruDText(wData.body);
+                } else {
+                    descEl.innerHTML = "No wiki description available on e621.";
+                }
+            } else {
+                descEl.innerHTML = "Wiki not found or error loading.";
+            }
+        } catch (e) {
+            if (info && info.hasWikiInfo && info.description) {
+                descEl.dataset.original = info.description;
+                descEl.innerHTML = window.formatDanbooruDText(info.description);
+            } else {
+                descEl.innerHTML = "Error loading wiki from e621.";
+            }
+        }
+    };
+
     /* ---------- SCAN DO DATASET (contagem em lote + wiki tag-a-tag) ---------- */
     window.runDanbooruInfoScan = async function (force = false) {
         if (!window.danbooruInfoEnabled) {
@@ -509,6 +703,7 @@
 
         window._dbInfoScanRunning = true;
         window._dbBackgroundScanCancelled = false;
+        window._e621BackgroundScanCancelled = false;
 
         const scanBtn = document.getElementById('dbpScanBtn');
         const forceBtn = document.getElementById('dbpScanForceBtn');
@@ -519,6 +714,7 @@
 
         // Etapa 1: contagem+categoria em lote (reaproveita cache do autocomplete/sync)
         await window.dbFetchCountsBatch(tags, force);
+        if (window.showE621 && typeof window.e621FetchCountsBatch === 'function') await window.e621FetchCountsBatch(tags, force);
 
         // Etapa 2: descrição da wiki, só onde ainda falta (ou tudo, se force)
         const result = await window.dbFetchWikiBatch(
@@ -526,9 +722,22 @@
             force,
             () => scheduleIconRefresh(),
             (done, total, found) => {
-                if (progress) progress.textContent = `Scanning: ${done} / ${total} (found ${found})`;
+                if (progress) progress.textContent = `Scanning Danbooru: ${done} / ${total} (found ${found})`;
             }
         );
+
+        let e621Found = 0;
+        if (window.showE621 && typeof window.e621FetchWikiBatch === 'function') {
+            const e621Result = await window.e621FetchWikiBatch(
+                tags,
+                force,
+                () => scheduleIconRefresh(),
+                (done, total, found) => {
+                    if (progress) progress.textContent = `Scanning e621: ${done} / ${total} (found ${found})`;
+                }
+            );
+            e621Found = e621Result.found;
+        }
 
         window._dbInfoScanRunning = false;
         if (scanBtn) scanBtn.disabled = false;
@@ -538,7 +747,8 @@
         refreshTagRenders();
 
         if (window.showAlert) {
-            window.showAlert(`Scan complete! Found wiki info for ${result.found} tag(s).`, 'success');
+            const extra = window.showE621 ? ` + ${e621Found} on e621` : '';
+            window.showAlert(`Scan complete! Found wiki info for ${result.found} tag(s) on Danbooru${extra}.`, 'success');
         }
     };
 
@@ -559,6 +769,7 @@
 
         window._dbInfoScanRunning = true;
         window._dbBackgroundScanCancelled = false;
+        window._e621BackgroundScanCancelled = false;
 
         const scanBtn = document.getElementById('dbpScanBtn');
         const forceBtn = document.getElementById('dbpScanForceBtn');
@@ -568,15 +779,27 @@
         if (progress) { progress.style.display = 'block'; progress.textContent = 'Background scan running...'; }
 
         await window.dbFetchCountsBatch(tags, false);
+        if (window.showE621 && typeof window.e621FetchCountsBatch === 'function') await window.e621FetchCountsBatch(tags, false);
 
         await window.dbFetchWikiBatch(
             tags,
             false,
             () => scheduleIconRefresh(),
             (done, total, found) => {
-                if (progress) progress.textContent = `Background scan: ${done} / ${total} (found ${found})`;
+                if (progress) progress.textContent = `Background scan (Danbooru): ${done} / ${total} (found ${found})`;
             }
         );
+
+        if (window.showE621 && typeof window.e621FetchWikiBatch === 'function') {
+            await window.e621FetchWikiBatch(
+                tags,
+                false,
+                () => scheduleIconRefresh(),
+                (done, total, found) => {
+                    if (progress) progress.textContent = `Background scan (e621): ${done} / ${total} (found ${found})`;
+                }
+            );
+        }
 
         window._dbInfoScanRunning = false;
         if (scanBtn) scanBtn.disabled = false;
@@ -603,7 +826,11 @@
         window.renderImageList = wrapped;
     }
 
-    /* ---------- INJEÇÃO DO ❓ NAS LINHAS DE TAG ---------- */
+    /* ---------- INJEÇÃO DO ❓/❔ NAS LINHAS DE TAG ----------
+       Os dois ícones são independentes: ❓ aparece se o Danbooru tiver wiki
+       cacheada pra essa tag, ❔ aparece se o e621 tiver (e "Enable e621
+       Suggestions" estiver ligado em Settings) — os dois podem aparecer
+       juntos na mesma tag quando ela existe/tem wiki nas duas fontes. */
     function injectDbInfoIcons(container) {
         if (!container) return;
         if (!window.danbooruInfoEnabled || !window.danbooruInfoShowIcons) return;
@@ -613,16 +840,26 @@
             if (!removeBtn) return; 
 
             const tagLower = row.getAttribute('data-tag-name');
-            const info = window.dbGetCachedTag(tagLower);
-            if (!info || !info.hasWikiInfo) return;
-            if (row.querySelector('.tag-db-info')) return;
 
-            const icon = document.createElement('span');
-            icon.className = 'tag-db-info';
-            icon.textContent = '❓';
-            icon.title = 'View Danbooru info for this tag';
-            icon.onclick = (e) => { e.stopPropagation(); window.openDanbooruTagInfoPopout(tagLower); };
-            removeBtn.parentNode.insertBefore(icon, removeBtn);
+            const dbInfo = window.dbGetCachedTag(tagLower);
+            if (dbInfo && dbInfo.hasWikiInfo && !row.querySelector('.tag-db-info')) {
+                const icon = document.createElement('span');
+                icon.className = 'tag-db-info';
+                icon.textContent = '❓';
+                icon.title = 'View Danbooru info for this tag';
+                icon.onclick = (e) => { e.stopPropagation(); window.openDanbooruTagInfoPopout(tagLower); };
+                removeBtn.parentNode.insertBefore(icon, removeBtn);
+            }
+
+            const e6Info = window.showE621 && window.e621GetCachedTag ? window.e621GetCachedTag(tagLower) : null;
+            if (e6Info && e6Info.hasWikiInfo && !row.querySelector('.tag-e621-info')) {
+                const icon = document.createElement('span');
+                icon.className = 'tag-e621-info';
+                icon.textContent = '❔';
+                icon.title = 'View e621 info for this tag';
+                icon.onclick = (e) => { e.stopPropagation(); window.openE621TagInfoPopout(tagLower); };
+                removeBtn.parentNode.insertBefore(icon, removeBtn);
+            }
         });
     }
 
@@ -670,21 +907,30 @@
         rows.forEach((row, i) => {
             const tag = tags[i];
             if (tag.startsWith('NL:')) return; 
-            if (row.querySelector('.tag-db-info')) return; 
 
             const tagLower = tag.toLowerCase();
-            const info = window.dbGetCachedTag(tagLower);
-            if (!info || !info.hasWikiInfo) return;
-
             const rejectBtn = row.querySelector('.tag-ghost-reject');
             if (!rejectBtn) return;
 
-            const icon = document.createElement('span');
-            icon.className = 'tag-db-info';
-            icon.textContent = '❓';
-            icon.title = 'View Danbooru info for this tag';
-            icon.onclick = (e) => { e.stopPropagation(); window.openDanbooruTagInfoPopout(tagLower); };
-            rejectBtn.parentNode.insertBefore(icon, rejectBtn);
+            const dbInfo = window.dbGetCachedTag(tagLower);
+            if (dbInfo && dbInfo.hasWikiInfo && !row.querySelector('.tag-db-info')) {
+                const icon = document.createElement('span');
+                icon.className = 'tag-db-info';
+                icon.textContent = '❓';
+                icon.title = 'View Danbooru info for this tag';
+                icon.onclick = (e) => { e.stopPropagation(); window.openDanbooruTagInfoPopout(tagLower); };
+                rejectBtn.parentNode.insertBefore(icon, rejectBtn);
+            }
+
+            const e6Info = window.showE621 && window.e621GetCachedTag ? window.e621GetCachedTag(tagLower) : null;
+            if (e6Info && e6Info.hasWikiInfo && !row.querySelector('.tag-e621-info')) {
+                const icon = document.createElement('span');
+                icon.className = 'tag-e621-info';
+                icon.textContent = '❔';
+                icon.title = 'View e621 info for this tag';
+                icon.onclick = (e) => { e.stopPropagation(); window.openE621TagInfoPopout(tagLower); };
+                rejectBtn.parentNode.insertBefore(icon, rejectBtn);
+            }
         });
     }
 
@@ -723,19 +969,19 @@
     function injectTopbarButton() {
         const rightBar = document.getElementById('topbar-right');
         const anchor = document.getElementById('btn-settings');
-        if (!rightBar || !anchor || document.getElementById('btn-open-danbooru-info')) return;
+        if (!rightBar || !anchor || document.getElementById('btn-open-tag-interrogator')) return;
 
         const btn = document.createElement('button');
-        btn.id = 'btn-open-danbooru-info';
-        btn.title = 'Search Danbooru tags & scan dataset for tag info';
-        btn.textContent = '📖 Danbooru';
-        btn.onclick = () => { buildMainModal(); window.openModal('modal-danbooru'); };
+        btn.id = 'btn-open-tag-interrogator';
+        btn.title = 'Search Danbooru/e621 tags & scan dataset for tag info';
+        btn.textContent = '🏷️ Tag Interrogator';
+        btn.onclick = () => { buildMainModal(); applySourceToggleUI(); window.openModal('modal-danbooru'); };
         rightBar.insertBefore(btn, anchor);
         updateTopbarButtonVisibility();
     }
 
     function updateTopbarButtonVisibility() {
-        const btn = document.getElementById('btn-open-danbooru-info');
+        const btn = document.getElementById('btn-open-tag-interrogator');
         if (btn) btn.style.display = (window.danbooruInfoEnabled && window.danbooruInfoShowButton) ? 'inline-block' : 'none';
     }
 
@@ -749,21 +995,25 @@
 
         const subLabel = document.createElement('div');
         subLabel.style.cssText = 'font-size:10px; color:#666; text-transform:uppercase; font-weight:bold; letter-spacing:0.5px; margin-top:8px;';
-        subLabel.textContent = '❓ Tag Info (Wiki Scan)';
+        subLabel.textContent = '❓❔ Tag Interrogator (Wiki Scan)';
 
         const lblMaster = document.createElement('label');
-        lblMaster.innerHTML = `<input type="checkbox" id="toggle-db-info-master"> Enable Danbooru Tag Info`;
+        lblMaster.innerHTML = `<input type="checkbox" id="toggle-db-info-master"> Enable Tag Interrogator`;
 
         const lblIcons = document.createElement('label');
         lblIcons.style.marginLeft = '15px';
-        lblIcons.innerHTML = `<input type="checkbox" id="toggle-db-info-icons"> Show ❓ icons on tags`;
+        lblIcons.innerHTML = `<input type="checkbox" id="toggle-db-info-icons"> Show ❓/❔ icons on tags`;
 
         const lblButton = document.createElement('label');
         lblButton.style.marginLeft = '15px';
-        lblButton.innerHTML = `<input type="checkbox" id="toggle-db-info-button"> Show 📖 Danbooru button in topbar`;
+        lblButton.innerHTML = `<input type="checkbox" id="toggle-db-info-button"> Show 🏷️ Tag Interrogator button in topbar`;
+
+        const lblE621Note = document.createElement('div');
+        lblE621Note.style.cssText = 'font-size:10px; color:#666; margin-left:15px; margin-top:-2px;';
+        lblE621Note.textContent = 'The ❔ e621 icon also needs "Enable e621 Suggestions" turned on above.';
 
         let cursor = (insertPoint && insertPoint.parentNode === dropdown) ? insertPoint : null;
-        [subLabel, lblMaster, lblIcons, lblButton].forEach(el => {
+        [subLabel, lblMaster, lblIcons, lblButton, lblE621Note].forEach(el => {
             if (cursor) {
                 cursor.insertAdjacentElement('afterend', el);
                 cursor = el;
@@ -811,11 +1061,14 @@
         window.danbooruInfoEnabled = await window.getSetting('danbooru-info-enabled', true);
         window.danbooruInfoShowIcons = await window.getSetting('danbooru-info-show-icons', true);
         window.danbooruInfoShowButton = await window.getSetting('danbooru-info-show-button', true);
+        window.tagInterrogatorSource = await window.getSetting('tag-interrogator-source', 'danbooru');
 
         injectTopbarButton();
         injectSettingsToggles();
         buildMainModal();
         buildTagInfoModal();
+        buildE621TagInfoModal();
+        applySourceToggleUI();
         hookAutoDanbooruScan();
     });
 

@@ -161,51 +161,6 @@ window.refreshListStatus = function() {
     window.updateListSelectionVisuals();
 }
 
-/* ---------------------------------------------------------------------
-   LIXEIRA (SOFT DELETE)
-   O delete não apaga nada do disco direto (removeEntry seria permanente
-   e não passa pela Lixeira do SO — o navegador não permite isso). Em vez
-   disso, delega pra window.moveToGlobalTrash() (tagmanager_trash.js),
-   que move a imagem + legenda pra uma pasta de Lixeira configurável pelo
-   usuário (igual ao "Set Directory" dos Taggers), com Restaurar / Excluir
-   Permanente disponíveis lá.
-
-   BUG FIX: se a imagem tivesse edições de tags não salvas (img.dirty),
-   mandar pra lixeira pegava o conteúdo antigo do disco — suas últimas
-   edições sumiam (e ficavam perdidas de vez, já que o item some da
-   lista). Agora salvamos a imagem no disco primeiro, se estiver dirty,
-   ANTES de mover pra lixeira. Funciona igual pra 1 imagem ou várias,
-   já que é sempre a seleção (selectedIndices) que dirige o delete.
---------------------------------------------------------------------- */
-window.deleteSelectedImages = async function() {
-    if(selectedIndices.size === 0) return;
-    if(!confirm(`Move ${selectedIndices.size} image(s) and text data to Trash (🗑️)?\nYou'll be able to restore them later, or delete them permanently, from the Trash panel.`)) return;
-    
-    const indices = Array.from(selectedIndices).sort((a,b) => b - a);
-    let deletedCount = 0;
-    
-    for(let i of indices) {
-        const img = imageFiles[i];
-        try {
-            if (img.dirty && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
-            const ok = typeof window.moveToGlobalTrash === 'function' && await window.moveToGlobalTrash(img);
-            if (!ok) continue;
-            if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
-            if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
-            if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
-            deletedCount++;
-        } catch(e) {}
-    }
-    
-    if(deletedCount > 0) {
-        window.markDatasetEdited();
-        if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
-        window.showAlert(`Moved ${deletedCount} file(s) to Trash 🗑️.`, 'success');
-        if(typeof window.refreshDataset === 'function') await window.refreshDataset();
-        if (typeof window.updateTrashButtonState === 'function') window.updateTrashButtonState();
-    }
-}
-
 window.saveActiveSelectedImages = async function(silent = false) {
     if (!window.currentImagesHandle && !window.rootHandle || selectedIndices.size === 0) return;
     let savedCount = 0;

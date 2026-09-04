@@ -51,7 +51,7 @@ var lastSelectedIndex = 0;
 var replaceScope = 'active';
 var _thumbSizeRAF = null;
 
-var showDanbooruCounts = false;
+var showDanbooruCounts = true;
 var danbooruCache = {};
 
 var showE621 = false;
