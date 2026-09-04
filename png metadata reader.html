@@ -210,6 +210,7 @@ input[type="file"] { display: none; }
 <script src="parsers/stable-diffusion.js"></script>
 <script src="parsers/novelai.js"></script>
 <script src="parsers/comfy.js"></script>
+<script src="parsers/comfyui_novelai.js"></script>
 <script src="parsers/swarmui.js"></script>
 <script src="parsers/invokeai.js"></script>
 <script src="parsers/fooocus.js"></script>
@@ -646,8 +647,11 @@ async function loadFile(file) {
             () => window.parseSwarmUI?.(window.currentRawText, jsonObj),
             () => window.parseInvokeAI?.(window.currentRawText, jsonObj),
             () => window.parseFooocus?.(window.currentRawText, jsonObj),
-            () => window.parseNovelAI?.(window.currentRawText, jsonObj),
+            // ComfyUI workflows built with the NovelAI custom nodes must be tried
+            // before the generic parseNovelAI: both "detect" this text (it contains
+            // the word "NovelAI"), but only this one understands the node graph.
             () => window.parseComfyNovelAI?.(cleanJsonString),
+            () => window.parseNovelAI?.(window.currentRawText, jsonObj),
             () => window.parseComfyJSON?.(cleanJsonString),
             () => window.parseStableDiffusion?.(window.currentRawText)
         ];
