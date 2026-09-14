@@ -131,6 +131,23 @@
         #grid-view.hide-filenames .grid-item-label { display: none; }
         #grid-view:not(.hide-filenames) .grid-item { border-radius: 8px 8px 0 0; }
 
+        /* View-count badge (top-right corner of the thumbnail): weekly + monthly */
+        .view-count-badge {
+            position: absolute; top: 8px; right: 8px; z-index: 9;
+            background: rgba(0, 0, 0, 0.75); border: 1px solid #444; color: #ffcc66;
+            font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 10px;
+            display: none; align-items: center; gap: 5px; pointer-events: none; white-space: nowrap;
+        }
+        .view-count-badge .view-count-sep { color: #666; font-weight: normal; }
+
+        /* 👁️ button next to the pencil — pauses/resumes the weekly view counter */
+        #btn-viewcount-pause {
+            display: none; font-size: 15px; padding: 6px 12px; color: #888;
+            border: 1px solid #333; border-radius: 6px; background: none;
+        }
+        #btn-viewcount-pause:hover { color: #ffcc66; border-color: #ffcc66; background: none; }
+        #btn-viewcount-pause.active { background: #00aa66; color: #000; border-color: #00cc88; }
+
         .tag-checkbox, .rename-checkbox {
             position: absolute; top: 10px; left: 10px;
             width: 20px; height: 20px; cursor: pointer; z-index: 10; accent-color: #00ff99;
@@ -347,6 +364,7 @@
         </div>
 
         <button id="btn-rename-top" onclick="toggleRenameBalloon()" title="Rename Current Image" style="display:none; font-size: 15px;">✏️</button>
+        <button id="btn-viewcount-pause" onclick="toggleViewCountPause()" title="Weekly View Counter: counting views (click to pause)" class="active">👁️</button>
         
         <button id="btn-batch-tag" onclick="toggleBatchTagMode()" title="Add Tag to Multiple Images" style="display:none;">🏷️ Tag</button>
         <button id="btn-view-mode" onclick="toggleViewMode()" title="Group images by tag (show tag galleries)">🏷️ Show Tags</button>
@@ -407,13 +425,40 @@
     </div>
 </div>
 
-<div id="settings-dropdown" class="settings-dropdown">
+<div id="settings-dropdown" class="settings-dropdown" style="width: 260px;">
     <label><input type="checkbox" id="toggle-extra-fields" onchange="toggleExtraFields(); saveSettingsToDB();"> Show Extra Gen Data</label>
     <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField(); saveSettingsToDB();" checked> Show File Names</label>
     <label><input type="checkbox" id="toggle-path-field" onchange="togglePathDisplay(); saveSettingsToDB();" checked> Show Visual Path</label>
     <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon(); saveSettingsToDB();"> Show Path Button</label>
     <label><input type="checkbox" id="toggle-count-field" onchange="updateGridCounters(); saveSettingsToDB();" checked> Show Image Count</label>
     <label><input type="checkbox" id="toggle-json-count-field" onchange="updateGridCounters(); saveSettingsToDB();"> Show JSON Count</label>
+    <label><input type="checkbox" id="toggle-viewcount-enabled" onchange="toggleViewCountEnabled(); saveSettingsToDB();" checked> Enable View Counter</label>
+    <div id="viewcount-extra-settings" style="display:flex; flex-direction:column; gap:10px; padding: 8px 0 0 4px; border-top: 1px solid #263b5a; margin-top: 2px;">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+            <span style="font-size:11px; color:#888; font-weight:bold; text-transform:uppercase;">Weekly reset day</span>
+            <select id="viewcount-weekly-day" onchange="onViewCountWeeklyDayChange()" style="width:100%; min-width:0; max-width:none;">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+            </select>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+            <span style="font-size:11px; color:#888; font-weight:bold; text-transform:uppercase;">Monthly reset rule</span>
+            <select id="viewcount-monthly-mode" onchange="onViewCountMonthlyModeChange()" style="width:100%; min-width:0; max-width:none;">
+                <option value="endofmonth">End of month (calendar)</option>
+                <option value="every15">Every 15 days</option>
+                <option value="customday">Custom day of month</option>
+            </select>
+        </div>
+        <div id="viewcount-customday-row" style="display:none; flex-direction:column; gap:4px;">
+            <span style="font-size:11px; color:#888; font-weight:bold; text-transform:uppercase;">Reset day (1-28)</span>
+            <input type="number" id="viewcount-monthly-customday" min="1" max="28" value="1" onchange="onViewCountMonthlyCustomDayChange()" style="background:#111; color:#00ff99; border:1px solid #444; border-radius:8px; padding:8px; font-size:13px; width:100%; box-sizing:border-box; outline:none;">
+        </div>
+    </div>
 </div>
 
 <div id="workspace">
@@ -540,6 +585,7 @@
 <script src="tools/gallery_path_saver.js"></script>
 <script src="tools/gallery_file_manager.js"></script>
 <script src="tools/gallery_auto_rename.js"></script>
+<script src="tools/gallery_view_counter.js"></script>
 
 <script src="tools/gallery_ui.js"></script>
 <script src="tools/gallery_core.js"></script>
