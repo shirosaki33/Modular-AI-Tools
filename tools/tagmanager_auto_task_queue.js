@@ -57,15 +57,34 @@
     }
 
     let _lastImageFilesRef = null;
+    function detectDatasetChangeForQueue() {
+        if (typeof imageFiles !== 'undefined' && imageFiles !== _lastImageFilesRef) {
+            _lastImageFilesRef = imageFiles;
+            setTimeout(runQueueOnce, 600);
+        }
+    }
+
+    /* FIX (otimização): antes este arquivo sempre envelopava
+       window.renderImageList manualmente por conta própria, empilhando mais
+       uma camada de wrap em cima das já existentes (pin_image, compact_view,
+       danbooru_panel etc — exatamente o padrão que tagmanager_render_hooks.js
+       foi criado pra eliminar). Agora usa o registry central quando
+       disponível (carrega antes deste arquivo no HTML) e só cai pro wrap
+       manual antigo como rede de segurança, caso a ordem dos <script> mude
+       no futuro. */
     function hookDatasetChangeDetection() {
+        if (typeof window.registerPostRenderImageList === 'function') {
+            if (!window._autoQueueHookRegistered) {
+                window.registerPostRenderImageList(detectDatasetChangeForQueue);
+                window._autoQueueHookRegistered = true;
+            }
+            return;
+        }
         if (typeof window.renderImageList !== 'function' || window.renderImageList.__autoQueueWrapped) return;
         const original = window.renderImageList;
         const wrapped = function () {
             original.apply(this, arguments);
-            if (typeof imageFiles !== 'undefined' && imageFiles !== _lastImageFilesRef) {
-                _lastImageFilesRef = imageFiles;
-                setTimeout(runQueueOnce, 600);
-            }
+            detectDatasetChangeForQueue();
         };
         wrapped.__autoQueueWrapped = true;
         window.renderImageList = wrapped;

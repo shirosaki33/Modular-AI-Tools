@@ -808,19 +808,38 @@
         refreshTagRenders();
     };
 
+    function detectDatasetChangeForDbScan() {
+        if (typeof imageFiles !== 'undefined' && imageFiles !== window._dbInfoLastImageFilesRef) {
+            window._dbInfoLastImageFilesRef = imageFiles;
+            window._dbBackgroundScanCancelled = true;
+            setTimeout(() => {
+                window._dbBackgroundScanCancelled = false;
+                window.runDanbooruBackgroundScan();
+            }, 600);
+        }
+    }
+
+    /* FIX (otimização): antes este arquivo sempre envelopava
+       window.renderImageList manualmente por conta própria, empilhando mais
+       uma camada de wrap em cima das já existentes (pin_image, compact_view,
+       auto_task_queue etc — exatamente o padrão que tagmanager_render_hooks.js
+       foi criado pra eliminar). Agora usa o registry central quando
+       disponível (carrega antes deste arquivo no HTML) e só cai pro wrap
+       manual antigo como rede de segurança, caso a ordem dos <script> mude
+       no futuro. */
     function hookAutoDanbooruScan() {
+        if (typeof window.registerPostRenderImageList === 'function') {
+            if (!window._dbAutoScanHookRegistered) {
+                window.registerPostRenderImageList(detectDatasetChangeForDbScan);
+                window._dbAutoScanHookRegistered = true;
+            }
+            return;
+        }
         if (typeof window.renderImageList !== 'function' || window.renderImageList.__dbAutoScanWrapped) return;
         const original = window.renderImageList;
         const wrapped = function () {
             original.apply(this, arguments);
-            if (typeof imageFiles !== 'undefined' && imageFiles !== window._dbInfoLastImageFilesRef) {
-                window._dbInfoLastImageFilesRef = imageFiles;
-                window._dbBackgroundScanCancelled = true;
-                setTimeout(() => {
-                    window._dbBackgroundScanCancelled = false;
-                    window.runDanbooruBackgroundScan();
-                }, 600);
-            }
+            detectDatasetChangeForDbScan();
         };
         wrapped.__dbAutoScanWrapped = true;
         window.renderImageList = wrapped;

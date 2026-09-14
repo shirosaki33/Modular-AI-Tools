@@ -289,6 +289,28 @@ async function deleteGalleryTag(tagName) {
 }
 
 
+/* ----------------------------------------------------------------
+   SHARED FILTER HELPER — returns the files that are actually visible
+   in the grid right now (after the tag-galleries filter is applied).
+   Used by renderGrid() itself, and also by the image/JSON counters
+   and the pagination controls, so they never go back to counting
+   images that are hidden by an active gallery filter or a hidden tag.
+   ---------------------------------------------------------------- */
+function getGalleryFilteredFiles(files) {
+    let arr = files || currentFiles;
+    if (typeof galleryViewMode !== 'undefined' && galleryViewMode === 'galeria') {
+        if (typeof activeGalleryTag !== 'undefined' && activeGalleryTag) {
+            arr = arr.filter(f => (typeof tagsPerFile !== 'undefined' ? tagsPerFile.get(f.name) : '') === activeGalleryTag);
+        } else if (typeof hiddenGalleryTags !== 'undefined' && hiddenGalleryTags.size > 0) {
+            arr = arr.filter(f => {
+                const t = typeof tagsPerFile !== 'undefined' ? tagsPerFile.get(f.name) : '';
+                return !t || !hiddenGalleryTags.has(t);
+            });
+        }
+    }
+    return arr;
+}
+
 function filterGallery() {
     const term     = document.getElementById('filter-tag').value.toLowerCase().trim();
     const wrappers = document.querySelectorAll('.grid-item-wrapper');

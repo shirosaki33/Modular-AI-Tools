@@ -13,9 +13,22 @@ let availableModelsObjects = [];
 let florencePipeline = null;
 let currentVlmSession = null;
 
-// Motor Global para o WD14 (ONNX puro) apontando para a versão fixa
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
-ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+// FIX: se o script do onnxruntime-web (CDN) falhar ao carregar por qualquer
+// motivo (rede, bloqueio, offline), `ort` fica undefined e esta linha
+// lançava uma exceção NO TOPO DO ARQUIVO — o que impedia TODO o resto deste
+// arquivo de ser definido (nenhuma função do Batch Tagger existiria em
+// window), sem nenhum aviso claro sobre por que o botão "🤖 Auto-Caption"
+// simplesmente não funciona. Agora isso é protegido: se `ort` não estiver
+// disponível, avisamos no console e seguimos — o resto do app continua
+// funcionando normalmente, só o Batch Tagger (que já depende de `ort` de
+// qualquer jeito) fica indisponível, e window.startBatchTagging já tem seu
+// próprio try/catch pra avisar o usuário caso tente usá-lo mesmo assim.
+if (typeof ort !== 'undefined' && ort.env && ort.env.wasm) {
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+    ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+} else {
+    console.warn('[Batch Tagger] onnxruntime-web (ort) did not load — ONNX Tagger mode will be unavailable until the page is reloaded with network access to the CDN.');
+}
 
 const dbNameTaggers = 'TagManagerDB';
 
@@ -598,6 +611,22 @@ window.startBatchTagging = async function() {
                         if (imgObj.pendingAdd.length > 0) pendingTagsStore[baseName] = imgObj.pendingAdd;
                         else delete pendingTagsStore[baseName];
                     }
+
+                    // NOVO: marca tags que JÁ EXISTEM na imagem mas que o tagger NÃO
+                    // confirmou de volta nesta passada — ou seja, o modelo "discorda"
+                    // que essa tag deveria estar ali. Não mexe no arquivo em disco
+                    // (Review Mode nunca escreve nada sozinho); só fica marcado pra
+                    // revisão visual (ver tagmanager_review_unconfirmed.js).
+                    // Tags "NL:" (caption embutida) e tags que o usuário colocou na
+                    // lista de Exclude são ignoradas aqui — o tagger nunca as
+                    // consideraria de qualquer forma, então não é "desconfirmação".
+                    if (typeof window.pendingRemoveStore === 'undefined') window.pendingRemoveStore = {};
+                    const finalSet = new Set(finalTags);
+                    imgObj.pendingRemove = existingTags.filter(t =>
+                        !finalSet.has(t) && !t.startsWith('NL:') && !excludeArray.includes(t.toLowerCase())
+                    );
+                    if (imgObj.pendingRemove.length > 0) window.pendingRemoveStore[baseName] = imgObj.pendingRemove;
+                    else delete window.pendingRemoveStore[baseName];
 
                     processed++;
                     progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;

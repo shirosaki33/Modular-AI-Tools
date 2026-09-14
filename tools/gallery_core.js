@@ -236,8 +236,8 @@ let itemsPerPage = 50;
 
 function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
 async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
-async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_') && !String(name).startsWith('autorename_') && !String(name).startsWith('galleryview_') && !String(name).startsWith('hiddentags_') && name !== SETTINGS_KEY) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
-async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.objectStore(storeName).delete('autorename_' + n); tx.objectStore(storeName).delete('galleryview_' + n); tx.objectStore(storeName).delete('hiddentags_' + n); tx.oncomplete = r; }); }
+async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_') && !String(name).startsWith('autorename_') && !String(name).startsWith('galleryview_') && !String(name).startsWith('hiddentags_') && !String(name).startsWith('viewcounts_') && name !== SETTINGS_KEY) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
+async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.objectStore(storeName).delete('autorename_' + n); tx.objectStore(storeName).delete('galleryview_' + n); tx.objectStore(storeName).delete('hiddentags_' + n); tx.objectStore(storeName).delete('viewcounts_' + n); tx.oncomplete = r; }); }
 
 /* ---------------------------------------------------------------
    PERSISTED APP SETTINGS (⚙️ menu checkboxes, sorting and grid size)
@@ -258,7 +258,12 @@ async function saveSettingsToDB() {
             sortMode:       sortMode,
             itemsPerPage:   itemsPerPage,
             blockCollapse:  blockCollapsePrefs,
-            gridThumbSize:  gridThumbSize
+            gridThumbSize:  gridThumbSize,
+            viewCountEnabled: viewCountEnabled,
+            viewCountPaused:  viewCountPaused,
+            viewCountWeeklyResetDay:   viewCountWeeklyResetDay,
+            viewCountMonthlyMode:      viewCountMonthlyMode,
+            viewCountMonthlyCustomDay: viewCountMonthlyCustomDay
         };
         const db = await initDB();
         await new Promise(r => {
@@ -310,6 +315,27 @@ async function loadSettingsFromDB() {
             if (slider) slider.value = gridThumbSize;
             updateGridThumbSize(gridThumbSize, true);
         }
+
+        if (typeof viewCountEnabled !== 'undefined') {
+            viewCountEnabled = settings.viewCountEnabled !== undefined ? !!settings.viewCountEnabled : true;
+            viewCountPaused  = !!settings.viewCountPaused;
+            viewCountWeeklyResetDay   = (typeof settings.viewCountWeeklyResetDay === 'number') ? settings.viewCountWeeklyResetDay : 0;
+            viewCountMonthlyMode      = settings.viewCountMonthlyMode || 'endofmonth';
+            viewCountMonthlyCustomDay = (typeof settings.viewCountMonthlyCustomDay === 'number') ? settings.viewCountMonthlyCustomDay : 1;
+
+            const enabledCheckbox = document.getElementById('toggle-viewcount-enabled');
+            if (enabledCheckbox) enabledCheckbox.checked = viewCountEnabled;
+            const weeklySel = document.getElementById('viewcount-weekly-day');
+            if (weeklySel) weeklySel.value = String(viewCountWeeklyResetDay);
+            const monthlySel = document.getElementById('viewcount-monthly-mode');
+            if (monthlySel) monthlySel.value = viewCountMonthlyMode;
+            const customDayInput = document.getElementById('viewcount-monthly-customday');
+            if (customDayInput) customDayInput.value = viewCountMonthlyCustomDay;
+
+            if (typeof updateViewCountPauseButtonUI === 'function') updateViewCountPauseButtonUI();
+            if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
+            if (typeof updateViewCountSettingsUI === 'function') updateViewCountSettingsUI();
+        }
     } catch (e) { console.error('Error loading settings:', e); }
 }
 
@@ -355,6 +381,8 @@ async function removeDirectory() {
     if (typeof galleryViewMode !== 'undefined') galleryViewMode = 'solto';
     if (typeof updateViewModeButtonUI === 'function') updateViewModeButtonUI();
     if (typeof renderGallerySidebar === 'function') renderGallerySidebar();
+    if (typeof viewCountsData !== 'undefined') viewCountsData = { weekKey: '', counts: {} };
+    if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
 
     document.getElementById('btn-remove').style.display = 'none'; 
     document.getElementById('btn-path-label').style.display = 'none'; 
@@ -435,6 +463,8 @@ async function loadGallery(dirHandle) {
 
     if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
+    if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
 }
 
@@ -469,6 +499,8 @@ window.loadSubDir1 = async function() {
 
     if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
+    if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
     showAlert(null); 
 };
@@ -503,6 +535,8 @@ window.loadSubDir2 = async function() {
 
     if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
+    if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
     showAlert(null);
 };
@@ -558,16 +592,10 @@ function renderGrid() {
     else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
 
     // --- TAGS VIEW: filters by the tag/gallery currently active in the sidebar ---
-    if (typeof galleryViewMode !== 'undefined' && galleryViewMode === 'galeria') {
-        if (typeof activeGalleryTag !== 'undefined' && activeGalleryTag) {
-            arrRender = arrRender.filter(f => (typeof tagsPerFile !== 'undefined' ? tagsPerFile.get(f.name) : '') === activeGalleryTag);
-        } else if (typeof hiddenGalleryTags !== 'undefined' && hiddenGalleryTags.size > 0) {
-            // "All Images": removes images belonging to galleries marked as hidden
-            arrRender = arrRender.filter(f => {
-                const t = typeof tagsPerFile !== 'undefined' ? tagsPerFile.get(f.name) : '';
-                return !t || !hiddenGalleryTags.has(t);
-            });
-        }
+    // (shared with updateGridCounters/updatePaginationControls/changePage so they
+    // never disagree with what's actually being rendered here)
+    if (typeof getGalleryFilteredFiles === 'function') {
+        arrRender = getGalleryFilteredFiles(arrRender);
     }
 
     // --- PAGINATION LOGIC (only kicks in above 100 images) ---
@@ -618,6 +646,7 @@ function renderGrid() {
     
     updateGridCounters();
     updatePaginationControls(); // Refresh the page button display
+    if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges();
     if (typeof filterGallery === 'function') filterGallery(); 
 }
 
@@ -625,14 +654,18 @@ function updatePaginationControls() {
     const container = document.getElementById('pagination-controls');
     if (!container) return;
 
+    // Count only what's actually visible right now (a hidden/filtered gallery
+    // tag must not keep pagination "alive" for pages that have no images left)
+    const visibleCount = (typeof getGalleryFilteredFiles === 'function') ? getGalleryFilteredFiles().length : currentFiles.length;
+
     // Conditions: needs a loaded folder, must be in grid mode, and MORE than 100 images total
-    if (!currentHandle || document.getElementById('grid-view').style.display === 'none' || currentFiles.length <= itemsPerPage) {
+    if (!currentHandle || document.getElementById('grid-view').style.display === 'none' || visibleCount <= itemsPerPage) {
         container.style.display = 'none';
         return;
     }
 
     container.style.display = 'flex';
-    const totalPages = Math.ceil(currentFiles.length / itemsPerPage);
+    const totalPages = Math.ceil(visibleCount / itemsPerPage);
     document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages}`;
     
     const prevBtn = document.getElementById('btn-page-prev');
@@ -659,7 +692,8 @@ function toggleItemsPerPage() {
 }
 
 function changePage(direction) {
-    const totalPages = Math.ceil(currentFiles.length / itemsPerPage);
+    const visibleCount = (typeof getGalleryFilteredFiles === 'function') ? getGalleryFilteredFiles().length : currentFiles.length;
+    const totalPages = Math.ceil(visibleCount / itemsPerPage);
     currentPage += direction;
     
     if (currentPage < 1) currentPage = 1;
@@ -688,6 +722,7 @@ async function openDetailView(url, fileName) {
     document.getElementById('resizer-right').style.display = 'flex'; 
     document.getElementById('main-image').src = url;
     document.getElementById('file-name').value = fileName;
+    if (typeof registerImageView === 'function') registerImageView(fileName);
     if (typeof resetImageZoom === 'function') resetImageZoom(); // start every image at 100%, no leftover pan
     showAlert(null);
     updateGridCounters(); // Hide the counter since we left the grid

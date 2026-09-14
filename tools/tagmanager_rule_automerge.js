@@ -3,17 +3,29 @@
    ---------------------------------------------------------------------
    Auto-Do UI, Execution Engine, and Embeds Manager.
 
-   FIX (edição de Embed via prompt()): antes, ✏️ Edit abria 2 prompt()
-   sequenciais (nome, depois tags) — difícil de ver o que já estava lá,
-   sem multi-linha decente, sem contexto. Agora ✏️ Edit transforma o
-   próprio card do embed num formulário INLINE (input de nome + textarea
-   de tags, igual ao "Create New Embed" logo abaixo), com os botões
-   virando ✅ Update / ✖ Cancel enquanto editando — ✏️ Edit / 🗑️ voltam
-   assim que sai do modo edição (Update ou Cancel).
+   REFACTOR (Trigger Tags agora OPCIONAIS):
+   Antes, TODA regra de Auto-Do precisava de pelo menos 1 "Trigger Tag"
+   (removeTags) presente pra disparar — mesmo quando o Require já usava
+   um @embedName inteiro como condição. Isso obrigava o usuário a sempre
+   digitar uma tag de gatilho específica, mesmo em casos onde a intenção
+   era só "se qualquer tag deste embed aparecer, adiciona X".
 
-   Renomear um embed (mudar o @nome) agora também propaga automaticamente
-   pra qualquer Conflict/Similar/Highlight/Auto-Do que referenciava
-   "@nomeAntigo" — ver window.renameEmbedReferencesEverywhere abaixo.
+   Agora Trigger Tags é opcional, tanto em Fill quanto em Merge:
+   - Se Trigger Tags estiver preenchido: continua exigindo que pelo menos
+     1 delas esteja presente (comportamento de sempre).
+   - Se Trigger Tags estiver VAZIO: o gatilho passa a ser só o Require
+     (que pode ser tags soltas e/ou @embedName) — ou seja, dá pra criar
+     uma regra 100% baseada em embed, sem digitar nenhuma tag de gatilho
+     manualmente.
+   - Uma regra sem NENHUM gatilho (Trigger Tags E Require os dois vazios)
+     nunca dispara — evita virar uma regra "sempre ativa" sem querer.
+
+   REFACTOR (edição via prompt() -> formulário inline):
+   ✏️ Edit não abre mais um prompt() com texto separado por "|". O card da
+   regra vira, no lugar dele mesmo, um formulário com campos separados
+   (Main Tag, modo Fill/Merge, Trigger Tags, Requires, Excludes) e os
+   botões viram ✅ Update / ✖ Cancel — mesmo padrão já usado em Embeds e
+   Custom Highlights.
 ========================================================================= */
 
 (function () {
@@ -27,11 +39,14 @@
     window.RulesDB.factoryRules.push({ id: 'def_am_0', category: 'automerge', isDefault: true, keepTag: 'nude', removeTags: ['completely nude'], require: [], exclude: ['full body', '@clothing'], isAutoFill: false });
     window.RulesDB.factoryRules.push({ id: 'def_am_1', category: 'automerge', isDefault: true, keepTag: 'completely nude', removeTags: ['nude'], require: ['full body'], exclude: ['@clothing'], isAutoFill: false });
     window.RulesDB.factoryRules.push({ id: 'def_am_2', category: 'automerge', isDefault: true, keepTag: 'tachi-e', removeTags: ['visual novel cg'], require: ['@solidbackground'], exclude: [], isAutoFill: true });
-
+    // Exemplo de gatilho 100% por Embed (Trigger Tags vazio de propósito):
     // Estado do modo edição inline do Embed Manager: guarda o ID do embed
     // sendo editado agora (ou null se nenhum). Fica no escopo do módulo,
     // então sobrevive a qualquer refreshEmbedList() intermediário.
     let _embedEditingId = null;
+
+    // Mesma ideia, agora para o card de regra Auto-Do sendo editado.
+    let _amEditingId = null;
 
     // --- ENGINE ---
     window.matchTag = function(tag, condition, embeds) {
@@ -49,8 +64,17 @@
         const removes = Array.isArray(rule.removeTags) ? rule.removeTags : [];
         const reqs = Array.isArray(rule.require) ? rule.require : [];
         const excs = Array.isArray(rule.exclude) ? rule.exclude : [];
-        const presentRemoves = removes.filter(rem => tagsArray.some(t => t.toLowerCase() === rem.toLowerCase()));
-        if (presentRemoves.length === 0) return null; 
+
+        // Trigger Tags (removeTags) agora é OPCIONAL: se vazio, o gatilho vira
+        // só o Require (tags soltas e/ou @embedName). Uma regra sem NENHUM
+        // gatilho (nem Trigger Tags, nem Require) nunca dispara, pra não virar
+        // uma regra "sempre ativa" por acidente.
+        if (removes.length === 0 && reqs.length === 0) return null;
+
+        if (removes.length > 0) {
+            const presentRemoves = removes.filter(rem => tagsArray.some(t => t.toLowerCase() === rem.toLowerCase()));
+            if (presentRemoves.length === 0) return null;
+        }
 
         let hasRequired = reqs.length === 0 || reqs.every(req => tagsArray.some(t => matchTag(t, req, embeds)));
         let hasExcluded = excs.length > 0 && tagsArray.some(t => excs.some(ex => matchTag(t, ex, embeds)));
@@ -63,6 +87,151 @@
         }
         return null;
     };
+
+    /* =====================================================================
+       BALÃO DE NOTIFICAÇÃO — "Auto-Do fez mudanças"
+       ---------------------------------------------------------------------
+       Visual igual ao #unsaved-changes-alert já existente (mesma borda,
+       mesmo estilo de barra), só que específico do Auto-Do — pra deixar
+       claro que foi o Auto-Do (não uma edição manual) que alterou tags.
+       Diferente do #unsaved-changes-alert (que é fixo no HTML), este é
+       criado por JS e ancorado logo depois dele, mantendo a mesma posição/
+       ordem de leitura sem precisar tocar em tag_manager.html.
+
+       CICLO DE VIDA:
+       - Aparece assim que runAutoMergeOnDataset() modifica 1+ imagem(ns),
+         seja rodando automaticamente (dataset carregado com "Auto-Run"
+         ligado) ou manualmente (botão "▶ Run Auto-Do Now").
+       - Tem um ✖ pra dispensar manualmente.
+       - Some sozinho quando NÃO sobra mais nenhuma mudança pendente no
+         dataset (tudo já foi salvo) — reaproveita o mesmo sinal usado pelo
+         #unsaved-changes-alert (img.dirty), então funciona mesmo se o
+         usuário salvar por qualquer caminho (Save Selected, Save All,
+         etc), sem precisar duplicar lógica de salvamento aqui.
+       - Zera/esconde ao trocar de dataset (pasta/subpasta diferente) —
+         uma contagem de "N imagens alteradas" de um dataset anterior não
+         faz sentido continuar aparecendo depois de trocar de pasta.
+    ===================================================================== */
+
+    window._autoDoChangedCount = window._autoDoChangedCount || 0;
+    window._autoDoAlertDismissed = window._autoDoAlertDismissed || false;
+
+    function ensureAutoDoAlertBar() {
+        let bar = document.getElementById('autodo-changes-alert');
+        if (bar) return bar;
+
+        bar = document.createElement('div');
+        bar.id = 'autodo-changes-alert';
+        bar.style.cssText = 'display:none; margin: 8px 20px 0 20px; padding: 10px 14px; border-left: 3px solid #00ff99; border-right: 3px solid #00ff99; background: #0d1f16; color: #f5f5f5; border-radius: 7px; font-size: 13.5px; line-height: 1.45; text-align: center; box-sizing: border-box; flex-shrink: 0; position: relative;';
+
+        const unsavedBar = document.getElementById('unsaved-changes-alert');
+        const workspace = document.getElementById('workspace');
+        if (unsavedBar && unsavedBar.parentNode) {
+            unsavedBar.insertAdjacentElement('afterend', bar);
+        } else if (workspace && workspace.parentNode) {
+            workspace.parentNode.insertBefore(bar, workspace);
+        } else {
+            document.body.appendChild(bar);
+        }
+        return bar;
+    }
+
+    window.updateAutoDoAlertUI = function () {
+        const bar = ensureAutoDoAlertBar();
+
+        // Se não sobra mais NADA sujo no dataset (tudo já foi salvo), zera o
+        // estado — não faz sentido continuar anunciando uma mudança que já
+        // está salva em disco. IMPORTANTE: isto só é usado pra decidir
+        // quando o balão deve SUMIR sozinho — não é mais uma condição pra
+        // decidir se ele pode APARECER (ver FIX abaixo).
+        const stillDirty = (typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty);
+        if (!stillDirty && window._autoDoChangedCount > 0) {
+            window._autoDoChangedCount = 0;
+            window._autoDoAlertDismissed = false;
+        }
+
+        // FIX (balão não aparecia): a versão anterior exigia `stillDirty`
+        // também para EXIBIR o balão, na mesma chamada que acabou de rodar
+        // window.markDirty(modifiedFiles). Isso deveria ser sempre
+        // verdadeiro nesse ponto, mas criava uma dependência frágil da
+        // ordem exata de execução (se markDirty ou qualquer coisa no meio
+        // do caminho não deixasse o dataset "sujo" a tempo, o balão nunca
+        // chegava a aparecer). Agora a exibição depende só da contagem e do
+        // dismiss — o `stillDirty` continua sendo usado, só que separado,
+        // para AUTO-ESCONDER depois que tudo for salvo.
+        const shouldShow = window._autoDoChangedCount > 0 && !window._autoDoAlertDismissed;
+        if (!shouldShow) {
+            bar.style.display = 'none';
+            return;
+        }
+
+        bar.style.display = 'block';
+        const plural = window._autoDoChangedCount === 1 ? 'image' : 'images';
+        bar.innerHTML = `
+            <span style="color:#00ff99;margin:0 6px;font-size:14px;line-height:1;">⚡</span>
+            Auto-Do automatically modified tags in ${window._autoDoChangedCount} ${plural} — review and save when ready
+            <span style="color:#00ff99;margin:0 6px;font-size:14px;line-height:1;">⚡</span>
+            <button id="btn-dismiss-autodo-alert" title="Dismiss this notice" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#88ffcc; font-size:16px; font-weight:bold; cursor:pointer; padding:0 6px; line-height:1;">&times;</button>
+        `;
+        const dismissBtn = document.getElementById('btn-dismiss-autodo-alert');
+        if (dismissBtn) {
+            dismissBtn.onclick = () => {
+                window._autoDoAlertDismissed = true;
+                window.updateAutoDoAlertUI();
+            };
+        }
+    };
+
+    // Mantém o balão em sincronia com o estado de "salvo"/"não salvo" do
+    // dataset SEM duplicar essa lógica: qualquer markDirty()/markClean()
+    // já dispara window.updateUnsavedChangesUI() em algum ponto do app
+    // (tagmanager_ui_core.js) — só "encaixamos" nosso próprio refresh
+    // logo depois, reaproveitando o mesmo sinal.
+    function installAutoDoAlertUnsavedHook() {
+        if (typeof window.updateUnsavedChangesUI !== 'function' || window.updateUnsavedChangesUI.__autoDoAlertWrapped) return false;
+        const original = window.updateUnsavedChangesUI;
+        const wrapped = function () {
+            const result = original.apply(this, arguments);
+            window.updateAutoDoAlertUI();
+            return result;
+        };
+        wrapped.__autoDoAlertWrapped = true;
+        window.updateUnsavedChangesUI = wrapped;
+        return true;
+    }
+    if (!installAutoDoAlertUnsavedHook()) window.addEventListener('DOMContentLoaded', () => setTimeout(installAutoDoAlertUnsavedHook, 0));
+
+    // Zera o balão sempre que o dataset/subpasta muda (nova referência de
+    // window.imageFiles) — mesmo padrão de detecção de troca de dataset já
+    // usado em vários outros arquivos deste projeto (auto_task_queue.js,
+    // danbooru_panel.js, rule_redudant.js, etc).
+    let _lastImageFilesRefAutoDoAlert = null;
+    function resetAutoDoAlertOnDatasetChange() {
+        if (typeof imageFiles === 'undefined') return;
+        if (imageFiles === _lastImageFilesRefAutoDoAlert) return;
+        _lastImageFilesRefAutoDoAlert = imageFiles;
+        window._autoDoChangedCount = 0;
+        window._autoDoAlertDismissed = false;
+        window.updateAutoDoAlertUI();
+    }
+    function installAutoDoAlertDatasetHook() {
+        if (typeof window.registerPostRenderImageList === 'function') {
+            if (!window._autoDoAlertHookRegistered) {
+                window.registerPostRenderImageList(resetAutoDoAlertOnDatasetChange);
+                window._autoDoAlertHookRegistered = true;
+            }
+            return true;
+        }
+        if (typeof window.renderImageList === 'function' && !window.renderImageList.__autoDoAlertWrapped) {
+            const orig = window.renderImageList;
+            const wrapped = function () { orig.apply(this, arguments); resetAutoDoAlertOnDatasetChange(); };
+            wrapped.__autoDoAlertWrapped = true;
+            window.renderImageList = wrapped;
+            return true;
+        }
+        return false;
+    }
+    if (!installAutoDoAlertDatasetHook()) window.addEventListener('DOMContentLoaded', () => setTimeout(installAutoDoAlertDatasetHook, 0));
 
     window.runAutoMergeOnDataset = async function(manual = false) {
         if (window.enableConflictWarnings === false) return;
@@ -92,6 +261,14 @@
         });
 
         if (changedCount > 0) {
+            // FIX: define o estado do balão ANTES de qualquer outra chamada
+            // (markDirty, renderImageList, renderMasterTagList, renderEditor,
+            // applyFilters) — removendo qualquer dependência da ORDEM exata
+            // em que essas funções (e os hooks que elas disparam) executam.
+            window._autoDoChangedCount = (window._autoDoChangedCount || 0) + changedCount;
+            window._autoDoAlertDismissed = false;
+            if (typeof window.updateAutoDoAlertUI === 'function') window.updateAutoDoAlertUI();
+
             if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
             if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
             if (window.masterTagSet) {
@@ -103,6 +280,16 @@
             if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
             if (typeof window.renderEditor === 'function') window.renderEditor();
             if (typeof window.applyFilters === 'function') window.applyFilters();
+
+            // Segunda garantia: reafirma o balão depois que TODOS os renders
+            // acima (e qualquer coisa assíncrona disparada por eles) já
+            // tiverem terminado. Redundante na maioria das vezes, mas
+            // protege contra qualquer re-render futuro que porventura mexa
+            // no estado entre o início e o fim desta função.
+            if (typeof window.updateAutoDoAlertUI === 'function') {
+                setTimeout(() => window.updateAutoDoAlertUI(), 0);
+            }
+
             if (window.showAlert) window.showAlert(`Auto-Do applied to ${changedCount} image(s)!`, 'success');
         } else {
             if (manual && window.showAlert) window.showAlert('No matching tags found to automate.', 'info');
@@ -166,7 +353,7 @@
 
         const hint = document.createElement('div');
         hint.style.cssText = 'font-size:11px; color:#aaa; padding: 12px 15px; background: #151515; border-bottom: 1px solid #222; flex-shrink: 0; line-height: 1.5;';
-        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span>`;
+        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Trigger Tags are optional — leave them empty and use Require with an <b>@embedName</b> to fire a rule purely from an embed group (e.g. "any @clothing tag present → add 'clothed'").</span>`;
         wrap.appendChild(hint);
 
         const list = document.createElement('div');
@@ -183,10 +370,7 @@
         categoryRows.forEach(row => {
             const item = document.createElement('div');
             item.className = 'conflict-group-item';
-            item.style.cssText = `display:flex; align-items:center; gap:8px; background:#151515; border:1px solid #2a2a2a; border-left:3px solid ${meta.color}; border-radius:6px; padding:8px 10px;`;
-            
-            const badge = row.isDefault ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;">Original</span>' : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;">Custom</span>';
-            
+
             let keep = row.keepTag || '';
             let rems = Array.isArray(row.removeTags) ? row.removeTags : [];
             let reqs = Array.isArray(row.require) ? row.require : [];
@@ -196,38 +380,96 @@
             if (row.tags && Array.isArray(row.tags)) { keep = row.tags[0] || ''; rems = row.tags.slice(1); } 
             else if (row.target) { keep = row.fallback || ''; rems = [row.target]; reqs = Array.isArray(row.exclude) ? row.exclude : []; excs = Array.isArray(row.require) ? row.require : []; }
 
-            const modeBadge = isAutoFill ? '<span style="background:#1a3a5c; color:#4db8ff; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2a5a8c; margin-left:4px;">Fill</span>' : '<span style="background:#5c1a1a; color:#ff6060; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #7a222c; margin-left:4px;">Merge</span>';
-
-            item.innerHTML = `
-                <div style="flex:1; display:flex; flex-direction: column; gap: 6px; overflow: hidden;">
-                    <div>${badge}${modeBadge} <b style="color:${isAutoFill ? '#4db8ff' : '#ff6060'}; font-size:11px; margin-left:4px;">[${window.RulesUI.escapeHTML(rems.join(', '))}]</b> ${keep ? `<span style="color:#888; font-size:10px; margin: 0 4px;">→</span> <b style="color:#00ff99; font-size:12px;">${isAutoFill ? '+ ' : ''}${window.RulesUI.escapeHTML(keep)}</b>` : `<span style="color:#888; font-size:10px; margin-left:4px;">(Removed)</span>`}</div>
-                    <div style="font-size:11px; color:#aaa; display:flex; gap:10px; flex-wrap:wrap;">
-                        ${reqs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#00ff99;">Req:</span> ${window.RulesUI.escapeHTML(reqs.join(', '))}</span>` : ''}
-                        ${excs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#ff6060;">Exc:</span> ${window.RulesUI.escapeHTML(excs.join(', '))}</span>` : ''}
+            if (_amEditingId === row.id) {
+                /* ---------- MODO EDIÇÃO INLINE ----------
+                   O card vira um formulário (Main Tag + modo + Trigger/Require/
+                   Exclude) com Update/Cancel, no lugar do antigo prompt() de
+                   uma linha só separada por "|". */
+                item.style.cssText = `display:flex; flex-direction:column; gap:8px; background:#151515; border:1px solid ${meta.color}; border-radius:6px; padding:10px;`;
+                item.innerHTML = `
+                    <div style="font-size:11px; color:${meta.color}; font-weight:bold;">✏️ Editing rule</div>
+                    <div style="display:flex; gap:6px;">
+                        <input type="text" class="am-edit-keep" value="${window.RulesUI.escapeHTML(keep)}" placeholder="Main Tag (to add)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width:0;">
+                        <select class="am-edit-mode" style="flex:0 0 100px; font-size:11px; background:#222; border:1px solid #444; color:#fff; padding:6px;">
+                            <option value="fill" ${isAutoFill ? 'selected' : ''}>➕ Fill</option>
+                            <option value="merge" ${!isAutoFill ? 'selected' : ''}>🔀 Merge</option>
+                        </select>
                     </div>
-                </div>
-                <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
-                    <button class="btn-conflict-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
-                    <button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
-                </div>
-            `;
-            item.querySelector('.btn-conflict-edit').onclick = async () => {
-                const input = prompt(`Edit Rule:\nFormat: Main Tag | Triggers (Remove/Check) | Requires | Excludes | isAutoFill (true/false)`, `${keep} | ${rems.join(', ')} | ${reqs.join(', ')} | ${excs.join(', ')} | ${isAutoFill}`);
-                if (input === null) return;
-                const parts = input.split('|').map(s => s.trim());
-                if (parts.length < 2) { if (window.showAlert) window.showAlert('Invalid format.', 'error'); return; }
-                const data = { keepTag: parts[0], removeTags: parts[1].split(',').map(t=>t.trim()).filter(t=>t), require: parts[2] ? parts[2].split(',').map(t=>t.trim()).filter(t=>t) : [], exclude: parts[3] ? parts[3].split(',').map(t=>t.trim()).filter(t=>t) : [], isAutoFill: parts[4] === 'true' };
-                if (data.removeTags.length === 0) { if (window.showAlert) window.showAlert('Triggers cannot be empty.', 'error'); return; }
-                await window.RulesDB.updateRule(row.id, data); 
-                await window.RulesCore.applyUserRulesToGlobals();
-                window.RulesUI.refreshModalBody();
-            };
-            item.querySelector('.btn-conflict-delete').onclick = async () => {
-                if (!confirm('Remove this rule?')) return;
-                await window.RulesDB.deleteRule(row.id);
-                await window.RulesCore.applyUserRulesToGlobals();
-                window.RulesUI.refreshModalBody();
-            };
+                    <div style="display:flex; flex-direction:column; gap:2px;">
+                        <label style="font-size:10px; color:#888;">Trigger Tags <span style="color:#666;">(optional — leave empty to trigger only by Require)</span></label>
+                        <input type="text" class="am-edit-remove" value="${window.RulesUI.escapeHTML(rems.join(', '))}" placeholder="e.g. visual novel cg" style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:2px;">
+                        <label style="font-size:10px; color:#888;">Requires <span style="color:#666;">(comma-sep, or @embedName)</span></label>
+                        <input type="text" class="am-edit-req" value="${window.RulesUI.escapeHTML(reqs.join(', '))}" placeholder="e.g. @clothing" style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:2px;">
+                        <label style="font-size:10px; color:#888;">Excludes <span style="color:#666;">(comma-sep, or @embedName)</span></label>
+                        <input type="text" class="am-edit-exc" value="${window.RulesUI.escapeHTML(excs.join(', '))}" placeholder="e.g. @clothing" style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
+                    </div>
+                    <div style="display:flex; gap:6px; justify-content:flex-end;">
+                        <button class="btn-am-cancel" style="background:#222; border:1px solid #444; color:#aaa; font-size:11px; padding:6px 14px; border-radius:4px; cursor:pointer; font-weight:bold;">✖ Cancel</button>
+                        <button class="btn-am-update" style="background:#00aa66; border:none; color:#000; font-size:11px; padding:6px 14px; border-radius:4px; cursor:pointer; font-weight:bold;">✅ Update</button>
+                    </div>
+                `;
+
+                item.querySelector('.btn-am-cancel').onclick = () => {
+                    _amEditingId = null;
+                    window.RulesUI.refreshModalBody();
+                };
+
+                item.querySelector('.btn-am-update').onclick = async () => {
+                    const newKeep = item.querySelector('.am-edit-keep').value.trim();
+                    const newMode = item.querySelector('.am-edit-mode').value;
+                    const newRemove = item.querySelector('.am-edit-remove').value.split(',').map(t => t.trim()).filter(t => t);
+                    const newReq = item.querySelector('.am-edit-req').value.split(',').map(t => t.trim()).filter(t => t);
+                    const newExc = item.querySelector('.am-edit-exc').value.split(',').map(t => t.trim()).filter(t => t);
+
+                    if (newRemove.length === 0 && newReq.length === 0) {
+                        if (window.showAlert) window.showAlert('Set at least one Trigger Tag or one Require condition (e.g. @embedName).', 'warn');
+                        return;
+                    }
+
+                    const data = { keepTag: newKeep, removeTags: newRemove, require: newReq, exclude: newExc, isAutoFill: newMode === 'fill' };
+                    await window.RulesDB.updateRule(row.id, data);
+                    _amEditingId = null;
+                    await window.RulesCore.applyUserRulesToGlobals();
+                    window.RulesUI.refreshModalBody();
+                };
+
+            } else {
+                /* ---------- MODO NORMAL (exibição) ---------- */
+                const badge = row.isDefault ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;">Original</span>' : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;">Custom</span>';
+                const modeBadge = isAutoFill ? '<span style="background:#1a3a5c; color:#4db8ff; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2a5a8c; margin-left:4px;">Fill</span>' : '<span style="background:#5c1a1a; color:#ff6060; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #7a222c; margin-left:4px;">Merge</span>';
+                const triggerHtml = rems.length
+                    ? `<b style="color:${isAutoFill ? '#4db8ff' : '#ff6060'}; font-size:11px; margin-left:4px;">[${window.RulesUI.escapeHTML(rems.join(', '))}]</b>`
+                    : `<span style="color:#666; font-size:10px; margin-left:4px; font-style:italic;">[embed-only trigger]</span>`;
+
+                item.style.cssText = `display:flex; align-items:center; gap:8px; background:#151515; border:1px solid #2a2a2a; border-left:3px solid ${meta.color}; border-radius:6px; padding:8px 10px;`;
+                item.innerHTML = `
+                    <div style="flex:1; display:flex; flex-direction: column; gap: 6px; overflow: hidden;">
+                        <div>${badge}${modeBadge} ${triggerHtml} ${keep ? `<span style="color:#888; font-size:10px; margin: 0 4px;">→</span> <b style="color:#00ff99; font-size:12px;">${isAutoFill ? '+ ' : ''}${window.RulesUI.escapeHTML(keep)}</b>` : `<span style="color:#888; font-size:10px; margin-left:4px;">(Removed)</span>`}</div>
+                        <div style="font-size:11px; color:#aaa; display:flex; gap:10px; flex-wrap:wrap;">
+                            ${reqs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#00ff99;">Req:</span> ${window.RulesUI.escapeHTML(reqs.join(', '))}</span>` : ''}
+                            ${excs.length ? `<span style="background:#222; padding:2px 6px; border-radius:4px;"><span style="color:#ff6060;">Exc:</span> ${window.RulesUI.escapeHTML(excs.join(', '))}</span>` : ''}
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
+                        <button class="btn-conflict-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
+                        <button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
+                    </div>
+                `;
+                item.querySelector('.btn-conflict-edit').onclick = () => {
+                    _amEditingId = row.id;
+                    window.RulesUI.refreshModalBody();
+                };
+                item.querySelector('.btn-conflict-delete').onclick = async () => {
+                    if (!confirm('Remove this rule?')) return;
+                    await window.RulesDB.deleteRule(row.id);
+                    await window.RulesCore.applyUserRulesToGlobals();
+                    window.RulesUI.refreshModalBody();
+                };
+            }
             list.appendChild(item);
         });
         wrap.appendChild(list);
@@ -238,10 +480,10 @@
         addRow.innerHTML = `
             <div style="display:flex; gap:6px;">
                 <input type="text" class="cond-keep" placeholder="Main Tag (to add)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
-                <input type="text" class="cond-remove" placeholder="Trigger Tags (comma-sep)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                <input type="text" class="cond-remove" placeholder="Trigger Tags (optional, comma-sep)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
             </div>
             <div style="display:flex; gap:6px;">
-                <input type="text" class="cond-req" placeholder="Requires (comma-sep)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                <input type="text" class="cond-req" placeholder="Requires (comma-sep, or @embedName)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
                 <input type="text" class="cond-exc" placeholder="Excludes (e.g. @clothing)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
             </div>
             <div style="display:flex; gap:6px; justify-content: flex-end;">
@@ -252,10 +494,19 @@
         
         const doAddAutoDo = async (isAutoFill) => {
             const keep = addRow.querySelector('.cond-keep').value.trim();
-            const removeStr = addRow.querySelector('.cond-remove').value.trim();
-            if (!removeStr) { if (window.showAlert) window.showAlert('Trigger Tags are required.', 'warn'); return; }
-            const reqStr = addRow.querySelector('.cond-req').value; const excStr = addRow.querySelector('.cond-exc').value;
-            const data = { keepTag: keep, removeTags: removeStr.split(',').map(t=>t.trim()).filter(t=>t), require: reqStr.split(',').map(t=>t.trim()).filter(t=>t), exclude: excStr.split(',').map(t=>t.trim()).filter(t=>t), isAutoFill: isAutoFill };
+            const removeTags = addRow.querySelector('.cond-remove').value.split(',').map(t=>t.trim()).filter(t=>t);
+            const require = addRow.querySelector('.cond-req').value.split(',').map(t=>t.trim()).filter(t=>t);
+            const exclude = addRow.querySelector('.cond-exc').value.split(',').map(t=>t.trim()).filter(t=>t);
+
+            // Trigger Tags é opcional agora — só bloqueia se os DOIS (Trigger
+            // Tags e Requires) estiverem vazios, já que aí a regra nunca
+            // dispararia (nenhum gatilho configurado).
+            if (removeTags.length === 0 && require.length === 0) {
+                if (window.showAlert) window.showAlert('Set at least one Trigger Tag or one Require condition (e.g. @embedName).', 'warn');
+                return;
+            }
+
+            const data = { keepTag: keep, removeTags, require, exclude, isAutoFill };
             await window.RulesDB.addRule('automerge', data, false); 
             await window.RulesCore.applyUserRulesToGlobals();
             window.RulesUI.refreshModalBody();
@@ -273,12 +524,7 @@
         return renderAutoMergeSection(rows, isEnabled);
     });
 
-    /* ---------- RENOMEAR UM EMBED — ATUALIZA REFERÊNCIAS EM TODO LUGAR ----------
-       Qualquer grupo que use "@nomeAntigo" (Conflicts/Similar/Highlights via
-       tags[], Auto-Do via require[]/exclude[]) é reescrito pra "@nomeNovo".
-       Sem isso, renomear um embed quebraria silenciosamente todo mundo que
-       o referenciava — RulesCore.resolveGroupTags simplesmente ignora um
-       @nome que não bate com nenhum embed existente. */
+    /* ---------- RENOMEAR UM EMBED — ATUALIZA REFERÊNCIAS EM TODO LUGAR ---------- */
     window.renameEmbedReferencesEverywhere = async function (oldName, newName) {
         const oldRef = '@' + oldName.toLowerCase();
         const newRef = '@' + newName;
@@ -288,7 +534,7 @@
         for (const row of rows) {
             if (row.category === 'embed') continue;
 
-            if (row.category === 'conflict' || row.category === 'similar') {
+            if (row.category === 'conflict' || row.category === 'similar' || row.category === 'redundant') {
                 const tags = Array.isArray(row.tags) ? row.tags : [];
                 const newTags = tags.map(t => (String(t).toLowerCase() === oldRef) ? newRef : t);
                 if (JSON.stringify(newTags) !== JSON.stringify(tags)) {
@@ -362,10 +608,6 @@
             const el = document.createElement('div');
 
             if (_embedEditingId === emb.id) {
-                /* ---------- MODO EDIÇÃO INLINE ----------
-                   O card vira um formulário (nome + tags) com Update/Cancel,
-                   no mesmo estilo visual do "Create New Embed" logo abaixo,
-                   no lugar do antigo fluxo de 2 prompt()s. */
                 el.style.cssText = 'background:#151515; border:1px solid #4a2a8c; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;';
                 el.innerHTML = `
                     <div style="font-size:11px; color:#b890ff; font-weight:bold;">✏️ Editing @${window.RulesUI.escapeHTML(emb.name)}</div>
@@ -415,7 +657,6 @@
                 };
 
             } else {
-                /* ---------- MODO NORMAL (exibição) ---------- */
                 const badge = emb.isDefault ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444; margin-right:6px;">Original</span>' : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32; margin-right:6px;">Custom</span>';
                 el.style.cssText = 'background:#151515; border:1px solid #2a2a2a; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;';
                 el.innerHTML = `

@@ -164,9 +164,14 @@ function updateGridCounters() {
     }
 
     container.style.display = 'flex';
-    
+
+    // Only count what's actually visible right now (excludes images hidden by
+    // an active/hidden gallery tag) — otherwise the count (and therefore the
+    // pagination it implies) doesn't match what's on screen.
+    const visibleFiles = (typeof getGalleryFilteredFiles === 'function') ? getGalleryFilteredFiles() : currentFiles;
+
     if (showImg) {
-        imgDisplay.textContent = `🖼️ ${currentFiles.length} imgs`;
+        imgDisplay.textContent = `🖼️ ${visibleFiles.length} imgs`;
         imgDisplay.style.display = 'inline-block';
     } else {
         imgDisplay.style.display = 'none';
@@ -174,7 +179,7 @@ function updateGridCounters() {
 
     if (showJson) {
         let jCount = 0;
-        currentFiles.forEach(f => {
+        visibleFiles.forEach(f => {
             const base = f.name.substring(0, f.name.lastIndexOf('.')) || f.name;
             if (currentJsonFiles.has(base + '.json')) jCount++;
         });
@@ -264,6 +269,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     toggleFilenameField();
     togglePathDisplay();
     togglePathIcon();
+    if (typeof toggleViewCountEnabled === 'function') toggleViewCountEnabled();
+    if (typeof updateViewCountPauseButtonUI === 'function') updateViewCountPauseButtonUI();
     updateGridCounters();
 
     const resizerRight = document.getElementById('resizer-right');

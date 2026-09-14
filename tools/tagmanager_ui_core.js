@@ -674,43 +674,56 @@ window.processImageEntriesBatched = async function(fileEntries, dirHandle, concu
 };
 
 window.loadGallery = async function(dirHandle) {
-    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-    window.rootHandle = dirHandle;
-    window.currentImagesHandle = dirHandle;
-    window.sub1Handles.clear();
-    if(window.sub2Handles) window.sub2Handles.clear();
-    if(window.sub3Handles) window.sub3Handles.clear();
-    
-    document.getElementById('btn-refresh').style.display = 'inline-block';
-    const sel1 = document.getElementById('sub-dir-1');
-    const sel2 = document.getElementById('sub-dir-2');
-    const sel3 = document.getElementById('sub-dir-3');
-    sel1.style.display = 'none'; sel2.style.display = 'none'; if(sel3) sel3.style.display = 'none';
+    // FIX: antes, qualquer exceção lançada em QUALQUER ponto abaixo (permissão
+    // negada num instante, handle inválido, uma extensão de terceiro que
+    // quebre algo no meio do await) interrompia a função ali mesmo — o reset
+    // de imageFiles, a varredura da pasta e window.finishLoading() nunca
+    // rodavam, deixando a lista "Dataset" vazia até o usuário dar F5. Agora
+    // o corpo inteiro é protegido: em caso de erro, avisamos o usuário e
+    // ainda chamamos finishLoading() (mesmo padrão já usado em
+    // window.refreshDataset) para a UI nunca ficar num estado travado/mudo.
+    try {
+        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+        window.rootHandle = dirHandle;
+        window.currentImagesHandle = dirHandle;
+        window.sub1Handles.clear();
+        if(window.sub2Handles) window.sub2Handles.clear();
+        if(window.sub3Handles) window.sub3Handles.clear();
 
-    await window.loadDatasetConfig(dirHandle);
-    await window.loadPendingTagsStore(dirHandle);
+        document.getElementById('btn-refresh').style.display = 'inline-block';
+        const sel1 = document.getElementById('sub-dir-1');
+        const sel2 = document.getElementById('sub-dir-2');
+        const sel3 = document.getElementById('sub-dir-3');
+        sel1.style.display = 'none'; sel2.style.display = 'none'; if(sel3) sel3.style.display = 'none';
 
-    revokeImageFileUrls(imageFiles);
-    imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
+        await window.loadDatasetConfig(dirHandle);
+        await window.loadPendingTagsStore(dirHandle);
 
-    const fileEntriesRoot = [];
-    for await (const entry of dirHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            fileEntriesRoot.push(entry);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
-            window.sub1Handles.set(entry.name, entry);
+        revokeImageFileUrls(imageFiles);
+        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
+
+        const fileEntriesRoot = [];
+        for await (const entry of dirHandle.values()) {
+            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                fileEntriesRoot.push(entry);
+            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
+                window.sub1Handles.set(entry.name, entry);
+            }
         }
-    }
-    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesRoot, dirHandle);
+        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesRoot, dirHandle);
 
-    if (configNeedsSave) await window.saveDatasetConfig(dirHandle);
+        if (configNeedsSave) await window.saveDatasetConfig(dirHandle);
 
-    if (window.sub1Handles.size > 0) {
-        sel1.style.display = 'inline-block';
-        sel1.innerHTML = '<option value="">-- Root --</option>';
-        for (let name of Array.from(window.sub1Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-            sel1.innerHTML += `<option value="${name}">${name}</option>`;
+        if (window.sub1Handles.size > 0) {
+            sel1.style.display = 'inline-block';
+            sel1.innerHTML = '<option value="">-- Root --</option>';
+            for (let name of Array.from(window.sub1Handles.keys()).sort((a,b) => a.localeCompare(b))) {
+                sel1.innerHTML += `<option value="${name}">${name}</option>`;
+            }
         }
+    } catch (e) {
+        console.error('loadGallery failed:', e);
+        if (window.showAlert) window.showAlert('Error loading folder: ' + (e.message || e), 'error');
     }
     window.finishLoading();
 };
@@ -721,37 +734,44 @@ window.loadSubDir1 = async function() {
     const sel3 = document.getElementById('sub-dir-3');
     if (!val) { await window.loadGallery(window.rootHandle); return; }
 
-    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-    window.currentImagesHandle = window.sub1Handles.get(val); 
-    window.sub2Handles.clear();
-    if(window.sub3Handles) window.sub3Handles.clear();
-    sel2.style.display = 'none';
-    if(sel3) sel3.style.display = 'none';
-    sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
+    // FIX: mesmo motivo de window.loadGallery — sem isto, qualquer erro no
+    // meio do processo deixava a lista vazia até dar F5.
+    try {
+        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+        window.currentImagesHandle = window.sub1Handles.get(val);
+        window.sub2Handles.clear();
+        if(window.sub3Handles) window.sub3Handles.clear();
+        sel2.style.display = 'none';
+        if(sel3) sel3.style.display = 'none';
+        sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
 
-    await window.loadDatasetConfig(window.currentImagesHandle);
-    await window.loadPendingTagsStore(window.currentImagesHandle);
+        await window.loadDatasetConfig(window.currentImagesHandle);
+        await window.loadPendingTagsStore(window.currentImagesHandle);
 
-    revokeImageFileUrls(imageFiles);
-    imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
+        revokeImageFileUrls(imageFiles);
+        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
 
-    const fileEntriesSub1 = [];
-    for await (const entry of window.currentImagesHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            fileEntriesSub1.push(entry);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
-            window.sub2Handles.set(entry.name, entry);
+        const fileEntriesSub1 = [];
+        for await (const entry of window.currentImagesHandle.values()) {
+            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                fileEntriesSub1.push(entry);
+            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
+                window.sub2Handles.set(entry.name, entry);
+            }
         }
-    }
-    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub1, window.currentImagesHandle);
+        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub1, window.currentImagesHandle);
 
-    if (configNeedsSave) await window.saveDatasetConfig(window.currentImagesHandle);
+        if (configNeedsSave) await window.saveDatasetConfig(window.currentImagesHandle);
 
-    if (window.sub2Handles.size > 0) {
-        sel2.style.display = 'inline-block';
-        for (let path of Array.from(window.sub2Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-            sel2.innerHTML += `<option value="${path}">${path}</option>`;
+        if (window.sub2Handles.size > 0) {
+            sel2.style.display = 'inline-block';
+            for (let path of Array.from(window.sub2Handles.keys()).sort((a,b) => a.localeCompare(b))) {
+                sel2.innerHTML += `<option value="${path}">${path}</option>`;
+            }
         }
+    } catch (e) {
+        console.error('loadSubDir1 failed:', e);
+        if (window.showAlert) window.showAlert('Error loading subfolder: ' + (e.message || e), 'error');
     }
     window.finishLoading();
 };
@@ -761,36 +781,43 @@ window.loadSubDir2 = async function() {
     const sel3 = document.getElementById('sub-dir-3');
     if (!val) { await window.loadSubDir1(); return; }
 
-    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-    const targetHandle = window.sub2Handles.get(val);
-    window.currentImagesHandle = targetHandle;
-    if(window.sub3Handles) window.sub3Handles.clear();
-    if(sel3) { sel3.style.display = 'none'; sel3.innerHTML = `<option value="">-- [ ${val} ] --</option>`; }
+    // FIX: mesmo motivo de window.loadGallery — sem isto, qualquer erro no
+    // meio do processo deixava a lista vazia até dar F5.
+    try {
+        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+        const targetHandle = window.sub2Handles.get(val);
+        window.currentImagesHandle = targetHandle;
+        if(window.sub3Handles) window.sub3Handles.clear();
+        if(sel3) { sel3.style.display = 'none'; sel3.innerHTML = `<option value="">-- [ ${val} ] --</option>`; }
 
-    await window.loadDatasetConfig(targetHandle);
-    await window.loadPendingTagsStore(targetHandle);
+        await window.loadDatasetConfig(targetHandle);
+        await window.loadPendingTagsStore(targetHandle);
 
-    revokeImageFileUrls(imageFiles);
-    imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
+        revokeImageFileUrls(imageFiles);
+        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
 
-    const fileEntriesSub2 = [];
-    for await (const entry of targetHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            fileEntriesSub2.push(entry);
-        } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
-            if(window.sub3Handles) window.sub3Handles.set(entry.name, entry);
+        const fileEntriesSub2 = [];
+        for await (const entry of targetHandle.values()) {
+            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                fileEntriesSub2.push(entry);
+            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
+                if(window.sub3Handles) window.sub3Handles.set(entry.name, entry);
+            }
         }
-    }
-    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub2, targetHandle);
+        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub2, targetHandle);
 
-    if (window.sub3Handles && window.sub3Handles.size > 0 && sel3) {
-        sel3.style.display = 'inline-block';
-        for (let path of Array.from(window.sub3Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-            sel3.innerHTML += `<option value="${path}">${path}</option>`;
+        if (window.sub3Handles && window.sub3Handles.size > 0 && sel3) {
+            sel3.style.display = 'inline-block';
+            for (let path of Array.from(window.sub3Handles.keys()).sort((a,b) => a.localeCompare(b))) {
+                sel3.innerHTML += `<option value="${path}">${path}</option>`;
+            }
         }
-    }
 
-    if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+        if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+    } catch (e) {
+        console.error('loadSubDir2 failed:', e);
+        if (window.showAlert) window.showAlert('Error loading subfolder: ' + (e.message || e), 'error');
+    }
     window.finishLoading();
 };
 
@@ -798,25 +825,32 @@ window.loadSubDir3 = async function() {
     const val = document.getElementById('sub-dir-3').value;
     if (!val) { await window.loadSubDir2(); return; }
 
-    if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-    const targetHandle = window.sub3Handles.get(val);
-    window.currentImagesHandle = targetHandle;
+    // FIX: mesmo motivo de window.loadGallery — sem isto, qualquer erro no
+    // meio do processo deixava a lista vazia até dar F5.
+    try {
+        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+        const targetHandle = window.sub3Handles.get(val);
+        window.currentImagesHandle = targetHandle;
 
-    await window.loadDatasetConfig(targetHandle);
-    await window.loadPendingTagsStore(targetHandle);
+        await window.loadDatasetConfig(targetHandle);
+        await window.loadPendingTagsStore(targetHandle);
 
-    revokeImageFileUrls(imageFiles);
-    imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
+        revokeImageFileUrls(imageFiles);
+        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
 
-    const fileEntriesSub3 = [];
-    for await (const entry of targetHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-            fileEntriesSub3.push(entry);
+        const fileEntriesSub3 = [];
+        for await (const entry of targetHandle.values()) {
+            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
+                fileEntriesSub3.push(entry);
+            }
         }
-    }
-    const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub3, targetHandle);
+        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub3, targetHandle);
 
-    if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+        if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+    } catch (e) {
+        console.error('loadSubDir3 failed:', e);
+        if (window.showAlert) window.showAlert('Error loading subfolder: ' + (e.message || e), 'error');
+    }
     window.finishLoading();
 };
 

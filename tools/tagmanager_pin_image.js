@@ -181,15 +181,46 @@
         return isSameImage(window.pinnedImage, img);
     };
 
-    window.pinImage = function (img) {
+    /* ---------------------------------------------------------------------
+       FIX (preview da imagem fixada quebrando ao trocar/recarregar dataset):
+       Antes, o pin reaproveitava a MESMA blob URL (img.url) já usada pela
+       lista "Dataset" (ou pelo painel do Archive). Essa URL é revogada por
+       window.revokeImageFileUrls() toda vez que o dataset atual é recarregado
+       (trocar de pasta, refreshDataset, rename, clone etc — tagmanager_ui_core.js)
+       ou, no caso do Archive, toda vez que o modal do Archive é reaberto
+       (tagmanager_archive.js revoga window._archiveObjectUrls). Como a URL é
+       compartilhada, revogá-la ali quebrava a preview da imagem AINDA fixada
+       no painel de Pin, mesmo sem o usuário ter desafixado nada.
+
+       Agora clonamos o blob numa URL PRÓPRIA e independente (fetch da blob:
+       URL original + novo createObjectURL) — funciona tanto pra imagens da
+       lista normal quanto pra pseudo-imagens do Archive, sem precisar saber
+       de onde a imagem veio. Essa URL própria só é revogada quando a imagem
+       é desafixada ou substituída por outro pin. */
+    window._pinnedOwnUrl = window._pinnedOwnUrl || null;
+
+    window.pinImage = async function (img) {
         if (!img) return;
         if (window.isImagePinned(img)) { window.unpinImage(); return; }
 
         window._pinnedSelectedTags.clear();
+
+        let pinnedUrl = img.url;
+        try {
+            const res = await fetch(img.url);
+            const blob = await res.blob();
+            pinnedUrl = URL.createObjectURL(blob);
+        } catch (e) {
+            pinnedUrl = img.url; // fallback: melhor mostrar algo do que nada
+        }
+
+        if (window._pinnedOwnUrl) { try { URL.revokeObjectURL(window._pinnedOwnUrl); } catch (e) {} }
+        window._pinnedOwnUrl = (pinnedUrl !== img.url) ? pinnedUrl : null;
+
         window.pinnedImage = {
             baseName: img.baseName,
             name: img.name,
-            url: img.url,
+            url: pinnedUrl,
             content: img.content,
             ext: img.ext,
             parentDirHandle: img.parentDirHandle,
@@ -203,6 +234,7 @@
 
     window.unpinImage = function () {
         if (!window.pinnedImage) return;
+        if (window._pinnedOwnUrl) { try { URL.revokeObjectURL(window._pinnedOwnUrl); } catch (e) {} window._pinnedOwnUrl = null; }
         window.pinnedImage = null;
         window._pinnedSelectedTags.clear();
         renderPinnedPanel();

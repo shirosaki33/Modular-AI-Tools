@@ -565,8 +565,54 @@ window.globalRemoveTags = function(tagsToRemove) {
     if(typeof window.showAlert === 'function') window.showAlert(`Removed tags from ${changed} image(s).`, 'success');
 }
  
+/* ---------------------------------------------------------------------
+   FIX: esta função ficava vazia (stub) — o ícone 💡 ("Convert to Ghost
+   globally") já era renderizado e clicável em cada linha de
+   "All Dataset Tags" (ghostIconHtmlMaster acima), mas clicar nele não
+   fazia absolutamente nada. Agora espelha o comportamento de
+   window.convertTagToGhost (tagmanager_active_editor.js), só que
+   aplicado a TODAS as imagens do dataset (não só a seleção atual):
+   remove a tag do conteúdo salvo e a transforma numa sugestão-fantasma
+   (💡 pendingAdd) em cada imagem que a tinha, permitindo revisar/aceitar
+   de novo depois — igual ao fluxo já usado pelo Review Mode do Batch
+   Tagger e pela versão da Active Image. */
 window.globalConvertTagToGhost = async function(tagToConvert) {
-    // Hidden / unused feature to convert text to Ghost globally since text lacks the Ghost button
+    const isCustomNL = window.checkIfNL(tagToConvert);
+    if (isCustomNL || !tagToConvert) return;
+    if (typeof imageFiles === 'undefined') return;
+
+    let affectedCount = 0; const modifiedFiles = [];
+    imageFiles.forEach(img => {
+        if (img.hidden || img.type !== 'tags' || !img.content) return;
+        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+        if (!tags.includes(tagToConvert)) return;
+        tags = tags.filter(t => t !== tagToConvert);
+        img.content = tags.join(', ');
+
+        img.pendingAdd = img.pendingAdd || [];
+        if (!img.pendingAdd.includes(tagToConvert)) img.pendingAdd.push(tagToConvert);
+        if (typeof pendingTagsStore !== 'undefined') pendingTagsStore[img.baseName] = img.pendingAdd;
+        modifiedFiles.push(img); affectedCount++;
+    });
+
+    if (affectedCount === 0) {
+        if (typeof window.showAlert === 'function') window.showAlert(`Tag "${tagToConvert}" not found as a regular tag in this dataset.`, 'warn');
+        return;
+    }
+
+    if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
+    if (typeof masterSelectedTags !== 'undefined') masterSelectedTags.delete(tagToConvert);
+
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.renderImageList === 'function') window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
+
+    const handle = window.currentImagesHandle || window.rootHandle;
+    if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
+    if (typeof window.showAlert === 'function') window.showAlert(`Converted "${tagToConvert}" to ghost in ${affectedCount} image(s) (whole dataset).`, 'info');
 };
  
 window.rejectGhostTagActive = function(tag) {
