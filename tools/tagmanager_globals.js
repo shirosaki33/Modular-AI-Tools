@@ -5,7 +5,7 @@
 
 var showGhostTagsInList = false;
 
-var _hiddenImagesStoreMap = new Map();
+var _hiddenImagesStoreMap = new WeakMap();
 var _defaultHiddenSet = new Set();
 function getHiddenSetForHandle(handle) {
     if (!handle) return _defaultHiddenSet;
