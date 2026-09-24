@@ -236,8 +236,8 @@ let itemsPerPage = 50;
 
 function initDB() { return new Promise((res, rej) => { const req = indexedDB.open(dbName, 1); req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); req.onsuccess = e => res(e.target.result); req.onerror   = e => rej(e.target.error); }); }
 async function saveHandle(n, h) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(h, n); tx.oncomplete = r; }); }
-async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_') && !String(name).startsWith('autorename_') && !String(name).startsWith('galleryview_') && !String(name).startsWith('hiddentags_') && !String(name).startsWith('viewcounts_') && name !== SETTINGS_KEY) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
-async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.objectStore(storeName).delete('autorename_' + n); tx.objectStore(storeName).delete('galleryview_' + n); tx.objectStore(storeName).delete('hiddentags_' + n); tx.objectStore(storeName).delete('viewcounts_' + n); tx.oncomplete = r; }); }
+async function getHandles() { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readonly'); const store = tx.objectStore(storeName); const keysReq = store.getAllKeys(); const valsReq = store.getAll(); tx.oncomplete = () => { const result = []; for (let i = 0; i < keysReq.result.length; i++) { const name = keysReq.result[i]; if (!String(name).startsWith('path_') && !String(name).startsWith('autorename_') && !String(name).startsWith('galleryview_') && !String(name).startsWith('hiddentags_') && !String(name).startsWith('viewcounts_') && !String(name).startsWith('mergegroups_') && name !== SETTINGS_KEY) result.push({ name, handle: valsReq.result[i] }); } r(result); }; }); }
+async function deleteHandle(n) { const db = await initDB(); return new Promise(r => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).delete(n); tx.objectStore(storeName).delete('path_' + n); tx.objectStore(storeName).delete('autorename_' + n); tx.objectStore(storeName).delete('galleryview_' + n); tx.objectStore(storeName).delete('hiddentags_' + n); tx.objectStore(storeName).delete('viewcounts_' + n); tx.objectStore(storeName).delete('mergegroups_' + n); tx.oncomplete = r; }); }
 
 /* ---------------------------------------------------------------
    PERSISTED APP SETTINGS (⚙️ menu checkboxes, sorting and grid size)
@@ -384,6 +384,12 @@ async function removeDirectory() {
     if (typeof viewCountsData !== 'undefined') viewCountsData = { weekKey: '', counts: {} };
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
 
+    if (typeof mergeGroups !== 'undefined') mergeGroups.clear();
+    if (typeof memberToPrimary !== 'undefined') memberToPrimary.clear();
+    if (typeof groupActiveIndex !== 'undefined') groupActiveIndex.clear();
+    if (typeof isMergeMode !== 'undefined') isMergeMode = false;
+    document.getElementById('merge-dropdown')?.classList.remove('open');
+
     document.getElementById('btn-remove').style.display = 'none'; 
     document.getElementById('btn-path-label').style.display = 'none'; 
     document.getElementById('path-display').textContent = '';
@@ -391,6 +397,7 @@ async function removeDirectory() {
     document.getElementById('autorename-dropdown').classList.remove('open');
     document.getElementById('btn-batch-json').style.display = 'none'; 
     document.getElementById('btn-batch-tag').style.display = 'none'; 
+    document.getElementById('btn-merge').style.display = 'none';
     document.getElementById('btn-rename-top').style.display = 'none'; 
     document.getElementById('filter-tag').style.display = 'none'; 
     document.getElementById('btn-refresh').style.display = 'none'; 
@@ -428,6 +435,7 @@ async function loadGallery(dirHandle) {
     document.getElementById('btn-autorename').style.display = 'inline-block';
     document.getElementById('btn-batch-json').style.display = 'inline-block';
     document.getElementById('btn-batch-tag').style.display = 'inline-block';
+    document.getElementById('btn-merge').style.display = 'inline-block';
     document.getElementById('btn-rename-top').style.display = 'inline-block';
     document.getElementById('btn-refresh').style.display = 'inline-block';
     document.getElementById('filter-tag').style.display = 'inline-block'; 
@@ -463,6 +471,7 @@ async function loadGallery(dirHandle) {
 
     if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    if (typeof loadMergeGroupsIndex === 'function') await loadMergeGroupsIndex(currentHandle);
     if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
@@ -499,6 +508,7 @@ window.loadSubDir1 = async function() {
 
     if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    if (typeof loadMergeGroupsIndex === 'function') await loadMergeGroupsIndex(currentHandle);
     if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
@@ -535,6 +545,7 @@ window.loadSubDir2 = async function() {
 
     if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
+    if (typeof loadMergeGroupsIndex === 'function') await loadMergeGroupsIndex(currentHandle);
     if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
@@ -628,16 +639,35 @@ function renderGrid() {
 		// label.textContent = fileItem.name;
         // label.title = fileItem.name; 
         
-        if (typeof isTagMode !== 'undefined' && isTagMode || typeof isRenameMode !== 'undefined' && isRenameMode) {
-            img.onclick = () => { const cb = wrapper.querySelector('input[type="checkbox"]'); cb.checked = !cb.checked; };
+        const inSelectionMode = (typeof isTagMode !== 'undefined' && isTagMode) || (typeof isRenameMode !== 'undefined' && isRenameMode) || (typeof isMergeMode !== 'undefined' && isMergeMode);
+
+        if (inSelectionMode) {
+            img.onclick = () => { const cb = wrapper.querySelector('input[type="checkbox"]'); cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true })); };
             const cb = document.createElement('input'); 
             cb.type = 'checkbox'; 
-            cb.className = isRenameMode ? 'rename-checkbox' : 'tag-checkbox'; 
+            cb.className = isRenameMode ? 'rename-checkbox' : (isMergeMode ? 'merge-checkbox' : 'tag-checkbox'); 
             cb.dataset.filename = fileItem.name;
             wrapper.appendChild(img); wrapper.appendChild(cb);
+
+            // Modo Merge: a última imagem marcada fica destacada (borda dourada)
+            // e é ela que vira a "principal" do grupo — sem precisar de um botão à parte.
+            if (isMergeMode && typeof markedPrimaryFile !== 'undefined' && markedPrimaryFile === fileItem.name) {
+                wrapper.classList.add('merge-primary-candidate');
+            }
         } else {
             img.onclick = () => openDetailView(fileItem.url, fileItem.name);
             wrapper.appendChild(img);
+
+            // Grupo de "versões alternativas" (só na interface — ver gallery_merge_groups.js):
+            // apenas o item principal chega até aqui (os demais membros já foram
+            // removidos de arrRender por getGalleryFilteredFiles); isso adiciona o
+            // selo e as setas de pré-visualização por cima da miniatura.
+            const groupMembers = (typeof mergeGroups !== 'undefined') ? mergeGroups.get(fileItem.name) : null;
+            if (groupMembers && groupMembers.length > 1 && typeof setupMergeGroupUI === 'function') {
+                wrapper.classList.add('merge-group-item');
+                wrapper.dataset.primary = fileItem.name;
+                setupMergeGroupUI(wrapper, img, label, fileItem.name);
+            }
         }
         
         wrapper.appendChild(label);
@@ -715,6 +745,7 @@ async function openDetailView(url, fileName) {
 
     if (isEditing) toggleManualEdit();
     if (typeof isTagMode !== 'undefined' && isTagMode) cancelBatchTags();
+    if (typeof isMergeMode !== 'undefined' && isMergeMode) cancelMergeMode();
 
     document.getElementById('grid-view').style.display = 'none';
     document.getElementById('detail-view').style.display = 'flex';
@@ -722,6 +753,8 @@ async function openDetailView(url, fileName) {
     document.getElementById('resizer-right').style.display = 'flex'; 
     document.getElementById('main-image').src = url;
     document.getElementById('file-name').value = fileName;
+    if (typeof syncMergeActivePreview === 'function') syncMergeActivePreview(fileName);
+    if (typeof renderMergeVersionStrip === 'function') renderMergeVersionStrip(fileName);
     if (typeof registerImageView === 'function') registerImageView(fileName);
     if (typeof resetImageZoom === 'function') resetImageZoom(); // start every image at 100%, no leftover pan
     showAlert(null);
@@ -802,6 +835,9 @@ async function openDetailView(url, fileName) {
 function backToGrid() {
     if (isEditing) toggleManualEdit();
     if (typeof isTagMode !== 'undefined' && isTagMode) cancelBatchTags();
+    if (typeof isMergeMode !== 'undefined' && isMergeMode) cancelMergeMode();
+    const mvs = document.getElementById('merge-version-strip');
+    if (mvs) { mvs.classList.remove('active'); mvs.innerHTML = ''; }
     document.getElementById('detail-view').style.display = 'none';
     document.getElementById('right-col').style.display = 'none';
     document.getElementById('resizer-right').style.display = 'none'; 

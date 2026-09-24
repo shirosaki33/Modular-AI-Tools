@@ -192,6 +192,8 @@ async function autoRenameNewFiles(dirHandle) {
                 tagsPerFile.set(newName, tag);
             }
 
+            if (typeof updateMergeGroupFileName === 'function') updateMergeGroupFileName(oldName, newName);
+
             renamedCount++;
         } catch (error) {
             console.error(`Error during auto-rename of ${oldName}:`, error);

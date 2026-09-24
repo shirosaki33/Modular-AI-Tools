@@ -162,6 +162,22 @@ function getImageViewCounts(fileName) {
    ---------------------------------------------------------------- */
 function updateViewCountBadge(fileName) {
     if (!viewCountEnabled) return;
+
+    // Se o arquivo pertence a um grupo mesclado ("versões alternativas"), o selo
+    // do card é a SOMA de todos os membros — localiza o card pelo atributo
+    // data-primary em vez de por data-filename (que pode não ser esse arquivo
+    // específico, já que só a versão "ativa" do grupo aparece na grade).
+    const primary = (typeof memberToPrimary !== 'undefined') ? memberToPrimary.get(fileName) : null;
+    if (primary) {
+        const wrapper = document.querySelector(`.grid-item-wrapper[data-primary="${CSS.escape(primary)}"]`);
+        if (!wrapper) return;
+        if (typeof getMergeGroupViewCounts === 'function') {
+            const { week, month } = getMergeGroupViewCounts(primary);
+            paintBadgeWithCounts(getOrCreateBadge(wrapper), week, month);
+        }
+        return;
+    }
+
     const img = document.querySelector(`.grid-item[data-filename="${CSS.escape(fileName)}"]`);
     const wrapper = img ? img.closest('.grid-item-wrapper') : null;
     if (!wrapper) return;
@@ -178,10 +194,14 @@ function getOrCreateBadge(wrapper) {
     return badge;
 }
 
-function paintBadge(badge, fileName) {
-    const { week, month } = getImageViewCounts(fileName);
+function paintBadgeWithCounts(badge, week, month) {
     badge.innerHTML = `<span title="Opened ${week}x this week">\u{1F441}\uFE0F ${week}</span><span class="view-count-sep">\u00B7</span><span title="Opened ${month}x this month">\u{1F5D3}\uFE0F ${month}</span>`;
     badge.style.display = (week > 0 || month > 0) ? 'flex' : 'none';
+}
+
+function paintBadge(badge, fileName) {
+    const { week, month } = getImageViewCounts(fileName);
+    paintBadgeWithCounts(badge, week, month);
 }
 
 /** Repaints every badge currently in the grid - called after renderGrid()
@@ -197,6 +217,15 @@ function renderAllViewCountBadges() {
         const img = wrapper.querySelector('.grid-item');
         const fname = img?.dataset.filename;
         if (!fname) return;
+
+        // Card de grupo mesclado: soma as visualizações de todos os membros,
+        // não só da versão sendo pré-visualizada no momento (fname).
+        const primary = wrapper.dataset.primary;
+        if (primary && typeof getMergeGroupViewCounts === 'function') {
+            const { week, month } = getMergeGroupViewCounts(primary);
+            paintBadgeWithCounts(getOrCreateBadge(wrapper), week, month);
+            return;
+        }
 
         paintBadge(getOrCreateBadge(wrapper), fname);
     });

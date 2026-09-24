@@ -308,6 +308,15 @@ function getGalleryFilteredFiles(files) {
             });
         }
     }
+
+    // Grupos de "versões alternativas" (só na interface — ver gallery_merge_groups.js):
+    // some com os membros que não são o principal do grupo, exceto enquanto o
+    // usuário está no modo de seleção para criar/editar um grupo (isMergeMode),
+    // onde todas as imagens precisam continuar selecionáveis individualmente.
+    if (typeof isMergeMode === 'undefined' || !isMergeMode) {
+        if (typeof getMergeFilteredFiles === 'function') arr = getMergeFilteredFiles(arr);
+    }
+
     return arr;
 }
 

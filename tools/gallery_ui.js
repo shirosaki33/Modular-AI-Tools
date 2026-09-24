@@ -245,6 +245,12 @@ document.addEventListener('click', (e) => {
         dropdownTag.classList.remove('open');
     }
     
+    const dropdownMerge = document.getElementById('merge-dropdown');
+    const btnMerge = document.getElementById('btn-merge');
+    if (dropdownMerge && dropdownMerge.classList.contains('open') && !dropdownMerge.contains(e.target) && !btnMerge.contains(e.target) && !(typeof isMergeMode !== 'undefined' && isMergeMode)) {
+        dropdownMerge.classList.remove('open');
+    }
+
     const dropdownPath = document.getElementById('path-dropdown'); 
     const btnPath = document.getElementById('btn-path-label'); 
     if (dropdownPath && dropdownPath.classList.contains('open') && !dropdownPath.contains(e.target) && !btnPath.contains(e.target)) {
@@ -309,7 +315,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 /* ================================================================
    BLOCK 1B — BATCH SELECTION HELPERS (tag & rename checkboxes)
    ================================================================ */
-const SELECTION_COUNT_MAP = { 'tag-checkbox': 'tag-selection-count', 'rename-checkbox': 'rename-selection-count' };
+const SELECTION_COUNT_MAP = { 'tag-checkbox': 'tag-selection-count', 'rename-checkbox': 'rename-selection-count', 'merge-checkbox': 'merge-selection-count' };
 
 function selectAllCheckboxes(className) {
     document.querySelectorAll('.' + className).forEach(cb => cb.checked = true);
@@ -333,6 +339,18 @@ function updateSelectionCount(className) {
 document.addEventListener('change', (e) => {
     if (e.target.classList && e.target.classList.contains('tag-checkbox')) updateSelectionCount('tag-checkbox');
     if (e.target.classList && e.target.classList.contains('rename-checkbox')) updateSelectionCount('rename-checkbox');
+    if (e.target.classList && e.target.classList.contains('merge-checkbox')) {
+        updateSelectionCount('merge-checkbox');
+        if (typeof markedPrimaryFile !== 'undefined') {
+            const fname = e.target.dataset.filename;
+            if (e.target.checked) {
+                markedPrimaryFile = fname;
+            } else if (markedPrimaryFile === fname) {
+                markedPrimaryFile = null;
+            }
+            if (typeof highlightMergePrimaryCandidate === 'function') highlightMergePrimaryCandidate();
+        }
+    }
 });
 
 /* ================================================================
@@ -585,6 +603,7 @@ async function deleteCurrentImage() {
         try { await currentHandle.removeEntry(baseName + '.json'); } catch(e) {}
         
         tagsPerFile.delete(fname);
+        if (typeof removeFromMergeGroup === 'function') removeFromMergeGroup(fname);
         currentFiles = currentFiles.filter(f => f.name !== fname);
         currentJsonFiles.delete(baseName + '.json'); // Remove from counter
         

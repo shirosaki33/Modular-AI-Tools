@@ -203,6 +203,10 @@ async function renameSingleImage() {
             tagsPerFile.set(newName, tag);
         }
 
+        // Update merge-group membership (interface-only "alternate versions")
+        if (typeof updateMergeGroupFileName === 'function') updateMergeGroupFileName(oldName, newName);
+        if (typeof renderMergeVersionStrip === 'function') renderMergeVersionStrip(newName);
+
         document.getElementById('file-name').value = newName;
 
         // Update the active thumbnail
@@ -299,6 +303,8 @@ async function batchRenameImages(checkboxes) {
                 tagsPerFile.delete(oldName);
                 tagsPerFile.set(newName, tag);
             }
+
+            if (typeof updateMergeGroupFileName === 'function') updateMergeGroupFileName(oldName, newName);
 
             count++;
         } catch (error) {
