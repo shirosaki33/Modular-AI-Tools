@@ -317,6 +317,45 @@
         #btn-rename-top:hover, #btn-settings:hover, #btn-sort:hover, #btn-batch-tag:hover { color: #00ff99; border-color:#00ff99; }
         #btn-batch-tag.active { background: #00aa66; color: #000; border-color: #00cc88; }
         #btn-rename-top.active { background: #b890ff; color: #000; border-color: #9060cc; }
+        #btn-merge.active { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
+
+        /* === MERGE GROUPS ("alternate versions" — interface only, no files are touched) === */
+        .merge-badge {
+            position: absolute; top: 8px; left: 8px; z-index: 9;
+            background: rgba(0, 0, 0, 0.8); border: 1px solid #4a2a8c; color: #b890ff;
+            font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 10px;
+            pointer-events: none; white-space: nowrap;
+        }
+        .merge-nav-btn {
+            position: absolute; top: 50%; transform: translateY(-50%); z-index: 9;
+            background: rgba(0,0,0,0.7); border: 1px solid #555; color: #ddd;
+            width: 24px; height: 24px; border-radius: 50%; display: none;
+            align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0;
+        }
+        .grid-item-wrapper.merge-group-item:hover .merge-nav-btn { display: flex; }
+        .merge-nav-btn.prev { left: 6px; }
+        .merge-nav-btn.next { right: 6px; }
+        .merge-nav-btn:hover { background: #7a4fd1; border-color: #b890ff; color: #fff; }
+        .grid-item-wrapper.merge-group-item { border-color: rgba(184, 144, 255, 0.35); }
+
+        /* Destaque na imagem marcada (última checada) durante a seleção do merge:
+           é ela que vira a "principal" — a que fica visível para o grupo. */
+        .grid-item-wrapper.merge-primary-candidate {
+            border-color: #ffcc66 !important;
+            box-shadow: 0 0 0 2px rgba(255, 204, 102, 0.4);
+        }
+
+        #merge-version-strip {
+            display: none; position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 6; background: rgba(0,0,0,0.75); border: 1px solid #4a2a8c; border-radius: 8px;
+            padding: 6px; gap: 6px; align-items: center; max-width: 90%; overflow-x: auto;
+        }
+        #merge-version-strip.active { display: flex; }
+        .merge-version-thumb {
+            width: 34px; height: 34px; object-fit: cover; border-radius: 5px; cursor: pointer;
+            border: 2px solid transparent; opacity: 0.6; transition: 0.15s; flex-shrink: 0;
+        }
+        .merge-version-thumb:hover, .merge-version-thumb.active { opacity: 1; border-color: #b890ff; }
 
         .settings-dropdown {
             display: none; position: absolute; top: 55px; right: 20px; background: #111827; border: 1px solid #263b5a; border-radius: 8px;
@@ -367,6 +406,7 @@
         <button id="btn-viewcount-pause" onclick="toggleViewCountPause()" title="Weekly View Counter: counting views (click to pause)" class="active">👁️</button>
         
         <button id="btn-batch-tag" onclick="toggleBatchTagMode()" title="Add Tag to Multiple Images" style="display:none;">🏷️ Tag</button>
+        <button id="btn-merge" onclick="toggleMergeMode()" title="Merge images as alternate versions of one another (interface only — files are never touched)" style="display:none;">🔗 Merge</button>
         <button id="btn-view-mode" onclick="toggleViewMode()" title="Group images by tag (show tag galleries)">🏷️ Show Tags</button>
         <button id="btn-sort" onclick="toggleSort()" title="Sort Gallery">⬇️ A-Z</button>
         <button id="btn-settings" onclick="toggleSettings()" title="Settings">⚙️</button>
@@ -387,6 +427,25 @@
     </div>
     <div style="display: flex; gap: 5px;">
         <button id="tag-cancel-btn" onclick="cancelBatchTags()" style="background: #333; color: #ccc; border: 1px solid #444; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="merge-dropdown" class="settings-dropdown" style="right: 210px; width: 260px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">🔗 Merge as Alternate Versions:</span>
+    <div id="merge-select-controls" style="display:flex; gap: 5px; margin: 5px 0;">
+        <button type="button" onclick="selectAllCheckboxes('merge-checkbox')" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; flex: 1; padding: 6px; font-size: 11px;">Select All</button>
+        <button type="button" onclick="clearAllCheckboxes('merge-checkbox')" style="background: #333; color: #ccc; border: 1px solid #444; flex: 1; padding: 6px; font-size: 11px;">Clear</button>
+    </div>
+    <div id="merge-selection-count" style="display:none; font-size: 11px; color: #888; margin-bottom: 5px; text-align: center;"></div>
+    <div style="display: flex; gap: 5px; margin-bottom: 8px;">
+        <button onclick="confirmMergeSelected()" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; flex: 1;" title="The last image you check stays highlighted and becomes the one shown in the grid; otherwise the first one (by current sort) is used">Merge Selected</button>
+    </div>
+    <div style="display: flex; gap: 5px; margin-bottom: 8px;">
+        <button id="btn-manage-merge-groups" type="button" onclick="toggleMergeGroupsList()" style="background: #111; color: #b890ff; border: 1px solid #4a2a8c; flex: 1; padding: 6px; font-size: 11px;" title="Show/hide the list of existing groups to ungroup them">📂 Manage Groups (0)</button>
+    </div>
+    <div id="merge-groups-list" style="display:none; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto; margin-bottom:8px; border-top:1px solid #333; padding-top:8px;"></div>
+    <div style="display: flex; gap: 5px;">
+        <button onclick="cancelMergeMode()" style="background: #333; color: #ccc; border: 1px solid #444; flex: 1;">Close</button>
     </div>
 </div>
 
@@ -472,6 +531,7 @@
             <div id="main-image-container">
                 <button id="btn-layout" onclick="toggleThumbPosition()" title="Toggle Thumbnail Layout">◧</button>
                 <button id="btn-close" onclick="backToGrid()">X</button>
+                <div id="merge-version-strip"></div>
                  <img id="main-image" src="">
                 <div id="image-zoom-controls">
                     <button onclick="zoomImagePopout(-0.3)" title="Zoom Out">➖</button>
@@ -582,6 +642,7 @@
 
 <script src="tools/quick_links.js"></script>
 <script src="tools/gallery_tag_system.js"></script>
+<script src="tools/gallery_merge_groups.js"></script>
 <script src="tools/gallery_path_saver.js"></script>
 <script src="tools/gallery_file_manager.js"></script>
 <script src="tools/gallery_auto_rename.js"></script>
