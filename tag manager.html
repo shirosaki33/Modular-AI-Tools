@@ -155,6 +155,7 @@
         .btn-action.run { background: #00aa66; color: #000; border-color: #00cc88; margin-top: 15px;}
         .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
         
+        #model-select, #hardware-select, #vlm-model-select, #ollama-model-select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
         .progress-box { width: 100%; background: #111; border: 1px solid #333; border-radius: 6px; overflow: hidden; display: none; height: 12px; margin-top: 15px;}
         .progress-fill { width: 0%; height: 100%; background: #00ff99; transition: 0.2s; }
         .progress-text { font-size: 11px; text-align: center; margin-top: 5px; color: #aaa; display: none; font-weight: bold;}
@@ -359,7 +360,6 @@
             <div class="panel-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span>Active Image</span> <span id="active-tag-count" style="background: #333; padding: 2px 6px; border-radius: 4px; font-size: 11px;">0</span>
-                    <button id="btn-toggle-image-mode" class="btn-save-local" onclick="window.toggleImageMode()" style="display:none; background: transparent; border: 1px solid #4a2a8c; color: #b890ff; font-size: 11px; padding: 2px 6px; cursor: pointer; transition: 0.2s;" title="Switch Mode">Mode: Tag</button>
                 </div>
                 <div style="display: flex; gap: 6px;">
                     <button id="btn-filter-active-ghosts" class="btn-save-local" onclick="window.toggleActiveGhostFilter()" style="display:none; background:transparent; border: 1px solid #00aa66; color:#00ff99;" title="Show Only Ghost Tags">💡</button>
@@ -375,6 +375,7 @@
             <div id="active-selection-actions" class="selection-actions">
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('active')">🔄 Replace</button>
                 <button class="btn-multi btn-nl-edit" onclick="window.convertToCustomNL()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">🪄 Convert to NL</button>
+                <button class="btn-multi btn-edit-nl" onclick="window.editSelectedNLTag()" style="display:none; background: #1a3a5c; border-color: #2a5a8c; color: #4db8ff;" title="Rewrite this NL tag (same as the ✏️ pencil)">✏️ Edit</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedActiveTags()">🗑️ Remove Selected</button>
                 <button class="btn-multi" style="background: #333; color: #aaa; border-color: #444;" onclick="clearActiveSelection()">Cancel</button>
             </div>
@@ -481,6 +482,7 @@
                 <select id="batch-mode-select" onchange="window.updateBatchUI()" style="width: 100%; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; font-size: 13px;">
                     <option value="tags">🏷️ Tagger (ONNX)</option>
                     <option value="nl-vlm">🖥️ Natural Language (Offline VLMs)</option>
+                    <option value="ollama-vision">🦙 Ollama (Auto-detected Vision Models)</option>
                 </select>
             </div>
             <div style="flex:1;">
@@ -501,8 +503,8 @@
             <div style="background: #0d0d0d; padding: 15px; border-radius: 8px; border: 1px solid #222; margin-bottom: 15px;">
                 <label class="meta-label">1. Tagger Model Setup</label>
                 <div style="display: flex; gap: 10px;">
-                    <button id="btn-set-taggers" onclick="window.selectTaggersFolder()" style="flex: 1;">📁 Set Directory</button>
-                    <select id="model-select" onchange="window.loadSelectedModelData()" style="flex: 2;">
+                    <button id="btn-set-taggers" onclick="window.selectTaggersFolder()" style="flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">📁 Set Directory</button>
+                    <select id="model-select" onchange="window.loadSelectedModelData()" style="flex: 2 1 0; min-width: 0; width: 0; max-width: 100%; text-overflow: ellipsis; box-sizing: border-box;">
                         <option value="">-- Set Model Folder First --</option>
                     </select>
                 </div>
@@ -548,6 +550,43 @@
                 <label class="meta-label">Task Prompt (Model Input)</label>
                 <textarea id="batch-vlm-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
                 <span id="vlm-prompt-help" style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM/JoyCaption: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
+            </div>
+        </div>
+
+        <div id="batch-ollama-settings" style="display: none;">
+            <div style="background: #001a2a; border: 1px solid #0066aa; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #66ccff; font-size: 12px; line-height: 1.5;">
+                <b>🦙 Runs via local <a href="https://ollama.com" target="_blank" style="color:#9ecfff;">Ollama</a>:</b> nothing is downloaded by the browser. The list below is filled automatically with the models you already have installed that support <b>vision</b> (Qwen-VL, LLaVA, Gemma 3, Llama 3.2 Vision, MiniCPM-V, JoyCaption...). Install new ones with e.g. <code>ollama pull qwen2.5vl:7b</code> and press 🔄.
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="meta-label">Ollama URL</label>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="ollama-url" value="http://127.0.0.1:11434" onchange="window.onOllamaUrlChanged()" style="flex:1; min-width:0;">
+                    <button type="button" id="btn-ollama-refresh" onclick="window.refreshOllamaModels()" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c;" title="Scan Ollama for installed vision models">🔄 Refresh Models</button>
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="meta-label">Vision Model (installed in Ollama)</label>
+                <select id="ollama-model-select" onchange="window.onOllamaModelChanged()" style="width: 100%; box-sizing: border-box;">
+                    <option value="">-- Click Refresh Models --</option>
+                </select>
+                <span id="ollama-model-status" style="font-size: 11px; color: #888; display: block; margin-top: 6px;"></span>
+            </div>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <div style="flex:2;">
+                    <label class="meta-label">Output As</label>
+                    <select id="ollama-output-mode" onchange="window.updateOllamaPromptDefault()" style="width: 100%; box-sizing: border-box;">
+                        <option value="nl">📝 Natural Language caption (saved as NL: tag)</option>
+                        <option value="tags">🏷️ Booru-style tags (merged into existing tags)</option>
+                    </select>
+                </div>
+                <div style="flex:1;">
+                    <label class="meta-label">Max Image Side (px)</label>
+                    <input type="number" id="ollama-max-side" value="1024" min="0" step="64" style="width: 100%; box-sizing: border-box;" title="Images are downscaled before sending (0 = original size). Smaller = faster.">
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="meta-label">Task Prompt (Model Input)</label>
+                <textarea id="ollama-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
             </div>
         </div>
 
@@ -618,6 +657,9 @@
                 <li style="margin-bottom: 8px;"><b>JoyCaption Beta (via local Ollama):</b> best for concept art, but doesn't run in the browser — it sends each image to <a href="https://ollama.com" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 Ollama</a> running on your machine. Setup: install Ollama, run <code>ollama pull user-v4/joycaption-beta</code>, and leave Ollama running (listening on <code>http://127.0.0.1:11434</code>) before starting the batch. Nothing is downloaded/cached by the browser for this model, so the "Clear Model Cache" button doesn't apply to it.</li>
             </ul>
             
+            <h4 style="color: #66ccff; margin-bottom: 5px; margin-top: 15px;">🦙 Ollama (Auto-detected Vision Models)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">Third processing mode. It asks your local Ollama server which installed models support vision and lists only those, so you never have to type model names. Works with Qwen2.5-VL / Qwen3-VL, LLaVA, Gemma 3, Llama 3.2 Vision, MiniCPM-V, etc. Choose <b>Natural Language</b> for a caption or <b>Booru-style tags</b> to get a comma-separated tag list merged into the existing tags. If the list is empty or the connection fails, make sure Ollama is running (and, if needed, started with <code>OLLAMA_ORIGINS=*</code>).</p>
+
             <h4 style="color: #ff6060; margin-bottom: 5px; margin-top: 15px;">⚠️ Performance & Execution Mode</h4>
             <ul style="padding-left: 20px; margin-bottom: 15px;">
                 <li style="margin-bottom: 8px;"><b>Auto Captioning (Heavy Processing):</b> Always run this tool via <b>Localhost</b> (e.g., using the provided .bat file or Live Server) or use the hosted <b>Online version</b>. This unlocks your CPU multi-threading and WebGPU acceleration.</li>
@@ -669,6 +711,9 @@
 <script src="tools/tagmanager_danbooru_panel.js"></script>
 <script src="tools/tagmanager_duplicate_name_alert.js"></script>
 <script src="tools/tagmanager_rule_embed_quickadd.js"></script>
+<script src="tools/tagmanager_bucket_check.js"></script>
+<script src="tools/tagmanager_clean_dataset.js"></script>
+<script src="tools/tagmanager_removed_history.js"></script>
 
 </body>
 </html>

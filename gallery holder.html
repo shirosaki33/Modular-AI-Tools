@@ -491,6 +491,7 @@
     <label><input type="checkbox" id="toggle-path-icon" onchange="togglePathIcon(); saveSettingsToDB();"> Show Path Button</label>
     <label><input type="checkbox" id="toggle-count-field" onchange="updateGridCounters(); saveSettingsToDB();" checked> Show Image Count</label>
     <label><input type="checkbox" id="toggle-json-count-field" onchange="updateGridCounters(); saveSettingsToDB();"> Show JSON Count</label>
+    <label><input type="checkbox" id="toggle-random-button" onchange="toggleRandomButtonSetting()" checked> Show Random Button</label>
     <label><input type="checkbox" id="toggle-viewcount-enabled" onchange="toggleViewCountEnabled(); saveSettingsToDB();" checked> Enable View Counter</label>
     <div id="viewcount-extra-settings" style="display:flex; flex-direction:column; gap:10px; padding: 8px 0 0 4px; border-top: 1px solid #263b5a; margin-top: 2px;">
         <div style="display:flex; flex-direction:column; gap:4px;">
@@ -553,6 +554,7 @@
         </div>
 
         <div id="pagination-controls" style="position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: none; background: rgba(15, 15, 15, 0.85); border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 14px; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
+            <button id="btn-random" onclick="openRandomImage()" style="display:none; padding: 5px 12px; font-size: 12px; background:#2f1a5c; color:#b890ff; border:1px solid #4a2a8c;" title="Open a random image from this folder (includes images hidden by an active tag gallery)">🎲 Random</button>
             <button id="btn-page-prev" onclick="changePage(-1)" style="padding: 5px 12px; font-size: 12px;">◀ </button>
             <span id="page-info" style="color: #9ecfff; font-size: 13px; font-weight: bold; white-space: nowrap;">Page 1 of 1</span>
             <button id="btn-page-next" onclick="changePage(1)" style="padding: 5px 12px; font-size: 12px;"> ▶</button>
@@ -647,6 +649,7 @@
 <script src="tools/gallery_file_manager.js"></script>
 <script src="tools/gallery_auto_rename.js"></script>
 <script src="tools/gallery_view_counter.js"></script>
+<script src="tools/gallery_random_picker.js"></script>
 
 <script src="tools/gallery_ui.js"></script>
 <script src="tools/gallery_core.js"></script>
