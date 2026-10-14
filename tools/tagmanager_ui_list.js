@@ -3,6 +3,23 @@
    Handles the left panel, image rendering, multi-select, hide, and renames.
 ========================================================================= */
 
+window.getCaptionCounts = function(img) {
+    let tags = 0, nl = 0;
+    if (img.content) {
+        img.content.split(',').forEach(t => {
+            const c = t.trim();
+            if (!c) return;
+            if (window.checkIfNL(c)) nl++; else tags++;
+        });
+    }
+    return { tags, nl };
+};
+window.buildTypeBadge = function(img) {
+    if (!img.hasFile) return 'Empty';
+    const c = window.getCaptionCounts(img);
+    return `🏷️ Tags (${c.tags}) · 📝 NL (${c.nl}) (.${img.ext || 'txt'})`;
+};
+
 window.cycleImageFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
     const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
@@ -50,11 +67,11 @@ window.renderImageList = function() {
 
         const div = document.createElement('div');
         let currentExt = img.ext || 'txt';
-        let typeBadge = img.hasFile ? (img.type === 'nl' ? `📝 NL (.${currentExt})` : `🏷️ Tags (.${currentExt})`) : 'Empty';
+        let typeBadge = window.buildTypeBadge(img);
         const suggestCount = (img.pendingAdd && img.pendingAdd.length) ? img.pendingAdd.length : 0;
         const suggestBadge = suggestCount > 0 ? `<span class="suggest-badge">💡${suggestCount}</span>` : '';
         
-        div.className = `list-item ${img.hasFile ? (img.type === 'nl' ? 'is-nl' : 'has-data') : ''}`;
+        div.className = `list-item ${img.hasFile ? 'has-data' : ''}`;
         div.innerHTML = `
             <div class="list-item-thumb-wrap">
                 <img src="${img.url}">
@@ -62,7 +79,7 @@ window.renderImageList = function() {
             </div>
             <div class="list-item-info">
                 <div class="list-item-name">${img.name}</div>
-                <div class="list-item-status">${typeBadge}${suggestBadge}<span class="list-item-resolution"></span></div>
+                <div class="list-item-status"><span class="list-item-type">${typeBadge}</span>${suggestBadge}<span class="list-item-resolution"></span></div>
             </div>
         `;
         div.onclick = (e) => window.handleListClick(index, e.shiftKey, e.ctrlKey || e.metaKey);
@@ -153,10 +170,11 @@ window.updateListSelectionVisuals = function() {
 
 window.refreshListStatus = function() {
     imageFiles.forEach(img => {
-        if(img.hasFile && img.element) {
-            img.element.className = img.type === 'nl' ? 'list-item is-nl' : 'list-item has-data';
-            img.element.querySelector('.list-item-status').textContent = img.type === 'nl' ? `📝 NL (.${img.ext})` : `🏷️ Tags (.${img.ext})`;
-        }
+        if (!img.element) return;
+        const span = img.element.querySelector('.list-item-type');
+        if (span) span.textContent = window.buildTypeBadge(img);
+        if (img.hasFile) img.element.classList.add('has-data');
+        img.element.classList.remove('is-nl');
     });
     window.updateListSelectionVisuals();
 }

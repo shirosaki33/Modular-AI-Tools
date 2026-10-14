@@ -511,39 +511,10 @@
         window.updateSuggestFilterVisibility.__pendingRemoveOverridden = true;
     }
 
-    // Intercepta a função Discard Suggestions para também esvaziar a lista vermelha.
-    // FIX: window.discardAllSuggestions original é `async` (salva em disco antes de
-    // terminar) — o wrapper antigo era síncrono e NÃO aguardava essa chamada, então
-    // podia zerar pendingRemove/re-renderizar a UI antes do discard original de
-    // verdade ter terminado de persistir no disco. Agora o wrapper também é async
-    // e usa `await`, preservando a ordem correta das operações.
-    function installDiscardSuggestionsWrap() {
-        if (typeof window.discardAllSuggestions === 'function' && !window.discardAllSuggestions.__pendingRemoveWrapped) {
-            const origDiscard = window.discardAllSuggestions;
-            const wrappedDiscard = async function () {
-                // Chama a lógica original (que limpa as verdes) e aguarda terminar
-                const result = await origDiscard.apply(this, arguments);
-
-                // Adiciona nossa lógica para as vermelhas
-                if (typeof imageFiles !== 'undefined') {
-                    imageFiles.forEach(img => {
-                        img.pendingRemove = [];
-                    });
-                }
-                window.pendingRemoveStore = {};
-                window.masterSelectedPendingRemove.clear();
-                persistPendingRemove();
-
-                // Força re-render das listas para sumir com as bordas vermelhas na hora
-                if (typeof window.renderEditor === 'function') window.renderEditor();
-                if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-
-                return result;
-            };
-            wrappedDiscard.__pendingRemoveWrapped = true;
-            window.discardAllSuggestions = wrappedDiscard;
-        }
-    }
+    // O descarte de sugestões (verdes 💡 + vermelhas 🚫) agora é feito de uma vez só
+    // direto em window.discardAllSuggestions / discardActiveSuggestions (tagmanager_ui_core.js).
+    // Mantido como no-op para não quebrar a chamada abaixo.
+    function installDiscardSuggestionsWrap() {}
 
     function installRenderHooks() {
         if (typeof window.registerPostRenderImageList === 'function') {

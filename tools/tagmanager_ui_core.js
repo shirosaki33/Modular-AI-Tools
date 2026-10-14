@@ -339,6 +339,7 @@ window.saveImageToDisk = async function(img) {
         await writable.close();
 
         if (typeof currentJsonFiles !== 'undefined' && formatToUse === 'json') currentJsonFiles.add(fileName);
+        if (datasetConfig[img.baseName]) datasetConfig[img.baseName].type = 'tags';
         window.markClean(img);
         return true;
     } catch (e) {
@@ -554,8 +555,15 @@ window.updateBatchUI = function() {
     const mode = modeSelect.value;
     document.getElementById('batch-tag-settings').style.display = 'none';
     document.getElementById('batch-vlm-settings').style.display = 'none';
+    const ollamaBox = document.getElementById('batch-ollama-settings');
+    if (ollamaBox) ollamaBox.style.display = 'none';
     if (mode === 'tags') document.getElementById('batch-tag-settings').style.display = 'block';
     else if (mode === 'nl-vlm') document.getElementById('batch-vlm-settings').style.display = 'block';
+    else if (mode === 'ollama-vision') {
+        if (ollamaBox) ollamaBox.style.display = 'block';
+        // Escaneia o Ollama automaticamente ao entrar neste modo (silencioso se já tiver lista)
+        if (typeof window.refreshOllamaModels === 'function') window.refreshOllamaModels(true);
+    }
     if(typeof window.checkBatchReadyState === 'function') window.checkBatchReadyState();
 }
 
@@ -881,29 +889,31 @@ window.processSingleImage = async function(entry, parentHandle, configNeedsSave)
         } catch(e) {}
     }
 
-    let type = "tags";
-    if (datasetConfig[baseName] && datasetConfig[baseName].type) {
-        type = datasetConfig[baseName].type;
-        ext = datasetConfig[baseName].ext || ext; 
-    } else {
-        type = window.detectFormat(content);
-        configNeedsSave = true; 
-    }
-
+    const cfg = datasetConfig[baseName];
+    if (cfg && cfg.ext) ext = cfg.ext;
     if (!datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
 
+    // Legado: arquivos do antigo "modo NL" (parágrafo inteiro) viram UMA tag NL.
+    // Vírgulas viram "，" para não quebrar o split(',') do modo Tag.
+    const legacyNL = !!content.trim() && (
+        (cfg && cfg.type === 'nl') ||
+        (!cfg && !content.includes('NL:') && window.detectFormat(content) === 'nl')
+    );
+    if (legacyNL) {
+        content = content.replace(/\s*[\r\n]+\s*/g, ' ').replace(/,/g, '，').trim();
+        datasetConfig.manualNLRules[content] = 'nl';
+    }
+    if (!cfg) configNeedsSave = true;
+
+    const type = 'tags'; // modo NL por imagem foi removido: tudo é Tag
     datasetConfig[baseName] = datasetConfig[baseName] || {};
-    datasetConfig[baseName].type = type;
+    datasetConfig[baseName].type = legacyNL ? 'nl' : 'tags'; // marcador legado até salvar
     datasetConfig[baseName].ext = ext;
 
-    if (type === 'tags' && content.trim()) {
-        content.split(',').forEach(t => { if(t.trim()) masterTagSet.add(t.trim()); });
-    } else if (type === 'nl' && content.trim()) {
-        masterTagSet.add(content.trim());
-    }
-    
+    if (content.trim()) content.split(',').forEach(t => { if (t.trim()) masterTagSet.add(t.trim()); });
+
     const isHidden = window.hiddenImagesStore.has(baseName);
-    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden, dirty: false });
+    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden, dirty: legacyNL });
     return configNeedsSave;
 }
 
@@ -1174,17 +1184,23 @@ window.updateSuggestFilterVisibility = function() {
     if (discardBtn) discardBtn.style.display = anyPending ? 'inline-flex' : 'none';
 };
 
+function _imgHasPendingAny(img) {
+    return !!img && ((img.pendingAdd && img.pendingAdd.length > 0) || (img.pendingRemove && img.pendingRemove.length > 0));
+}
+
+// Descarta TUDO de uma vez: sugestões 💡 (positivas) e 🚫 (não detectadas pelo tagger).
 window.discardActiveSuggestions = async function() {
     if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
-    const anyPending = Array.from(selectedIndices).some(idx => imageFiles[idx] && imageFiles[idx].pendingAdd && imageFiles[idx].pendingAdd.length > 0);
-    if (!anyPending) return;
-    if (!confirm("Discard pending tag suggestions for the selected image(s)? This cannot be undone.")) return;
+    if (!Array.from(selectedIndices).some(idx => _imgHasPendingAny(imageFiles[idx]))) return;
+    if (!confirm("Discard ALL pending suggestions (new tags 💡 and not-detected tags 🚫) for the selected image(s)? This cannot be undone.")) return;
 
     selectedIndices.forEach(idx => {
         const img = imageFiles[idx];
         if (img) {
             img.pendingAdd = [];
+            img.pendingRemove = [];
             if (typeof pendingTagsStore !== 'undefined') delete pendingTagsStore[img.baseName];
+            if (window.pendingRemoveStore) delete window.pendingRemoveStore[img.baseName];
         }
     });
 
@@ -1199,19 +1215,23 @@ window.discardActiveSuggestions = async function() {
 };
 
 window.discardAllSuggestions = async function() {
-    const anyPending = imageFiles.some(img => img.pendingAdd && img.pendingAdd.length > 0 && !img.hidden);
-    if (!anyPending) return;
-    if (!confirm("Discard ALL pending tag suggestions? This cannot be undone.")) return;
+    if (!imageFiles.some(img => !img.hidden && _imgHasPendingAny(img))) return;
+    if (!confirm("Discard ALL pending suggestions (new tags 💡 and not-detected tags 🚫)? This cannot be undone.")) return;
 
-    imageFiles.forEach(img => { if (!img.hidden) img.pendingAdd = []; });
+    imageFiles.forEach(img => { if (!img.hidden) { img.pendingAdd = []; img.pendingRemove = []; } });
     pendingTagsStore = {};
-    imageFiles.forEach(img => { if (img.pendingAdd && img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd; });
+    window.pendingRemoveStore = {};
+    imageFiles.forEach(img => {
+        if (img.pendingAdd && img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd;
+        if (img.pendingRemove && img.pendingRemove.length > 0) window.pendingRemoveStore[img.baseName] = img.pendingRemove;
+    });
     masterSelectedGhostTags.clear();
+    if (window.masterSelectedPendingRemove) window.masterSelectedPendingRemove.clear();
 
     const handle = window.currentImagesHandle || window.rootHandle;
     if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
     window.showGhostTagsInList = false;
-    
+
     if (typeof window.renderImageList === 'function') window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();

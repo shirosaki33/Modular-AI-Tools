@@ -30,27 +30,7 @@ window.cycleActiveTagFilter = function() {
     if (typeof window.renderEditor === 'function') window.renderEditor();
 };
  
-window.toggleImageMode = function() {
-    if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
-    let changed = false;
-    selectedIndices.forEach(idx => {
-        const img = imageFiles[idx];
-        if (img) {
-            img.type = img.type === 'nl' ? 'tags' : 'nl';
-            if (typeof datasetConfig !== 'undefined') {
-                datasetConfig[img.baseName] = datasetConfig[img.baseName] || {};
-                datasetConfig[img.baseName].type = img.type;
-            }
-            changed = true;
-        }
-    });
-    if (changed) {
-        if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
-        if (typeof window.renderEditor === 'function') window.renderEditor();
-        if (typeof window.refreshListStatus === 'function') window.refreshListStatus();
-        if (typeof window.applyFilters === 'function') window.applyFilters();
-    }
-};
+window.toggleImageMode = function() { /* removido: modo único Tag */ };
  
 window.renderEditor = function() {
     const topbarSelectFormat = document.getElementById('topbar-save-format');
@@ -59,19 +39,7 @@ window.renderEditor = function() {
     const presetsVisible = colPresets && colPresets.style.display !== 'none';
     const btnMode = document.getElementById('btn-toggle-image-mode');
     
-    if (btnMode) {
-        if (selectedIndices.size > 0) {
-            btnMode.style.display = 'inline-block';
-            const firstImg = imageFiles[Array.from(selectedIndices)[0]];
-            if (firstImg.type === 'nl') {
-                btnMode.textContent = 'Mode: NL';
-                btnMode.style.borderColor = '#4a2a8c'; btnMode.style.color = '#b890ff';
-            } else {
-                btnMode.textContent = 'Mode: Tag';
-                btnMode.style.borderColor = '#00aa66'; btnMode.style.color = '#00ff99';
-            }
-        } else { btnMode.style.display = 'none'; }
-    }
+    if (btnMode) btnMode.style.display = 'none'; // modo único: Tag
  
     if (selectedIndices.size === 0) {
         window.sortedActiveTags = []; 
@@ -110,73 +78,6 @@ window.renderEditor = function() {
     const tagListVertical = document.getElementById('tag-list-vertical');
     if(!tagListVertical) return;
     tagListVertical.innerHTML = '';
- 
-    // PERMANENT TEXTAREA FOR FULL NL MODE
-    if (imgObj.type === 'nl') {
-        const activeTagCountBadge = document.getElementById('active-tag-count');
-        if (activeTagCountBadge) activeTagCountBadge.textContent = '1 (NL)';
-        if(activeAddContainer) activeAddContainer.style.display = 'none';
-        if(activeActions) activeActions.style.display = 'none';
- 
-        const box = document.createElement('div');
-        box.className = 'tag-nl-edit-box tag-nl-edit-fullscreen';
-        box.innerHTML = `
-            <textarea class="tag-nl-edit-textarea" placeholder="Enter full text description here..."></textarea>
-            <div style="display:flex; gap:8px; margin-top: 8px;">
-                <button class="btn-nl-edit-translate" onclick="window.translateCustomNLEdit(this, 'en')">🌐 Translate (EN-US)</button>
-                <button class="btn-nl-edit-gemini" onclick="window.geminiCustomNLEdit(this, 'en-US')">✨ Gemini Fix (EN-US)</button>
-            </div>
-            <div style="display:flex; gap:8px; margin-top: 8px; justify-content: flex-end;">
-                <button class="btn-nl-edit-cancel">✖ Cancel</button>
-                <button class="btn-nl-edit-save">💾 Save</button>
-            </div>
-        `;
-        const ta = box.querySelector('textarea');
-        const originalText = imgObj.content || '';
-        ta.value = originalText;
- 
-        const btnCancel = box.querySelector('.btn-nl-edit-cancel');
-        const btnSave = box.querySelector('.btn-nl-edit-save');
-        
-        btnCancel.style.opacity = '0.5'; btnCancel.disabled = true;
-        btnSave.style.opacity = '0.5'; btnSave.disabled = true;
- 
-        ta.oninput = () => {
-            if (ta.value !== originalText) {
-                btnCancel.style.opacity = '1'; btnCancel.disabled = false;
-                btnSave.style.opacity = '1'; btnSave.disabled = false;
-            } else {
-                btnCancel.style.opacity = '0.5'; btnCancel.disabled = true;
-                btnSave.style.opacity = '0.5'; btnSave.disabled = true;
-            }
-        };
- 
-        btnCancel.onclick = () => {
-            ta.value = originalText;
-            ta.oninput();
-        };
- 
-        btnSave.onclick = async () => {
-            const newText = ta.value;
-            let replacedCount = 0;
-            let modifiedFiles = [];
-            selectedIndices.forEach(idx => {
-                imageFiles[idx].content = newText;
-                imageFiles[idx].hasFile = true;
-                modifiedFiles.push(imageFiles[idx]);
-                replacedCount++;
-            });
-            window.markDirty(modifiedFiles);
-            const savePromises = modifiedFiles.map(img => window.saveImageToDisk(img));
-            await Promise.all(savePromises);
-            if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
-            if (typeof window.renderEditor === 'function') window.renderEditor();
-            if (typeof window.showAlert === 'function') window.showAlert(`Text saved in ${replacedCount} image(s)!`, 'success');
-        };
- 
-        tagListVertical.appendChild(box);
-        return; 
-    }
  
     // REGULAR HYBRID TAG MODE RENDERING
     let datasetTagCounts = new Map();
@@ -240,6 +141,13 @@ window.renderEditor = function() {
         }
     }
     
+    // Botão "✏️ Edit" ao lado do Force Tag: só com UMA tag NL selecionada
+    const editNlBtn = document.querySelector('#active-selection-actions .btn-edit-nl');
+    if (editNlBtn) {
+        const selArr = Array.from(activeSelectedTags);
+        editNlBtn.style.display = (selArr.length === 1 && window.checkIfNL(selArr[0])) ? 'block' : 'none';
+    }
+
     let favTags = new Set(datasetConfig.favoriteTags || []);
     const isMultiSelected = activeSelectedTags.size > 1; 
     const isMultiImageSelection = selectedIndices.size > 1;
@@ -488,11 +396,19 @@ window.renderEditor = function() {
     }
 }
  
+window.editSelectedNLTag = function() {
+    const sel = Array.from(activeSelectedTags);
+    if (sel.length !== 1 || !window.checkIfNL(sel[0])) return;
+    window.nlEditTarget = { scope: 'active', tag: sel[0] };
+    window.renderEditor();
+};
+
 window.updateActiveSuggestVisibility = function() {
     const btnDiscard = document.getElementById('btn-discard-active-suggestions');
     const btnFilter = document.getElementById('btn-filter-active-ghosts');
     const anyPending = Array.from(selectedIndices).some(idx => imageFiles[idx] && imageFiles[idx].pendingAdd && imageFiles[idx].pendingAdd.length > 0);
-    if (btnDiscard) btnDiscard.style.display = anyPending ? 'inline-flex' : 'none';
+    const anyPendingRemove = Array.from(selectedIndices).some(idx => imageFiles[idx] && imageFiles[idx].pendingRemove && imageFiles[idx].pendingRemove.length > 0);
+    if (btnDiscard) btnDiscard.style.display = (anyPending || anyPendingRemove) ? 'inline-flex' : 'none';
     if (btnFilter) {
         btnFilter.style.display = anyPending ? 'inline-flex' : 'none';
         if (!anyPending && window.showOnlyActiveGhosts) {
@@ -626,7 +542,15 @@ window.addTagToSelected = function(newTag, position = 'bottom') {
     if (typeof window.applyFilters === 'function') window.applyFilters();
 }
  
-window.addEmptyNLTag = function() {};
+window.addEmptyNLTag = function() {
+    if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
+    const tag = 'NL:';
+    if (!datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
+    datasetConfig.manualNLRules[tag] = 'nl';
+    window.addTagToSelected(tag, 'top');
+    window.nlEditTarget = { scope: 'active', tag: tag };
+    window.renderEditor();
+};
  
 window.addTagToAllImages = function(newTag, position = 'bottom') {
     const tag = newTag.trim(); if(!tag) return;

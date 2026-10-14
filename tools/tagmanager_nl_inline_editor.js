@@ -126,6 +126,7 @@ window.globalConvertToCustomNL = function() {
  
 window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
     let newText = (newTextRaw || '').trim();
+    newText = newText.replace(/\s*[\r\n]+\s*/g, ' ').replace(/,/g, '，'); // vírgula quebraria a tag em várias
     window.nlEditTarget = null;
  
     if (!newText || newText === oldTag) {
@@ -139,6 +140,9 @@ window.confirmNLEditTag = async function(scope, oldTag, newTextRaw) {
         delete datasetConfig.manualNLRules[oldTag];
     }
  
+    if (!datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
+    datasetConfig.manualNLRules[newText] = 'nl'; // editor NL é exclusivo de NL
+
     let replacedCount = 0;
     let indicesToProcess = scope === 'active' ? Array.from(selectedIndices) : imageFiles.map((_, i) => i);
     let modifiedFiles = [];

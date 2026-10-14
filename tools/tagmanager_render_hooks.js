@@ -61,4 +61,7 @@
     // como rede de segurança, caso algum script mude a ordem no futuro.
     installWraps();
     window.addEventListener('DOMContentLoaded', installWraps);
+
+    // Mantém o badge "Tags (n) · NL (n) (.fmt)" da lista sempre atualizado
+    window.registerPostApplyFilters(() => { if (typeof window.refreshListStatus === 'function') window.refreshListStatus(); });
 })();

@@ -30,6 +30,231 @@ if (typeof ort !== 'undefined' && ort.env && ort.env.wasm) {
     console.warn('[Batch Tagger] onnxruntime-web (ort) did not load — ONNX Tagger mode will be unavailable until the page is reloaded with network access to the CDN.');
 }
 
+
+/* =========================================================================
+   OLLAMA (VISION) PROVIDER
+   ---------------------------------------------------------------------
+   Terceiro modo de processamento do Batch ("🦙 Ollama"). Consulta o
+   servidor Ollama local (GET /api/tags) e, pra cada modelo instalado,
+   POST /api/show pra descobrir se ele suporta VISION — assim o dropdown
+   só lista modelos que realmente aceitam imagem (Qwen-VL, LLaVA, Gemma3,
+   Llama3.2-Vision, MiniCPM-V...), sem digitar nome de modelo na mão.
+   Detecção: campo "capabilities" (Ollama recente); fallback pra famílias
+   "clip"/"mllama", projector_info ou chaves ".vision." em model_info
+   (Ollama mais antigo).
+========================================================================= */
+window._ollamaVisionCache = window._ollamaVisionCache || new Map(); // "url|model" -> bool
+window._ollamaRefreshing = false;
+
+function getOllamaBaseUrl() {
+    const el = document.getElementById('ollama-url');
+    let v = (el && el.value ? el.value : '').trim() || 'http://127.0.0.1:11434';
+    if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
+    return v.replace(/\/+$/, '');
+}
+
+async function ollamaModelHasVision(baseUrl, name) {
+    const key = baseUrl + '|' + name;
+    if (window._ollamaVisionCache.has(key)) return window._ollamaVisionCache.get(key);
+    let isVision = false;
+    try {
+        const res = await fetch(baseUrl + '/api/show', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: name, name: name })
+        });
+        if (res.ok) {
+            const d = await res.json();
+            if (Array.isArray(d.capabilities)) {
+                isVision = d.capabilities.includes('vision');
+            } else {
+                const fam = ((d.details && d.details.families) || []).map(f => String(f).toLowerCase());
+                const keys = Object.keys(d.model_info || {});
+                isVision = fam.some(f => ['clip', 'mllama', 'siglip'].includes(f))
+                    || !!d.projector_info
+                    || keys.some(k => k.includes('.vision.') || k.includes('clip.'));
+            }
+        }
+    } catch (e) { /* trata como não-vision */ }
+    window._ollamaVisionCache.set(key, isVision);
+    return isVision;
+}
+
+window.refreshOllamaModels = async function (silent = false) {
+    const select = document.getElementById('ollama-model-select');
+    const status = document.getElementById('ollama-model-status');
+    const btn = document.getElementById('btn-ollama-refresh');
+    if (!select || window._ollamaRefreshing) return;
+
+    // Modo automático (ao abrir o modo): se a lista já foi carregada, não refaz.
+    if (silent && select.options.length > 1 && select.options[0].value !== '') return;
+
+    window._ollamaRefreshing = true;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning...'; }
+    if (status) { status.style.color = '#888'; status.textContent = 'Asking Ollama for installed models...'; }
+
+    const previous = select.value || (typeof window.getSetting === 'function' ? await window.getSetting('ollama-last-model', '') : '');
+    try {
+        const baseUrl = getOllamaBaseUrl();
+        const res = await fetch(baseUrl + '/api/tags');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const all = (data.models || []).map(m => m.name || m.model).filter(Boolean);
+
+        const flags = await Promise.all(all.map(n => ollamaModelHasVision(baseUrl, n)));
+        const visionModels = all.filter((_, i) => flags[i]).sort((a, b) => a.localeCompare(b));
+
+        select.innerHTML = '';
+        if (visionModels.length === 0) {
+            select.innerHTML = '<option value="">-- No vision models found --</option>';
+            if (status) {
+                status.style.color = '#ffcc66';
+                status.textContent = `Ollama is running (${all.length} model(s) installed) but none support vision. Try: ollama pull qwen2.5vl:7b`;
+            }
+        } else {
+            visionModels.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n; opt.textContent = n;
+                select.appendChild(opt);
+            });
+            if (previous && visionModels.includes(previous)) select.value = previous;
+            if (status) {
+                status.style.color = '#00ff99';
+                status.textContent = `✅ ${visionModels.length} vision model(s) found (${all.length - visionModels.length} text-only model(s) hidden).`;
+            }
+        }
+    } catch (e) {
+        console.warn('[Ollama] Could not list models:', e);
+        select.innerHTML = '<option value="">-- Ollama not reachable --</option>';
+        if (status) {
+            status.style.color = '#ff6060';
+            status.textContent = '❌ Could not reach Ollama. Make sure it is running at the URL above (and, if needed, started with OLLAMA_ORIGINS=*).';
+        }
+        if (!silent && window.showAlert) window.showAlert('Could not connect to Ollama.', 'error');
+    } finally {
+        window._ollamaRefreshing = false;
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Models'; }
+        if (select.value && typeof window.saveSetting === 'function') window.saveSetting('ollama-last-model', select.value);
+    }
+};
+
+window.onOllamaUrlChanged = function () {
+    const el = document.getElementById('ollama-url');
+    if (el && typeof window.saveSetting === 'function') window.saveSetting('ollama-url', el.value.trim());
+    window.refreshOllamaModels();
+};
+
+window.onOllamaModelChanged = function () {
+    const sel = document.getElementById('ollama-model-select');
+    if (sel && sel.value && typeof window.saveSetting === 'function') window.saveSetting('ollama-last-model', sel.value);
+};
+
+const OLLAMA_PROMPT_NL = 'Describe this image in detail.';
+const OLLAMA_PROMPT_TAGS = 'List booru-style tags describing this image (subject, hair, eyes, clothing, pose, expression, background, art style). Use lowercase English tags separated by commas. Output ONLY the tags, nothing else.';
+
+window.updateOllamaPromptDefault = function () {
+    const mode = document.getElementById('ollama-output-mode');
+    const box = document.getElementById('ollama-prompt');
+    if (!mode || !box) return;
+    const cur = box.value.trim();
+    // Só troca se o usuário não personalizou o prompt
+    if (cur === '' || cur === OLLAMA_PROMPT_NL || cur === OLLAMA_PROMPT_TAGS) {
+        box.value = mode.value === 'tags' ? OLLAMA_PROMPT_TAGS : OLLAMA_PROMPT_NL;
+    }
+    if (typeof window.saveSetting === 'function') window.saveSetting('ollama-output-mode', mode.value);
+};
+
+/* Redimensiona antes de enviar (acelera MUITO em modelos grandes) e
+   devolve base64 sem o prefixo data:. Fundo branco evita PNG transparente
+   virar preto ao converter pra JPEG. */
+async function ollamaImageToBase64(url, maxSide) {
+    const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('Could not load image'));
+        i.src = url;
+    });
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (maxSide > 0) {
+        const s = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.max(1, Math.round(w * s)); h = Math.max(1, Math.round(h * s));
+    }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', 0.92).split(',')[1];
+}
+
+/* Remove lixo típico de LLM: cercas de markdown, "Here is the description:",
+   negrito/asteriscos e quebras de linha. */
+function cleanLLMText(text) {
+    let t = String(text || '').trim();
+    t = t.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
+    t = t.replace(/^\s*(sure[!,.]?\s*)?(here('s| is| are)[^:\n]{0,80}:)\s*/i, '');
+    t = t.replace(/\*\*|__/g, '').replace(/^\s*[*#>]+\s*/gm, '');
+    t = t.replace(/\s*[\r\n]+\s*/g, ' ').replace(/\s{2,}/g, ' ');
+    return t.trim();
+}
+
+function parseTagsFromLLM(text) {
+    const raw = String(text || '').replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '')
+        .replace(/^\s*(sure[!,.]?\s*)?(here('s| is| are)[^:\n]{0,80}:)\s*/i, '')
+        .replace(/[\r\n]+/g, ',');
+    const out = [], seen = new Set();
+    raw.split(',').forEach(p => {
+        let t = p.trim().replace(/^[-*•\d.)\s]+/, '').replace(/\*\*|__/g, '').replace(/[.;:]+$/, '').replace(/_/g, ' ').trim().toLowerCase();
+        if (!t || t.length > 60 || seen.has(t)) return;
+        seen.add(t); out.push(t);
+    });
+    return out;
+}
+
+/* Retorna { text, failed, fatal, error }. "fatal" = Ollama fora do ar /
+   modelo inexistente — não adianta tentar as próximas imagens. */
+async function captionViaOllama(imgUrl, opts) {
+    let b64;
+    try {
+        b64 = await ollamaImageToBase64(imgUrl, opts.maxSide);
+    } catch (e) {
+        return { text: '', failed: true, fatal: false, error: e.message };
+    }
+    try {
+        const res = await fetch(opts.baseUrl + '/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: opts.model,
+                prompt: opts.prompt,
+                images: [b64],
+                stream: false,
+                keep_alive: '10m',
+                options: { temperature: opts.temperature }
+            })
+        });
+        if (!res.ok) {
+            let detail = '';
+            try { detail = (await res.json()).error || ''; } catch (e) {}
+            return { text: '', failed: true, fatal: res.status === 404, error: `HTTP ${res.status}${detail ? ': ' + detail : ''}` };
+        }
+        const data = await res.json();
+        const txt = cleanLLMText(data.response || '');
+        if (!txt) return { text: '', failed: true, fatal: false, error: 'Empty response from model' };
+        return { text: txt, failed: false, fatal: false };
+    } catch (e) {
+        return { text: '', failed: true, fatal: true, error: 'Cannot reach Ollama (' + (e.message || e) + ')' };
+    }
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+    if (typeof window.getSetting !== 'function') return;
+    const urlEl = document.getElementById('ollama-url');
+    const outEl = document.getElementById('ollama-output-mode');
+    if (urlEl) urlEl.value = await window.getSetting('ollama-url', 'http://127.0.0.1:11434');
+    if (outEl) { outEl.value = await window.getSetting('ollama-output-mode', 'nl'); window.updateOllamaPromptDefault(); }
+});
+
 const dbNameTaggers = 'TagManagerDB';
 
 function initTaggerDB() { 
@@ -482,6 +707,13 @@ window.startBatchTagging = async function() {
         if(window.showAlert) window.showAlert("Please select a valid Tagger model.", "error");
         return;
     }
+    if (mode === 'ollama-vision') {
+        const ollamaSel = document.getElementById('ollama-model-select');
+        if (!ollamaSel || !ollamaSel.value) {
+            if(window.showAlert) window.showAlert("Select an Ollama vision model first (press 🔄 Refresh Models).", "error");
+            return;
+        }
+    }
     
     if ((await targetHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
         if ((await targetHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
@@ -655,13 +887,25 @@ window.startBatchTagging = async function() {
 
             if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle);
         
-        } else if (mode === 'nl-vlm') {
-            const promptPrefix = document.getElementById('batch-vlm-prompt').value.trim() || '<MORE_DETAILED_CAPTION>';
-            const vlmModelId = document.getElementById('vlm-model-select').value;
+        } else if (mode === 'nl-vlm' || mode === 'ollama-vision') {
+            const isOllamaMode = mode === 'ollama-vision';
+            const promptPrefix = isOllamaMode
+                ? (document.getElementById('ollama-prompt').value.trim() || 'Describe this image in detail.')
+                : (document.getElementById('batch-vlm-prompt').value.trim() || '<MORE_DETAILED_CAPTION>');
+            const vlmModelId = isOllamaMode
+                ? document.getElementById('ollama-model-select').value
+                : document.getElementById('vlm-model-select').value;
             const modelIdLower = vlmModelId.toLowerCase();
-            const isFlorence = modelIdLower.includes('florence');
-            const isSmolVLM = modelIdLower.includes('smolvlm');
-            const isJoyAPI = modelIdLower.includes('joycaption');
+            // No modo Ollama o nome do modelo é livre (ex: "qwen2.5vl:7b"), então
+            // nunca pode cair nos ramos Florence/SmolVLM só por coincidência de nome.
+            const isFlorence = !isOllamaMode && modelIdLower.includes('florence');
+            const isSmolVLM = !isOllamaMode && modelIdLower.includes('smolvlm');
+            const isJoyAPI = isOllamaMode || modelIdLower.includes('joycaption');
+            const ollamaBaseUrl = getOllamaBaseUrl();
+            const ollamaModelName = isOllamaMode ? vlmModelId : 'user-v4/joycaption-beta';
+            const ollamaOutputMode = isOllamaMode ? document.getElementById('ollama-output-mode').value : 'nl';
+            const ollamaMaxSide = isOllamaMode ? (parseInt(document.getElementById('ollama-max-side').value, 10) || 0) : 0;
+            window._batchFailedCaptions = 0;
             let processed = 0;
 
             if (!isFlorence && !isSmolVLM && !isJoyAPI) {
@@ -739,6 +983,7 @@ window.startBatchTagging = async function() {
                 if (imgObj.hidden) continue;
                 const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
                 let finalContent = "";
+                let captionFailed = false;
 
                 if (isFlorence) {
                     const image = await load_image(imgObj.url);
@@ -784,35 +1029,62 @@ window.startBatchTagging = async function() {
                     finalContent = (generated_texts[0] || "").trim();
                     
                 } else if (isJoyAPI) {
-                    try {
-                        const response = await fetch(imgObj.url);
-                        const blob = await response.blob();
-                        const base64 = await new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                            reader.readAsDataURL(blob);
-                        });
-
-                        // Calls the local Ollama API on port 11434
-                        const apiRes = await fetch('http://127.0.0.1:11434/api/generate', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                model: "user-v4/joycaption-beta",
-                                prompt: promptPrefix,
-                                images: [base64],
-                                stream: false,
-                                options: { temperature: 0.1 }
-                            })
-                        });
-                        
-                        if (!apiRes.ok) throw new Error("Ollama did not respond correctly.");
-                        const data = await apiRes.json();
-                        finalContent = data.response ? data.response.trim() : ""; 
-                    } catch (err) {
-                        console.error("Error in JoyCaption via Ollama:", err);
-                        finalContent = "Error in JoyCaption. Check that Ollama is running and the model has been downloaded.";
+                    const r = await captionViaOllama(imgObj.url, {
+                        baseUrl: ollamaBaseUrl,
+                        model: ollamaModelName,
+                        prompt: promptPrefix,
+                        maxSide: ollamaMaxSide,
+                        temperature: 0.1
+                    });
+                    finalContent = r.text;
+                    captionFailed = r.failed;
+                    if (r.failed) {
+                        console.error('[Ollama] Caption failed for', imgObj.name, '-', r.error);
+                        if (r.fatal) {
+                            if(window.showAlert) window.showAlert('Ollama error: ' + r.error + ' — batch stopped.', 'error');
+                            window.isBatchCancelled = true;
+                            break;
+                        }
                     }
+                }
+
+                // Falha isolada numa imagem: NUNCA grava mensagem de erro como legenda.
+                if (captionFailed || (isFlorence && finalContent.startsWith('Error'))) {
+                    window._batchFailedCaptions++;
+                    processed++;
+                    progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
+                    progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
+                    continue;
+                }
+
+                // OLLAMA -> saída em TAGS (lista separada por vírgula, estilo booru)
+                if (isOllamaMode && ollamaOutputMode === 'tags') {
+                    const parsedTags = parseTagsFromLLM(finalContent);
+                    const existingList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()).filter(t => t) : [];
+                    const existingLower = new Set(existingList.map(t => t.toLowerCase()));
+                    const newTags = parsedTags.filter(t => !existingLower.has(t));
+
+                    if (reviewModeActive) {
+                        if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
+                        newTags.forEach(t => { if (!imgObj.pendingAdd.includes(t)) imgObj.pendingAdd.push(t); });
+                        if (typeof pendingTagsStore !== 'undefined') {
+                            if (imgObj.pendingAdd.length > 0) pendingTagsStore[baseName] = imgObj.pendingAdd;
+                            else delete pendingTagsStore[baseName];
+                        }
+                    } else {
+                        imgObj.type = 'tags';
+                        imgObj.content = [...existingList, ...newTags].join(', ');
+                        imgObj.hasFile = true;
+                        imgObj.ext = format;
+                        imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
+                        await window.saveImageToDisk(imgObj);
+                        if (window.masterTagSet) newTags.forEach(t => masterTagSet.add(t));
+                    }
+
+                    processed++;
+                    progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
+                    progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
+                    continue;
                 }
 
                 // GHOST MODE PARA LINGUAGEM NATURAL E VLM
@@ -823,7 +1095,7 @@ window.startBatchTagging = async function() {
                     const nlSuggestion = 'NL:' + finalContent.replace(/,/g, '，');
                     const existingTagsList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()) : [];
                     
-                    if (!existingTagsList.includes(nlSuggestion) && !imgObj.pendingAdd.includes(nlSuggestion) && !finalContent.includes("Erro")) {
+                    if (!existingTagsList.includes(nlSuggestion) && !imgObj.pendingAdd.includes(nlSuggestion) && finalContent) {
                         imgObj.pendingAdd.push(nlSuggestion);
                         if (typeof pendingTagsStore !== 'undefined') {
                             pendingTagsStore[baseName] = imgObj.pendingAdd;
@@ -840,7 +1112,7 @@ window.startBatchTagging = async function() {
                 // O caption gerado pelo VLM vira uma tag "NL:" dentro do sistema unificado de tags.
                 let existingTags = imgObj.content ? imgObj.content.trim() : "";
 
-                if (!finalContent.includes("Erro")) {
+                if (finalContent) {
                     const nlTag = 'NL:' + finalContent.replace(/,/g, '，');
                     finalContent = existingTags ? `${nlTag}, ${existingTags}` : nlTag;
                 }
@@ -862,7 +1134,13 @@ window.startBatchTagging = async function() {
         }
         
         if (!window.isBatchCancelled && !reviewModeActive) {
-            if(window.showAlert) window.showAlert("Batch processing complete!", "success");
+            const failedN = window._batchFailedCaptions || 0;
+            if (failedN > 0) {
+                if(window.showAlert) window.showAlert(`Batch finished, but ${failedN} image(s) failed and were skipped (existing captions untouched). Check the console.`, "warn");
+            } else {
+                if(window.showAlert) window.showAlert("Batch processing complete!", "success");
+            }
+            window._batchFailedCaptions = 0;
         }
     } catch (e) { 
         console.error(e); 

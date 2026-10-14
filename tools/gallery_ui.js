@@ -145,10 +145,12 @@ function updateGridCounters() {
     const gridZoomToggle = document.getElementById('grid-zoom-toggle');
     
     // Hide if outside grid mode or no folder loaded
-    if (!currentHandle || document.getElementById('grid-view').style.display === 'none') {
+    const inGridMode = !!currentHandle && document.getElementById('grid-view').style.display !== 'none';
+    if (!inGridMode) {
         if (container) container.style.display = 'none';
         if (pageSizeToggle) pageSizeToggle.style.display = 'none';
         if (gridZoomToggle) gridZoomToggle.style.display = 'none';
+        if (typeof updateRandomButtonVisibility === 'function') updateRandomButtonVisibility(false);
         return;
     }
 
@@ -157,8 +159,12 @@ function updateGridCounters() {
 
     const showImg = document.getElementById('toggle-count-field').checked;
     const showJson = document.getElementById('toggle-json-count-field').checked;
+    // The random button's own Settings checkbox decides it independently of
+    // the two count toggles — so the counters bar stays visible for it even
+    // when both counts are turned off.
+    const showRandom = (typeof updateRandomButtonVisibility === 'function') ? updateRandomButtonVisibility(true) : false;
 
-    if (!showImg && !showJson) {
+    if (!showImg && !showJson && !showRandom) {
         container.style.display = 'none';
         return;
     }

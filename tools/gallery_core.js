@@ -255,6 +255,7 @@ async function saveSettingsToDB() {
             pathIcon:       document.getElementById('toggle-path-icon').checked,
             countField:     document.getElementById('toggle-count-field').checked,
             jsonCountField: document.getElementById('toggle-json-count-field').checked,
+            randomButtonEnabled: document.getElementById('toggle-random-button').checked,
             sortMode:       sortMode,
             itemsPerPage:   itemsPerPage,
             blockCollapse:  blockCollapsePrefs,
@@ -291,6 +292,7 @@ async function loadSettingsFromDB() {
         document.getElementById('toggle-path-icon').checked       = !!settings.pathIcon;
         document.getElementById('toggle-count-field').checked     = settings.countField     !== undefined ? !!settings.countField     : true;
         document.getElementById('toggle-json-count-field').checked = !!settings.jsonCountField;
+        document.getElementById('toggle-random-button').checked = settings.randomButtonEnabled !== undefined ? !!settings.randomButtonEnabled : true;
 
         if (settings.sortMode === 0 || settings.sortMode === 1 || settings.sortMode === 2) {
             sortMode = settings.sortMode;
@@ -684,22 +686,41 @@ function updatePaginationControls() {
     const container = document.getElementById('pagination-controls');
     if (!container) return;
 
+    const inGridMode = !!currentHandle && document.getElementById('grid-view').style.display !== 'none';
+
+    // 🎲 Random button lives in this same centered bar (bottom-middle, same
+    // row as the "grid size" button on the left and the img/JSON counters on
+    // the right), independent of whether pagination itself is needed.
+    const showRandom = (typeof updateRandomButtonVisibility === 'function') ? updateRandomButtonVisibility(inGridMode) : false;
+
+    const prevBtn  = document.getElementById('btn-page-prev');
+    const nextBtn  = document.getElementById('btn-page-next');
+    const pageInfo = document.getElementById('page-info');
+
     // Count only what's actually visible right now (a hidden/filtered gallery
     // tag must not keep pagination "alive" for pages that have no images left)
     const visibleCount = (typeof getGalleryFilteredFiles === 'function') ? getGalleryFilteredFiles().length : currentFiles.length;
 
-    // Conditions: needs a loaded folder, must be in grid mode, and MORE than 100 images total
-    if (!currentHandle || document.getElementById('grid-view').style.display === 'none' || visibleCount <= itemsPerPage) {
-        container.style.display = 'none';
+    // Conditions: needs a loaded folder, must be in grid mode, and MORE than the page size in images total
+    const needsPagination = inGridMode && visibleCount > itemsPerPage;
+
+    if (!needsPagination) {
+        if (prevBtn)  prevBtn.style.display  = 'none';
+        if (nextBtn)  nextBtn.style.display  = 'none';
+        if (pageInfo) pageInfo.style.display = 'none';
+
+        // The bar itself stays up only if the Random button still needs it.
+        container.style.display = showRandom ? 'flex' : 'none';
         return;
     }
+
+    if (prevBtn)  prevBtn.style.display  = 'inline-block';
+    if (nextBtn)  nextBtn.style.display  = 'inline-block';
+    if (pageInfo) pageInfo.style.display = 'inline-block';
 
     container.style.display = 'flex';
     const totalPages = Math.ceil(visibleCount / itemsPerPage);
     document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages}`;
-    
-    const prevBtn = document.getElementById('btn-page-prev');
-    const nextBtn = document.getElementById('btn-page-next');
     
     prevBtn.disabled = (currentPage === 1);
     nextBtn.disabled = (currentPage === totalPages);

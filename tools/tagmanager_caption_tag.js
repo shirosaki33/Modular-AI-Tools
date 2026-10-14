@@ -80,5 +80,6 @@ window.checkIfNL = function(tag) {
     if (typeof datasetConfig !== 'undefined' && datasetConfig.manualNLRules && datasetConfig.manualNLRules[tag] !== undefined) {
         return datasetConfig.manualNLRules[tag] === 'nl';
     }
+    if (tag.startsWith('NL:')) return true;
     return window.enableAutoNl !== false && tag.trim().split(/\s+/).length >= (window.nlWordThreshold || 6);
 };
