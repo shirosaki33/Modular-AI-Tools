@@ -17,6 +17,7 @@ button:hover{border-color:var(--ac)}button:disabled{opacity:.4;cursor:default}
 select,input[type=text]{background:var(--pn);border:1px solid #2a2a2a;border-radius:8px;padding:0 12px;height:36px;outline:none}
 select:focus,input:focus{border-color:var(--ac)}
 a{color:var(--ac);text-decoration:none}a:hover{color:#fff;text-decoration:underline}
+.chk{display:flex;align-items:center;gap:6px;color:#bbb;font-size:12px;cursor:pointer;white-space:nowrap}.chk input{accent-color:var(--ac)}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#333;border-radius:4px}
 /* topbar */
 #topbar{display:flex;align-items:center;gap:10px;padding:12px 20px;min-height:54px;background:#0d0d0d;box-shadow:0 4px 6px rgba(0,0,0,.3);z-index:20}
@@ -101,6 +102,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
   <div class="topbar-section"><button class="pri" onclick="addFolder()">+ Add folder</button><button onclick="addFiles()">Add files</button></div>
   <div class="topbar-section center"><span id="app-title">📚 Lora Evaluate 📚</span></div>
   <div class="topbar-section right" id="topbar-right">
+    <label class="chk" title="ON: opening a LoRA rechecks Civitai (refreshes images, author text and versions). OFF: only the Recheck button does."><input type="checkbox" id="arc" checked> Auto-recheck</label>
     <button onclick="runQueue(1)" title="Look up Civitai by hash. Only files that are not in the cache yet.">Check Civitai</button>
     <span style="position:relative"><button id="help-btn" title="Help">?</button><div id="help-pop"><h4>About Lora Evaluate</h4><ul>
       <li>Only the <strong>first</strong> Civitai image is saved next to the LoRA as <code>name.preview.png</code> (or jpg/webp). The others are view-only.</li>
@@ -112,7 +114,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 </div>
 <div id="bar">
   <select id="fd" onchange="page=1;render()"><option value="">All folders</option></select>
-  <input type="text" id="q" placeholder="Filter by name…" oninput="page=1;render()">
+  <input type="text" id="q" placeholder="Filter by name…" oninput="page=1;debRender()">
   <button onclick="asc=!asc;page=1;render()" title="Reverse order">⇅</button>
   <select id="so" onchange="page=1;render()"><option value="name">Name</option><option value="size">Size</option><option value="date">Date</option><option value="base">Base</option></select>
   <label>Card size <input type="range" min="110" max="320" value="160" oninput="$('grid').style.setProperty('--sz',this.value+'px')"></label>
@@ -152,20 +154,20 @@ const fv=(m,k)=>{const v=findVal(m,k);return v&&v!=='None'&&v!=='null'?v:null};
 const API='https://civitai.com/api/v1/',CACHE_PATH='local/lora_evaluate_cache.json',CF='lora_evaluate_cache.json';
 const PREV=['.preview.png','.preview.jpg','.preview.jpeg','.preview.webp','.png','.jpg','.jpeg','.webp'],SIZES=[25,50,75,100];
 const isLocal=['localhost','127.0.0.1'].includes(location.hostname);
-let roots=[],items=[],view=[],all=[],cat='All',cur=-1,asc=true,scale=1,tx=0,ty=0,gal=[],gi=0,page=1,per=100,busy=false,cache={},saveT,chain=Promise.resolve(),mode='none',favs=new Set(),hidden=new Set();
-const tried=new Set();
+let autoRC=true,roots=[],items=[],view=[],all=[],cat='All',cur=-1,asc=true,scale=1,tx=0,ty=0,gal=[],gi=0,page=1,per=100,busy=false,cache={},saveT,chain=Promise.resolve(),mode='none',favs=new Set(),hidden=new Set();
+const tried=new Set();let stamp=0;const debRender=(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(render,120)}})();
 
 /* ---------- IndexedDB (handles de pasta + favoritos) ---------- */
 const idb=()=>new Promise((ok,no)=>{const r=indexedDB.open('LoraEvaluateDB',2);r.onupgradeneeded=()=>{['h','kv'].forEach(s=>r.result.objectStoreNames.contains(s)||r.result.createObjectStore(s))};r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
 const idbOp=async(store,fn,rw)=>{const d=await idb();return new Promise((ok,no)=>{const t=d.transaction(store,rw?'readwrite':'readonly'),q=fn(t.objectStore(store));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>no(t.error)})};
 const idbAll=async()=>{const d=await idb();return new Promise(ok=>{const s=d.transaction('h').objectStore('h'),k=s.getAllKeys(),v=s.getAll();s.transaction.oncomplete=()=>ok(k.result.map((x,i)=>[x,v.result[i]]))})};
-async function loadPrefs(){try{favs=new Set(await idbOp('kv',s=>s.get('favorites'))||[]);hidden=new Set(await idbOp('kv',s=>s.get('hiddenCats'))||[])}catch{}}
+async function loadPrefs(){try{favs=new Set(await idbOp('kv',s=>s.get('favorites'))||[]);hidden=new Set(await idbOp('kv',s=>s.get('hiddenCats'))||[]);autoRC=(await idbOp('kv',s=>s.get('autoRecheck')))!==false;$('arc').checked=autoRC}catch{}}
 const savePrefs=()=>{idbOp('kv',s=>s.put([...favs],'favorites'),1).catch(()=>{});idbOp('kv',s=>s.put([...hidden],'hiddenCats'),1).catch(()=>{})};
 const isFav=it=>favs.has(it.key)||(it._hash&&favs.has(it._hash));
 function toggleFav(it,e){e&&(e.preventDefault(),e.stopPropagation());const k=it._hash||it.key;isFav(it)?(favs.delete(k),favs.delete(it.key)):favs.add(k);savePrefs();cur>=0?showDetail(cur,1):render()}
 
 /* ---------- Cache (local/ via API + pastas da biblioteca) ---------- */
-function ingest(j){const m=j&&j.items&&typeof j.items==='object'?j.items:j;if(!m||typeof m!=='object'||Array.isArray(m))return;
+function ingest(j){stamp++;const m=j&&j.items&&typeof j.items==='object'?j.items:j;if(!m||typeof m!=='object'||Array.isArray(m))return;
   for(const[k,v]of Object.entries(m)){if(!v||typeof v!=='object')continue;const p=cache[k];cache[k]=!p?v:(v.checkedAt||0)>=(p.checkedAt||0)?{...p,...v}:{...v,...p}}}
 async function loadFs(){let ok=false;const hs=[...roots.map(r=>r.handle),...(await idbAll()).map(x=>x[1])];
   for(const h of hs){if(!h)continue;try{if(await h.queryPermission({mode:'readwrite'})!=='granted')continue;ingest(JSON.parse(await(await(await h.getFileHandle(CF)).getFile()).text()));ok=true}catch{}}return ok}
@@ -183,10 +185,11 @@ addEventListener('pagehide',()=>{clearTimeout(saveT);Object.keys(cache).length&&
 const cacheLabel=()=>({both:'Cache: local/ + library folders',api:'Cache: local/ (server)',fs:'Cache: library folders'}[mode]||'Cache: created in the library folder when you add one');
 const KEEP='status modelId versionId name version base type trained creator downloads latest images description versionDescription previewSaved previewUrl fileName size path root checkedAt'.split(' ');
 const slim=c=>Object.fromEntries(KEEP.filter(k=>{const v=c[k];return v!=null&&v!==''&&!(Array.isArray(v)&&!v.length)}).map(k=>[k,c[k]]));
-function rec(it){if(it._hash&&cache[it._hash])return cache[it._hash];
-  const h=Object.entries(cache).find(([,c])=>c&&c.size===it.file.size&&c.fileName===it.name&&(!c.path||c.path===it.path)&&(!c.root||c.root===it.root.name));
-  if(h){it._hash=h[0];return h[1]}return null}
-function ensure(it,h){it._hash=h;const c=cache[h]||{};Object.assign(c,{fileName:it.name,size:it.file.size,path:it.path,root:it.root.name});return cache[h]=c}
+function rec(it){if(it._hash&&cache[it._hash])return cache[it._hash];if(it._miss===stamp)return null;
+  const E=Object.entries(cache),sz=it.file.size,
+  h=E.find(([,c])=>c&&c.size===sz&&c.fileName===it.name&&(!c.path||c.path===it.path)&&(!c.root||c.root===it.root.name))||E.find(([,c])=>c&&c.size===sz&&c.fileName===it.name);
+  if(h){it._hash=h[0];return h[1]}it._miss=stamp;return null}
+function ensure(it,h){stamp++;it._hash=h;const c=cache[h]||{};Object.assign(c,{fileName:it.name,size:it.file.size,path:it.path,root:it.root.name});return cache[h]=c}
 const st=it=>(rec(it)||{}).status||'';
 
 /* ---------- Leitura do .safetensors ---------- */
@@ -231,9 +234,14 @@ async function ensurePrev(it){const c=rec(it),f=c&&c.images&&c.images[0];if(!f||
   try{const b=await getBlob(f),t=it.name.replace(/\.safetensors$/i,'')+'.preview.'+extOf(b,f),w=await(await it.dir.getFileHandle(t,{create:true})).createWritable();await w.write(b);await w.close();
     if(it.previewName&&it.previewName.toLowerCase()!==t.toLowerCase())try{await it.dir.removeEntry(it.previewName)}catch{}
     it.url&&it.url.startsWith('blob:')&&URL.revokeObjectURL(it.url);it.url=URL.createObjectURL(b);it.previewName=t;c.previewSaved=true;c.previewUrl=f;save();updCard(it);return true}catch{return false}}
-async function checkOne(it){$('fr').textContent='Hashing '+it.name+'…';await sleep(20);
-  const h=it._hash||await sha256(it.file),c=ensure(it,h),r=await fetch(API+'model-versions/by-hash/'+h);
-  if(r.status===404){c.status='notfound';c.images=[]}else if(r.ok){apply(c,await r.json());await fillModel(c);await ensurePrev(it)}else return false;
+const METAH=['sshs_model_hash','sha256_autov2','sha256_autov3','sha256','blake3','hash'];
+async function lookup(h){const r=await fetch(API+'model-versions/by-hash/'+h);return r.status===404?null:r.ok?r.json():undefined}
+async function checkOne(it){let h=it._hash,v=null;
+  if(!h)for(const k of METAH){const x=(fv(it.meta,[k])||'').trim().toLowerCase();if(x.length<8||x.length>128)continue;
+    $('fr').textContent='Looking up '+it.name+'…';v=await lookup(x);if(v===undefined)return false;if(v){h=x;break}}
+  if(!v){if(!h){$('fr').textContent='Hashing '+it.name+'…';await sleep(20);h=await sha256(it.file)}v=await lookup(h);if(v===undefined)return false}
+  const c=ensure(it,h);save();
+  if(v){apply(c,v);await fillModel(c);await ensurePrev(it)}else{c.status='notfound';c.images=[]}
   c.checkedAt=Date.now();cache[h]=slim(c);it.cls=classify(it);save();return true}
 async function runQueue(manual){if(busy)return;const t=items.filter(i=>!st(i));
   if(!t.length){manual&&($('fr').textContent='Everything is already cached.');return}
@@ -254,10 +262,13 @@ async function manualSearch(){const h=$('mh').value.trim().toLowerCase(),it=view
 /* ---------- Lista ---------- */
 const CATS=['All','Illustrious','Pony','Anima','NoobAI','SDXL','SD 1.5','SD 3','Flux','Flux 2','Z-Image','Krea','Qwen','Chroma','HiDream','Wan','Other','Outdated','Local only','Not found'];
 const inCatRaw=(it,k)=>{const s=st(it);return k==='Favorites'?isFav(it):k==='Outdated'?s==='outdated':k==='Not found'?s==='notfound':k==='Local only'?!s:k.startsWith('c:')?!!(window.ccHas&&ccHas(it,k.slice(2))):it.cls===k};
-const inCat=(it,k)=>k==='All'?![...hidden].some(h=>inCatRaw(it,h)):inCatRaw(it,k);
+const inCat=(it,k)=>{if(k!=='All')return inCatRaw(it,k);for(const h of hidden)if(inCatRaw(it,h))return false;return true};
+function counts(cc){const c={},add=k=>c[k]=(c[k]||0)+1;
+  for(const it of items){const s=st(it);inCat(it,'All')&&add('All');add(it.cls);s==='outdated'&&add('Outdated');s==='notfound'&&add('Not found');!s&&add('Local only');isFav(it)&&add('Favorites');for(const k of cc)inCatRaw(it,k)&&add(k)}
+  return c}
 const catLabel=k=>k.startsWith('c:')?k.slice(2):k;
 function folders(){const s=[...new Set(items.map(folderOf))].sort(),v=$('fd').value;$('fd').innerHTML='<option value="">All folders</option>'+s.map(x=>`<option>${esc(x)}</option>`).join('');$('fd').value=s.includes(v)?v:''}
-function renderCats(){const cc=window.ccKeys?ccKeys():[],n=k=>items.filter(i=>inCat(i,k)).length,
+function renderCats(){const cc=window.ccKeys?ccKeys():[],cnt=counts(cc),n=k=>cnt[k]||0,
   hid=[...CATS.filter(k=>k!=='All'),...cc].filter(k=>hidden.has(k)),mine=cc.filter(k=>!hidden.has(k)),
   row=(k,d)=>`<div class="cat${k===cat?' on':''}${d?' dim':''}" data-k="${esc(k)}"><span>${esc(catLabel(k))}</span><span class="rt"><i>${n(k)}</i>${k==='All'?'':`<span class="hide" data-hide="${esc(k)}" title="Hide / show">${d?'🙈':'👁️'}</span>`}</span></div>`;
   $('cats').innerHTML=`<h6>FAVORITES</h6><div class="cat${cat==='Favorites'?' on':''}" data-k="Favorites"><span>★ Favorites</span><i>${n('Favorites')}</i></div><h6>LIBRARY</h6>`
@@ -315,7 +326,7 @@ function showDetail(i,keep){
   gal=[];if(it.url)gal.push({src:it.url,kind:'local'});
   (c.images||[]).filter(u=>/^https:\/\//i.test(u)).slice(it.url&&c.previewSaved?1:0).forEach(u=>gal.push({src:u,kind:'remote'}));
   if(!keep){gi=0;resetZoom()}if(gi>=gal.length)gi=0;drawStage();
-  if(!keep&&!it._rc){it._rc=1;const id=it.key;recheckOne(it).finally(()=>{it._rc=0;cur>=0&&view[cur]&&view[cur].key===id&&showDetail(cur,1)})}
+  if(!keep&&autoRC&&!it._rc){it._rc=1;const id=it.key;recheckOne(it).finally(()=>{it._rc=0;cur>=0&&view[cur]&&view[cur].key===id&&showDetail(cur,1)})}
 
   // Author text (agora ENTRE a imagem e o Model info)
   const D=h=>h?window.sanitizeCivitaiDescLocal(h):'',vd=D(c.versionDescription),md=D(c.description),hasDesc=(s==='found'||s==='outdated')&&(has(vd)||has(md));
@@ -332,9 +343,9 @@ function showDetail(i,keep){
   <div><div class="hd"><h2>${esc(c.name||it.name.replace(/\.safetensors$/i,''))}</h2><div class="hr"><button class="fb${fav?' on':''}" onclick="toggleFav(view[cur],event)">${fav?'★ Favorited':'☆ Favorite'}</button>${link}</div></div><div class="fn">${esc(it.path)}</div></div>
   <div class="pill ${s}">${LABEL[s]||LABEL['']}${s==='outdated'&&c.latest?': '+esc(c.latest):''}</div>
   <div class="box"><h3>Model info<span class="bdg">${esc(String(c.type||'LoRA').toUpperCase())}</span></h3>
-    <div class="kv">${info.map(([l,v])=>`<div><label>${l}</label><span>${esc(v||'—')}</span></div>`).join('')}<div class="f"><label>Hash · SHA-256</label><span class="mono">${esc(it._hash||'not hashed yet')}</span></div></div>
+    <div class="kv">${info.map(([l,v])=>`<div><label>${l}</label><span>${esc(v||'—')}</span></div>`).join('')}<div class="f"><label>Hash</label><span class="mono">${esc(it._hash||'not hashed yet')}</span></div></div>
     <div class="mrow"><input type="text" id="mh" placeholder="Look up a hash manually"><button class="pri" onclick="manualSearch()">Search</button></div>
-    ${s?'<div class="mrow"><button onclick="recheck()" style="flex:1">Recheck this LoRA</button></div>':''}</div>
+    <div class="mrow"><button onclick="recheck()" style="flex:1">Recheck this LoRA</button></div></div>
   ${tw.length?`<div class="box"><h3>Author prompts</h3>${tw.map((p,n)=>`<div class="pb"><div class="pl">PROMPT ${n+1}<button class="copy" data-copy="${esc(p)}">Copy</button></div><div class="pt">${esc(p)}</div></div>`).join('')}</div>`:''}
   ${secHtml(m)}${tagsHtml(m)}
   <div class="box"><h3 onclick="${tgl}">Raw metadata<span>▾</span></h3><pre class="x">${esc(JSON.stringify(it.raw||m,null,2))}</pre></div>`;
@@ -347,9 +358,14 @@ function step(d){if(cur<0)return;const n=(page-1)*per+cur+d;if(n<0||n>=all.lengt
 
 /* ---------- Stage / zoom ---------- */
 const thumbU=u=>u.replace('/original=true/','/width=240/');
-function drawStage(){const g=gal[gi];$('mi').style.display=gal.length?'':'none';if(gal.length){const mi=$('mi');mi.crossOrigin='anonymous';mi.onerror=()=>{mi.onerror=null;mi.removeAttribute('crossorigin');mi.src=g.src};mi.src=g.src}
+function drawStage(){const g=gal[gi];$('mi').style.display=gal.length?'':'none';if(gal.length){const mi=$('mi');delete mi.dataset.r;mi.crossOrigin='anonymous';mi.src=g.src}
   $('cnt').textContent=gal.length?`${gi+1} / ${gal.length} · ${g.kind==='local'?'Local preview':'Civitai · view only'}`:'No preview';
-  $('thumbs').innerHTML=gal.length>1?gal.map((u,j)=>`<img alt="" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(thumbU(u.src))}" data-f="${esc(u.src)}" onerror="this.onerror=null;this.removeAttribute('crossorigin');this.src=this.dataset.f" class="${j===gi?'on':''}" data-g="${j}">`).join(''):'';applyZoom()}
+  $('thumbs').innerHTML=gal.length>1?gal.map((u,j)=>`<img alt="" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(thumbU(u.src))}" data-f="${esc(u.src)}" class="${j===gi?'on':''}" data-g="${j}">`).join(''):'';applyZoom()}
+function heal(){const it=view[cur];if(!it||it._healed||it._rc)return;it._healed=1;const id=it.key;
+  recheckOne(it).then(()=>{cur>=0&&view[cur]&&view[cur].key===id&&showDetail(cur,1)})}
+function imgFail(img,full){if(!img.dataset.r){img.dataset.r=1;img.removeAttribute('crossorigin');img.src=full;return}heal()}
+$('thumbs').addEventListener('error',ev=>{const i=ev.target;i.dataset.f&&!i.src.startsWith('blob:')&&imgFail(i,i.dataset.f)},true);
+$('mi').addEventListener('error',()=>{const g=gal[gi];g&&g.kind==='remote'&&imgFail($('mi'),g.src)});
 $('thumbs').onclick=e=>{const g=e.target.dataset.g;if(g!==undefined){gi=+g;resetZoom();drawStage()}};
 const applyZoom=()=>{$('mi').style.transform=`translate(${tx}px,${ty}px) scale(${scale})`;$('zl').textContent=Math.round(scale*100)+'%';$('stage').classList.toggle('zm',scale>1)};
 const resetZoom=()=>{scale=1;tx=ty=0};
@@ -363,6 +379,8 @@ document.addEventListener('keydown',e=>{if(cur<0||/INPUT|SELECT|TEXTAREA/.test(d
   if(e.key==='ArrowRight')step(1);else if(e.key==='ArrowLeft')step(-1);else if(e.key==='Escape')closeDetail()});
 $('help-btn').onclick=e=>{e.stopPropagation();$('help-pop').classList.toggle('open')};
 document.addEventListener('click',e=>$('help-pop').contains(e.target)||$('help-pop').classList.remove('open'));
+
+$('arc').onchange=ev=>{autoRC=ev.target.checked;idbOp('kv',s=>s.put(autoRC,'autoRecheck'),1).catch(()=>{})};
 
 /* ---------- Init ---------- */
 async function init(){await loadCache();const stored=await idbAll(),need=[];roots=roots.filter(r=>!r.handle);
