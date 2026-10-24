@@ -695,7 +695,7 @@
             return;
         }
 
-        const tags = Array.from(masterTagSet).filter(t => !t.startsWith('NL:'));
+        const tags = collectInfoScanTags();
         if (tags.length === 0) {
             if (window.showAlert) window.showAlert('No tags to scan in this dataset.', 'info');
             return;
@@ -762,9 +762,8 @@
     window.runDanbooruBackgroundScan = async function () {
         if (!window.danbooruInfoEnabled) return;
         if (window._dbInfoScanRunning) return;
-        if (typeof masterTagSet === 'undefined' || masterTagSet.size === 0) return;
 
-        const tags = Array.from(masterTagSet).filter(t => !t.startsWith('NL:'));
+        const tags = collectInfoScanTags();
         if (tags.length === 0) return;
 
         window._dbInfoScanRunning = true;
@@ -882,57 +881,47 @@
         });
     }
 
-    function computeActiveGhostTags() {
-        if (typeof selectedIndices === 'undefined' || typeof imageFiles === 'undefined') return [];
-        let fusedTags = new Set();
-        selectedIndices.forEach(idx => {
-            const img = imageFiles[idx];
-            if (img && img.type === 'tags' && img.content) {
-                img.content.split(',').forEach(t => { const c = t.trim(); if (c) fusedTags.add(c); });
-            }
-        });
-        let fusedPending = new Set();
-        selectedIndices.forEach(idx => {
-            const img = imageFiles[idx];
-            if (img && img.pendingAdd && img.pendingAdd.length) {
-                img.pendingAdd.forEach(t => { if (!fusedTags.has(t)) fusedPending.add(t); });
-            }
-        });
-        return Array.from(fusedPending).sort();
+    /* Tags do dataset + sugestões 💡 (pendingAdd). Ghosts não entram em
+       masterTagSet, então o scan antigo nunca buscava a wiki delas e o
+       ❓/❔ nunca tinha o que mostrar. */
+    function collectInfoScanTags() {
+        const set = new Set();
+        if (typeof masterTagSet !== 'undefined') {
+            masterTagSet.forEach(t => { if (t && !String(t).startsWith('NL:')) set.add(t); });
+        }
+        if (typeof imageFiles !== 'undefined') {
+            imageFiles.forEach(img => {
+                (img.pendingAdd || []).forEach(t => {
+                    const c = (t || '').trim();
+                    if (!c || c.startsWith('NL:')) return;
+                    if (typeof window.checkIfNL === 'function' && window.checkIfNL(c)) return;
+                    set.add(c);
+                });
+            });
+        }
+        return Array.from(set);
     }
 
-    function computeMasterGhostTags() {
-        if (typeof imageFiles === 'undefined' || !window.showGhostTagsInList) return [];
-        const pendingCounts = new Map();
-        imageFiles.forEach(img => {
-            if (img.hidden) return;
-            if (img.pendingAdd && img.pendingAdd.length) {
-                img.pendingAdd.forEach(t => pendingCounts.set(t, (pendingCounts.get(t) || 0) + 1));
-            }
-        });
-        return Array.from(pendingCounts.keys()).sort();
-    }
-
-    function injectGhostDbInfoIcons(container, ghostSelector, computeTagsFn, filterNL) {
+    function injectGhostDbInfoIcons(container, ghostSelector) {
         if (!container) return;
         if (!window.danbooruInfoEnabled || !window.danbooruInfoShowIcons) return;
 
-        let tags = computeTagsFn();
-        if (filterNL) tags = tags.filter(t => !t.startsWith('NL:'));
-
-        const rows = container.querySelectorAll(ghostSelector);
-        if (rows.length !== tags.length) return; 
-
-        rows.forEach((row, i) => {
-            const tag = tags[i];
-            if (tag.startsWith('NL:')) return; 
-
-            const tagLower = tag.toLowerCase();
+        container.querySelectorAll(ghostSelector).forEach(row => {
             const rejectBtn = row.querySelector('.tag-ghost-reject');
             if (!rejectBtn) return;
 
-            const dbInfo = window.dbGetCachedTag(tagLower);
-            if (dbInfo && dbInfo.hasWikiInfo && !row.querySelector('.tag-db-info')) {
+            const nameEl = row.querySelector('.tag-name');
+            const tagLower = (row.getAttribute('data-tag-name') || (nameEl ? nameEl.textContent : '') || '').trim().toLowerCase();
+            if (!tagLower || tagLower.startsWith('nl:')) return;
+            if (typeof window.checkIfNL === 'function' && window.checkIfNL(tagLower)) return;
+
+            // Wiki já resolvida: igual às tags normais (só mostra se tiver info).
+            // Ainda não checada: mostra mesmo assim — o clique abre o popout,
+            // que busca a wiki na hora. Ghosts quase nunca passam pelo scan
+            // antes de aparecer, então sem isto o ícone nunca existia.
+            const dbInfo = typeof window.dbGetCachedTag === 'function' ? window.dbGetCachedTag(tagLower) : null;
+            const dbResolved = !!(dbInfo && dbInfo.wikiChecked);
+            if ((!dbResolved || dbInfo.hasWikiInfo) && !row.querySelector('.tag-db-info')) {
                 const icon = document.createElement('span');
                 icon.className = 'tag-db-info';
                 icon.textContent = '❓';
@@ -941,8 +930,10 @@
                 rejectBtn.parentNode.insertBefore(icon, rejectBtn);
             }
 
-            const e6Info = window.showE621 && window.e621GetCachedTag ? window.e621GetCachedTag(tagLower) : null;
-            if (e6Info && e6Info.hasWikiInfo && !row.querySelector('.tag-e621-info')) {
+            if (!window.showE621 || typeof window.e621GetCachedTag !== 'function') return;
+            const e6Info = window.e621GetCachedTag(tagLower);
+            const e6Resolved = !!(e6Info && e6Info.wikiChecked);
+            if ((!e6Resolved || e6Info.hasWikiInfo) && !row.querySelector('.tag-e621-info')) {
                 const icon = document.createElement('span');
                 icon.className = 'tag-e621-info';
                 icon.textContent = '❔';
@@ -965,7 +956,7 @@
                 original.apply(this, arguments);
                 const el = document.getElementById('tag-list-vertical');
                 injectDbInfoIcons(el);
-                injectGhostDbInfoIcons(el, '.tag-row.ghost', computeActiveGhostTags, false);
+                injectGhostDbInfoIcons(el, '.tag-row.ghost');
             };
             wrapped.__dbInfoWrapped = true;
             window.renderEditor = wrapped;
@@ -976,7 +967,7 @@
                 original2.apply(this, arguments);
                 const el = document.getElementById('master-tag-list');
                 injectDbInfoIcons(el);
-                injectGhostDbInfoIcons(el, '.master-tag-item.ghost', computeMasterGhostTags, true);
+                injectGhostDbInfoIcons(el, '.master-tag-item.ghost');
             };
             wrapped2.__dbInfoWrapped = true;
             window.renderMasterTagList = wrapped2;

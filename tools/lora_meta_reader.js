@@ -54,55 +54,87 @@ function parseJsonMeta(raw) {
 	try { return JSON.parse(raw); } catch { try { return JSON.parse(String(raw).replace(/'/g, '"')); } catch { return null; } }
 }
 
+// Trainers conhecidos (ordem importa: mais específicos primeiro). Casam contra o texto de TODO o metadata em minúsculas.
+const TOOL_SIGNATURES = [
+	['EasyLoRA',             /lora[-_\s]?easy|lora_easy_training_scripts|easy[-_\s]?lora|loraeasy/],
+	['ai-toolkit',           /ai[-_\s]?toolkit|ostris\/ai-toolkit/],
+	['OneTrainer',           /one[-_\s]?trainer/],
+	['SimpleTuner',          /simple[-_\s]?tuner/],
+	['Musubi Tuner',         /musubi/],
+	['FluxGym',              /flux\s*gym|fluxgym/],
+	['EveryDream',           /everydream/],
+	['diffusion-pipe',       /diffusion[-_\s]?pipe/],
+	['DiffSynth-Studio',     /diffsynth/],
+	['finetrainers',         /finetrainers/],
+	['ComfyUI-FluxTrainer',  /comfyui[-_\s]?fluxtrainer|flux[-_\s]?trainer/],
+	['SD-Trainer',           /akegarasu|sd[-_\s]?trainer/],
+	['AutoTrain',            /autotrain/],
+	['Citron Trainer',       /citron|lora_anima|anima-preview|circlestone-labs\/anima/]
+];
+
+// Plataformas/serviços de treino online (campo "Source").
+const PLATFORM_SIGNATURES = [
+	['Civitai Spine Controller', /civitai\s+spine\s+controller/],
+	['ModelScope / MuseAI',      /model\s?scope|muse\s?ai|魔搭/],
+	['TensorArt',                /tensor[._\s-]?art/],
+	['SeaArt',                   /sea[._\s-]?art/],
+	['LiblibAI',                 /liblib/],
+	['Shakker',                  /shakker/],
+	['fal.ai',                   /fal[._-]ai/],
+	['Civitai',                  /civitai/],
+	['Hugging Face',             /hugging\s*face|huggingface/]
+];
+const GENERIC_PLATFORMS = ['Civitai', 'Hugging Face'];
+
+const TOOL_REPOS = {
+	'ai-toolkit': 'https://github.com/ostris/ai-toolkit',
+	'easylora': 'https://github.com/derrian-distro/LoRA_Easy_Training_Scripts',
+	'kohya / sd-scripts': 'https://github.com/kohya-ss/sd-scripts',
+	'onetrainer': 'https://github.com/Nerogar/OneTrainer',
+	'simpletuner': 'https://github.com/bghira/SimpleTuner',
+	'musubi tuner': 'https://github.com/kohya-ss/musubi-tuner',
+	'fluxgym': 'https://github.com/fluxgym/fluxgym',
+	'everydream': 'https://github.com/victorchall/EveryDream2trainer',
+	'citron trainer': 'https://github.com/citronlegacy/citron-anima-lora-trainer-ui',
+	'diffusion-pipe': 'https://github.com/tdrussell/diffusion-pipe',
+	'diffsynth-studio': 'https://github.com/modelscope/DiffSynth-Studio',
+	'finetrainers': 'https://github.com/huggingface/finetrainers',
+	'comfyui-fluxtrainer': 'https://github.com/kijai/ComfyUI-FluxTrainer',
+	'sd-trainer': 'https://github.com/Akegarasu/lora-scripts',
+	'autotrain': 'https://github.com/huggingface/autotrain-advanced',
+	'diffusers': 'https://github.com/huggingface/diffusers'
+};
+
 function normalizeSoftwareName(name) {
-	const n = String(name || '').trim();
-	const low = n.toLowerCase();
-	if (/ai[-_\s]?toolkit/.test(low)) return 'ai-toolkit';
-	if (/lora[-_\s]?easy|lora_easy_training_scripts|easy[-_\s]?lora|loraeasy/.test(low)) return 'EasyLoRA';
-	if (/sd[-_\s]?scripts|kohya/.test(low)) return 'kohya / sd-scripts';
-	if (/one[-_\s]?trainer/.test(low)) return 'OneTrainer';
-	if (/simple[-_\s]?tuner/.test(low)) return 'SimpleTuner';
-	if (/musubi/.test(low)) return 'Musubi Tuner';
-	if (/flux\s*gym|fluxgym/.test(low)) return 'FluxGym';
-	if (/everydream/.test(low)) return 'EveryDream';
-	if (/diffusers/.test(low)) return 'Diffusers';
-	if (/citron/.test(low)) return 'Citron Trainer';
+	const raw = String(name || '').trim(), low = raw.toLowerCase();
+	const hit = TOOL_SIGNATURES.find(([, rx]) => rx.test(low));
+	if (hit) return hit[0];
 	if (/sd[-_\s]?scripts[-_\s]?compatible/.test(low)) return 'sd-scripts compatible metadata';
-	return n;
+	if (/sd[-_\s]?scripts|kohya/.test(low)) return 'kohya / sd-scripts';
+	if (/diffusers/.test(low)) return 'Diffusers';
+	return raw;
 }
 
 function knownTrainingToolRepo(label, rawRepo = '') {
 	const repo = String(rawRepo || '').trim();
 	if (/^https?:\/\/github\.com\//i.test(repo)) return repo;
-	const key = String(label || '').toLowerCase();
-	if (key === 'ai-toolkit') return 'https://github.com/ostris/ai-toolkit';
-	if (key === 'easylora') return 'https://github.com/derrian-distro/LoRA_Easy_Training_Scripts';
-	if (key === 'kohya / sd-scripts') return 'https://github.com/kohya-ss/sd-scripts';
-	if (key === 'onetrainer') return 'https://github.com/Nerogar/OneTrainer';
-	if (key === 'simpletuner') return 'https://github.com/bghira/SimpleTuner';
-	if (key === 'musubi tuner') return 'https://github.com/kohya-ss/musubi-tuner';
-	if (key === 'fluxgym') return 'https://github.com/fluxgym/fluxgym';
-	if (key === 'everydream') return 'https://github.com/victorchall/EveryDream2trainer';
-	if (key === 'citron trainer') return 'https://github.com/citronlegacy/citron-anima-lora-trainer-ui';
-	return '';
+	return TOOL_REPOS[String(label || '').toLowerCase()] || '';
 }
 
 function normalizeTrainingSource(source) {
 	const s = String(source || '').trim();
 	if (!s || s === 'None' || s === 'null') return '';
-	const low = s.toLowerCase();
-	if (/civitai\s+spine\s+controller/.test(low)) return 'Civitai Spine Controller';
-	if (/civitai/.test(low)) return 'Civitai';
-	if (/hugging\s*face|huggingface/.test(low)) return 'Hugging Face';
-	if (/local/.test(low)) return 'Local';
-	return s;
+	const hit = PLATFORM_SIGNATURES.find(([, rx]) => rx.test(s.toLowerCase()));
+	if (hit) return hit[0];
+	return /local/i.test(s) ? 'Local' : s;
 }
 
 function detectTrainingSource(meta, searchable = '') {
 	const direct = findVal(meta, ['training_source', 'source', 'platform', 'training_platform', 'ss_training_source', 'modelspec.source', 'modelspec.source_platform']);
 	const notes = findVal(meta, ['notes','ss_training_comment','training_comment','comment']) || '';
 	const haystack = (String(notes) + '\n' + String(direct || '') + '\n' + String(searchable || '')).toLowerCase();
-	if (/civitai\s+spine\s+controller/.test(haystack)) return 'Civitai Spine Controller';
+	const strong = PLATFORM_SIGNATURES.find(([n, rx]) => !GENERIC_PLATFORMS.includes(n) && rx.test(haystack));
+	if (strong) return strong[0];
 	if (/civitai/.test(haystack) && /(training|trainer|spine|job|via)/.test(haystack)) return 'Civitai';
 	return normalizeTrainingSource(direct);
 }
@@ -132,17 +164,9 @@ function detectSystemInfo(meta) {
 		if (label) return makeTrainingToolInfo(label, '', '', source);
 	}
 
-	const opt = String(findVal(meta, ['ss_optimizer','ss_optimizer_type','optimizer_type']) || '');
-	const easySignals = [ /LoraEasyCustomOptimizer/i, /LoRA[_\s-]?Easy[_\s-]?Training[_\s-]?Scripts/i, /\bEasyLoRA\b/i, /\bLoraEasy\b/i ];
-	if (easySignals.some(rx => rx.test(opt) || rx.test(searchable))) return makeTrainingToolInfo('EasyLoRA', '', '', source);
+	const hit = TOOL_SIGNATURES.find(([, rx]) => rx.test(low));
+	if (hit) return makeTrainingToolInfo(hit[0], '', '', source);
 
-	if (/ai[-_\s]?toolkit|ostris\/ai-toolkit|github\.com\/ostris\/ai-toolkit/.test(low)) return makeTrainingToolInfo('ai-toolkit', '', '', source);
-	if (/one[-_\s]?trainer/.test(low)) return makeTrainingToolInfo('OneTrainer', '', '', source);
-	if (/simple[-_\s]?tuner|simpletuner/.test(low)) return makeTrainingToolInfo('SimpleTuner', '', '', source);
-	if (/musubi[-_\s]?tuner|musubi/.test(low)) return makeTrainingToolInfo('Musubi Tuner', '', '', source);
-	if (/flux\s*gym|fluxgym/.test(low)) return makeTrainingToolInfo('FluxGym', '', '', source);
-	if (/everydream/.test(low)) return makeTrainingToolInfo('EveryDream', '', '', source);
-	if (/lora_anima|anima-preview|circlestone-labs\/anima/.test(low)) return makeTrainingToolInfo('Citron Trainer', '', '', source);
 	if (meta['ss_sd_scripts_commit_hash'] || /sd[-_\s]?scripts|kohya[-_\s]?ss|github\.com\/kohya-ss\/sd-scripts|\bkohya\b/.test(low)) return makeTrainingToolInfo('kohya / sd-scripts', '', '', source);
 
 	const ssKeyCount = Object.keys(meta || {}).filter(k => /^ss_/.test(k)).length;
@@ -579,3 +603,25 @@ function setField(id, val, isCardValue = true) {
 		if (!el.querySelector('a')) el.style.color = '#ffffff';
 	} else { el.textContent = '—'; el.classList.add('empty'); el.style.color = ''; }
 }
+
+// ===================================================================
+// expandMeta — trainers online (ModelScope/MuseAI e similares) gravam blocos
+// JSON como string em chaves próprias. Aqui eles são "achatados" no topo para que
+// findVal() e os resolvers achem os campos. Não toca em chaves ss_* / modelspec.*
+// (ex.: ss_tag_frequency) e nunca sobrescreve um valor já preenchido.
+// ===================================================================
+window.expandMeta = function(meta) {
+	const out = { ...(meta || {}) };
+	for (const [k, v] of Object.entries(meta || {})) {
+		if (typeof v !== 'string' || /^ss_|^modelspec\./.test(k)) continue;
+		const t = v.trim();
+		if (t[0] !== '{' || !t.endsWith('}')) continue;
+		const o = parseJsonMeta(t);
+		if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
+		for (const [pk, pv] of Object.entries(o)) {
+			if (out[pk] === undefined || out[pk] === '' || out[pk] === 'None')
+				out[pk] = (pv && typeof pv === 'object') ? JSON.stringify(pv) : String(pv);
+		}
+	}
+	return out;
+};

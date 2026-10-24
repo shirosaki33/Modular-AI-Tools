@@ -6,7 +6,10 @@
 let taggersDirHandle = null;
 let onnxSession = null;
 let currentSessionModel = null;
-let tagsDB = []; 
+let tagsDB = [];
+let onnxSession2 = null;
+let currentSessionModel2 = null;
+let tagsDB2 = [];
 let availableModelsObjects = []; 
 
 // Instância Global para os Offline VLMs (Florence-2)
@@ -468,6 +471,7 @@ async function scanTaggersFolder() {
             availableModelsObjects.forEach((m, index) => select.innerHTML += `<option value="${index}">${m.displayName}</option>`);
             if(window.showAlert) window.showAlert("Tagger models loaded successfully.", "success");
         }
+        if (typeof window.syncSecondModelSelect === 'function') window.syncSecondModelSelect();
     } catch (e) { console.error(e); }
 }
 
@@ -504,6 +508,203 @@ window.checkBatchReadyState = function() {
     const hasFolder = !!(window.rootHandle || window.currentImagesHandle);
     btn.disabled = !hasFolder;
 }
+
+/* =========================================================================
+   SECOND MODEL REVIEW (ONNX)
+   ---------------------------------------------------------------------
+   Checkbox imediatamente ANTES do Review Mode (ghost tags). Desmarcado,
+   não mostra nada. Marcado, abre uma cópia do seletor do primeiro modelo
+   (modelo + threshold) para um segundo passe.
+
+   O passe 2 só ACRESCENTA tags que a lógica dele (csv + threshold próprios)
+   encontrou e que o modelo principal não tinha colocado. Não remove nada
+   que o primeiro passe já inseriu. No Review Mode essas tags extras entram
+   como ghost tags (💡), junto com as do primeiro modelo.
+========================================================================= */
+function parseTaggerCsv(text) {
+    return text.split('\n').slice(1).filter(l => l.trim()).map(line => {
+        const parts = line.split(',');
+        return { name: parts[1].replace(/_/g, ' '), category: parseInt(parts[2]) };
+    });
+}
+
+window.loadSelectedModelData2 = async function () {
+    const select = document.getElementById('model-select-2');
+    if (!select || select.value === '') { tagsDB2 = []; return; }
+    const selectedModel = availableModelsObjects[select.value];
+    if (!selectedModel) { tagsDB2 = []; return; }
+    try {
+        const csvHandle = await selectedModel.dirHandle.getFileHandle(`${selectedModel.baseName}.csv`);
+        const text = await (await csvHandle.getFile()).text();
+        tagsDB2 = parseTaggerCsv(text);
+    } catch (e) {
+        tagsDB2 = [];
+        if (window.showAlert) window.showAlert('Warning: .csv file not found for the second model.', 'warn');
+    }
+};
+
+window.syncSecondModelSelect = function () {
+    const src = document.getElementById('model-select');
+    const dst = document.getElementById('model-select-2');
+    if (!src || !dst) return;
+    const prev = dst.value;
+    dst.innerHTML = src.innerHTML;
+    if (dst.options[0] && dst.options[0].value === '') dst.options[0].textContent = '-- Select Second Tagger Model --';
+    if (prev && Array.from(dst.options).some(o => o.value === prev)) dst.value = prev;
+    else dst.value = '';
+};
+
+function cloneTaggerField(sourceId, newId) {
+    const src = document.getElementById(sourceId);
+    if (!src) return null;
+    let block = src;
+    const parent = src.parentElement;
+    if (parent && parent.tagName !== 'BODY' && parent.tagName !== 'FORM') {
+        const n = parent.querySelectorAll('input, select, textarea').length;
+        if (n === 1 && !parent.querySelector('#review-mode-toggle, #second-model-review-toggle, #second-model-panel')) {
+            block = parent;
+        }
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'second-model-field';
+    if (block === src) {
+        const prev = src.previousElementSibling;
+        if (prev && !prev.querySelector('input, select, textarea, button') && /^(LABEL|SPAN|P|DIV|B|STRONG)$/.test(prev.tagName)) {
+            const labelClone = prev.cloneNode(true);
+            if (labelClone.tagName === 'LABEL') labelClone.setAttribute('for', newId);
+            wrap.appendChild(labelClone);
+        }
+    }
+    const clone = block.cloneNode(true);
+    const el = clone.id === sourceId ? clone : clone.querySelector('#' + sourceId);
+    if (!el) return null;
+    el.id = newId;
+    el.onchange = null;
+    el.oninput = null;
+    el.onclick = null;
+    el.removeAttribute('onchange');
+    el.removeAttribute('oninput');
+    el.removeAttribute('onclick');
+    clone.querySelectorAll('label[for="' + sourceId + '"]').forEach(l => l.setAttribute('for', newId));
+    if (clone !== el && clone.id) clone.removeAttribute('id');
+    wrap.appendChild(clone);
+    return wrap;
+}
+
+function fallbackTaggerField(kind) {
+    const wrap = document.createElement('div');
+    wrap.className = 'second-model-field';
+    if (kind === 'model') {
+        wrap.innerHTML = '<label for="model-select-2">Model</label><select id="model-select-2"></select>';
+    } else {
+        const src = document.getElementById('threshold');
+        const value = src && src.value ? src.value : '0.35';
+        const min = src && src.min ? src.min : '0';
+        const max = src && src.max ? src.max : '1';
+        const step = src && src.step ? src.step : '0.01';
+        wrap.innerHTML = `<label for="threshold-2">Threshold</label><input id="threshold-2" type="number" min="${min}" max="${max}" step="${step}" value="${value}">`;
+    }
+    return wrap;
+}
+
+function buildSecondModelPanel() {
+    const panel = document.getElementById('second-model-panel');
+    if (!panel || panel.dataset.built === '1') return;
+    panel.dataset.built = '1';
+    const note = document.createElement('div');
+    note.className = 'second-model-note';
+    note.textContent = 'Second pass only adds tags this model finds that the first one missed. Nothing already kept is removed.';
+    panel.appendChild(note);
+    panel.appendChild(cloneTaggerField('model-select', 'model-select-2') || fallbackTaggerField('model'));
+    panel.appendChild(cloneTaggerField('threshold', 'threshold-2') || fallbackTaggerField('threshold'));
+    const sel = panel.querySelector('#model-select-2');
+    if (sel) sel.addEventListener('change', () => window.loadSelectedModelData2());
+    window.syncSecondModelSelect();
+}
+
+window.updateSecondModelReviewUI = function () {
+    const on = !!(document.getElementById('second-model-review-toggle') && document.getElementById('second-model-review-toggle').checked);
+    const panel = document.getElementById('second-model-panel');
+    if (!panel) return;
+    if (on) {
+        buildSecondModelPanel();
+        window.syncSecondModelSelect();
+        panel.style.display = 'block';
+    } else {
+        panel.style.display = 'none';
+    }
+};
+
+function updateSecondModelModeVisibility() {
+    const wrap = document.getElementById('second-model-review-wrap');
+    if (!wrap) return;
+    const modeEl = document.getElementById('batch-mode-select');
+    const isTags = !modeEl || modeEl.value === 'tags';
+    wrap.style.display = isTags ? '' : 'none';
+    if (isTags) window.updateSecondModelReviewUI();
+}
+
+function reviewModeAnchor(toggle) {
+    const label = toggle.closest('label');
+    if (label && !label.querySelector('#model-select, #threshold, #batch-mode-select')) return label;
+    let node = toggle;
+    while (node.parentElement && node.parentElement.tagName !== 'BODY') {
+        const p = node.parentElement;
+        if (p.querySelectorAll('input, select, textarea').length > 2 || p.querySelector('#model-select')) break;
+        node = p;
+    }
+    return node;
+}
+
+function injectSecondModelReviewUI() {
+    if (document.getElementById('second-model-review-toggle')) return true;
+    const toggle = document.getElementById('review-mode-toggle');
+    if (!toggle) return false;
+    if (!document.getElementById('second-model-review-style')) {
+        const style = document.createElement('style');
+        style.id = 'second-model-review-style';
+        style.textContent = `
+            #second-model-review-wrap { margin: 8px 0; }
+            #second-model-review-wrap > label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+            #second-model-panel { display: none; margin: 6px 0 10px 22px; padding: 8px 10px; border: 1px dashed #555; border-radius: 6px; }
+            #second-model-panel .second-model-note { font-size: 11px; color: #999; margin-bottom: 8px; }
+            #second-model-panel .second-model-field { margin: 0 0 8px 0; }
+            #second-model-panel .second-model-field:last-child { margin-bottom: 0; }
+        `;
+        document.head.appendChild(style);
+    }
+    const anchor = reviewModeAnchor(toggle);
+    const wrap = document.createElement('div');
+    wrap.id = 'second-model-review-wrap';
+    wrap.innerHTML = `
+        <label title="After the main ONNX tagger, run a second model and add only the tags it finds missing.">
+            <input type="checkbox" id="second-model-review-toggle">
+            Second Model Review
+        </label>
+        <div id="second-model-panel"></div>
+    `;
+    anchor.parentElement.insertBefore(wrap, anchor);
+    document.getElementById('second-model-review-toggle').addEventListener('change', () => window.updateSecondModelReviewUI());
+    window.updateSecondModelReviewUI();
+    return true;
+}
+
+function bootSecondModelReviewUI() {
+    let tries = 0;
+    const tick = () => {
+        const ok = injectSecondModelReviewUI();
+        const modeSel = document.getElementById('batch-mode-select');
+        if (modeSel && !modeSel.dataset.secondModelHook) {
+            modeSel.dataset.secondModelHook = '1';
+            modeSel.addEventListener('change', updateSecondModelModeVisibility);
+        }
+        updateSecondModelModeVisibility();
+        if (!ok && tries++ < 40) setTimeout(tick, 250);
+    };
+    tick();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootSecondModelReviewUI);
+else bootSecondModelReviewUI();
 
 const KNOWN_VLM_DEFAULT_PROMPTS = [
     '<CAPTION>', '<DETAILED_CAPTION>', '<MORE_DETAILED_CAPTION>', '<OCR>',
@@ -620,6 +821,53 @@ async function preprocessImage(imgUrl) {
     });
 }
 
+async function createOnnxSession(modelObj, hwMode) {
+    const modelFileHandle = await modelObj.dirHandle.getFileHandle(modelObj.fileName);
+    const arrayBuffer = await (await modelFileHandle.getFile()).arrayBuffer();
+    let provider = 'wasm';
+    if (hwMode === 'webgpu') {
+        if (!navigator.gpu) {
+            if (window.showAlert) window.showAlert('WebGPU not supported. Forcing CPU WASM.', 'warn');
+        } else {
+            provider = 'webgpu';
+        }
+    }
+    try {
+        return await ort.InferenceSession.create(arrayBuffer, { executionProviders: [provider] });
+    } catch (e) {
+        if (provider === 'webgpu') {
+            console.warn('WebGPU failed:', e);
+            if (window.showAlert) window.showAlert('WebGPU failed. Forcing CPU WASM.', 'warn');
+            return await ort.InferenceSession.create(arrayBuffer, { executionProviders: ['wasm'] });
+        }
+        throw e;
+    }
+}
+
+async function inferTags(session, tags, imgUrl, threshold, excludeArray) {
+    const canvas = await preprocessImage(imgUrl);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, BATCH_TARGET_SIZE, BATCH_TARGET_SIZE).data;
+    const float32Data = new Float32Array(BATCH_TARGET_SIZE * BATCH_TARGET_SIZE * 3);
+    for (let i = 0; i < BATCH_TARGET_SIZE * BATCH_TARGET_SIZE; i++) {
+        float32Data[i * 3 + 0] = imgData[i * 4 + 2];
+        float32Data[i * 3 + 1] = imgData[i * 4 + 1];
+        float32Data[i * 3 + 2] = imgData[i * 4 + 0];
+    }
+    const tensor = new ort.Tensor('float32', float32Data, [1, BATCH_TARGET_SIZE, BATCH_TARGET_SIZE, 3]);
+    const results = await session.run({ [session.inputNames[0]]: tensor });
+    const outputData = results[session.outputNames[0]].data;
+    const tagList = [];
+    for (let i = 0; i < tags.length; i++) {
+        if (outputData[i] >= threshold && tags[i].category !== 9) {
+            const tName = tags[i].name;
+            if (!excludeArray.includes(tName.toLowerCase())) tagList.push({ name: tName, conf: outputData[i] });
+        }
+    }
+    tagList.sort((a, b) => b.conf - a.conf);
+    return tagList.map(t => t.name);
+}
+
 function updateDownloadProgress(data) {
     const dlContainer = document.getElementById('vlm-dl-container');
     const dlFile = document.getElementById('vlm-dl-file');
@@ -707,6 +955,30 @@ window.startBatchTagging = async function() {
         if(window.showAlert) window.showAlert("Please select a valid Tagger model.", "error");
         return;
     }
+    let useSecondModel = false;
+    let threshold2 = 0.35;
+    let selectedModelObj2 = null;
+    if (mode === 'tags' && document.getElementById('second-model-review-toggle') && document.getElementById('second-model-review-toggle').checked) {
+        const sel2 = document.getElementById('model-select-2');
+        if (!sel2 || sel2.value === '') {
+            if(window.showAlert) window.showAlert('Second Model Review is on, but no second tagger model is selected.', 'error');
+            return;
+        }
+        selectedModelObj2 = availableModelsObjects[sel2.value];
+        if (!selectedModelObj2) {
+            if(window.showAlert) window.showAlert('Second model selection is invalid. Set the taggers folder again.', 'error');
+            return;
+        }
+        if (!tagsDB2.length) await window.loadSelectedModelData2();
+        if (!tagsDB2.length) {
+            if(window.showAlert) window.showAlert('Second model has no .csv tags file.', 'error');
+            return;
+        }
+        const th2el = document.getElementById('threshold-2');
+        threshold2 = th2el ? parseFloat(th2el.value) : parseFloat(document.getElementById('threshold').value);
+        if (!isFinite(threshold2)) threshold2 = 0.35;
+        useSecondModel = true;
+    }
     if (mode === 'ollama-vision') {
         const ollamaSel = document.getElementById('ollama-model-select');
         if (!ollamaSel || !ollamaSel.value) {
@@ -762,31 +1034,26 @@ window.startBatchTagging = async function() {
             
             if (!onnxSession || currentSessionModel !== selectedModelObj.displayName) {
                 if(window.showAlert) window.showAlert(`Loading ${selectedModelObj.fileName}... this might take a while.`, 'info');
-                
-                const modelFileHandle = await selectedModelObj.dirHandle.getFileHandle(selectedModelObj.fileName);
-                const arrayBuffer = await (await modelFileHandle.getFile()).arrayBuffer();
-                
-                let provider = 'wasm';
-                if (hwMode === 'webgpu') {
-                    if (!navigator.gpu) { 
-                        if(window.showAlert) window.showAlert("WebGPU not supported. Forcing CPU WASM.", "warn"); 
-                    } else {
-                        provider = 'webgpu';
-                    }
-                }
-                
-                try {
-                    onnxSession = await ort.InferenceSession.create(arrayBuffer, { executionProviders: [provider] });
-                } catch(e) {
-                    if (provider === 'webgpu') {
-                        console.warn("WebGPU failed:", e);
-                        if(window.showAlert) window.showAlert("WebGPU failed. Forcing CPU WASM.", "warn");
-                        onnxSession = await ort.InferenceSession.create(arrayBuffer, { executionProviders: ['wasm'] });
-                    } else {
-                        throw e;
-                    }
-                }
+                onnxSession = await createOnnxSession(selectedModelObj, hwMode);
                 currentSessionModel = selectedModelObj.displayName;
+            }
+
+            if (useSecondModel) {
+                if (selectedModelObj2.displayName === selectedModelObj.displayName) {
+                    if (onnxSession2 && onnxSession2 !== onnxSession) {
+                        try { await onnxSession2.release(); } catch (e) {}
+                    }
+                    onnxSession2 = onnxSession;
+                    currentSessionModel2 = currentSessionModel;
+                } else if (!onnxSession2 || currentSessionModel2 !== selectedModelObj2.displayName || onnxSession2 === onnxSession) {
+                    if (onnxSession2 && onnxSession2 !== onnxSession) {
+                        try { await onnxSession2.release(); } catch (e) {}
+                        onnxSession2 = null;
+                    }
+                    if(window.showAlert) window.showAlert(`Loading second model ${selectedModelObj2.fileName}... this might take a while.`, 'info');
+                    onnxSession2 = await createOnnxSession(selectedModelObj2, hwMode);
+                    currentSessionModel2 = selectedModelObj2.displayName;
+                }
             }
             
             let processed = 0;
@@ -800,38 +1067,26 @@ window.startBatchTagging = async function() {
                 const imgObj = targetFiles[idx];
                 if (imgObj.hidden) continue;
                 const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
-                
-                const canvas = await preprocessImage(imgObj.url);
-                const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                const imgData = ctx.getImageData(0, 0, BATCH_TARGET_SIZE, BATCH_TARGET_SIZE).data;
-                
-                const float32Data = new Float32Array(BATCH_TARGET_SIZE * BATCH_TARGET_SIZE * 3);
-                for (let i = 0; i < BATCH_TARGET_SIZE * BATCH_TARGET_SIZE; i++) {
-                    float32Data[i * 3 + 0] = imgData[i * 4 + 2];
-                    float32Data[i * 3 + 1] = imgData[i * 4 + 1];
-                    float32Data[i * 3 + 2] = imgData[i * 4 + 0];
-                }
-                
-                const tensor = new ort.Tensor('float32', float32Data, [1, BATCH_TARGET_SIZE, BATCH_TARGET_SIZE, 3]);
-                const results = await onnxSession.run({ [onnxSession.inputNames[0]]: tensor });
-                const outputData = results[onnxSession.outputNames[0]].data; 
-                
-                let tagList = [];
-                for (let i = 0; i < tagsDB.length; i++) {
-                    if (outputData[i] >= threshold && tagsDB[i].category !== 9) {
-                        const tName = tagsDB[i].name;
-                        if (!excludeArray.includes(tName.toLowerCase())) {
-                            tagList.push({ name: tName, conf: outputData[i] });
-                        }
-                    }
-                }
-                
-                tagList.sort((a,b) => b.conf - a.conf);
-                let finalTags = tagList.map(t => t.name);
+
+                let finalTags = await inferTags(onnxSession, tagsDB, imgObj.url, threshold, excludeArray);
                 
                 if (prefix) {
                     const prefixArray = prefix.split(',').map(t => t.trim()).filter(t => t);
                     finalTags = [...prefixArray, ...finalTags.filter(t => !prefixArray.includes(t))];
+                }
+
+                // Passe 2: só entra tag que o segundo modelo previu e o primeiro
+                // ainda não tinha. Não tira tag do primeiro passe nem do arquivo.
+                if (useSecondModel && onnxSession2 && tagsDB2.length) {
+                    const extra = await inferTags(onnxSession2, tagsDB2, imgObj.url, threshold2, excludeArray);
+                    const have = new Set(finalTags.map(t => String(t).toLowerCase()));
+                    extra.forEach(t => {
+                        const key = String(t).toLowerCase();
+                        if (!have.has(key)) {
+                            finalTags.push(t);
+                            have.add(key);
+                        }
+                    });
                 }
                 
                 if (reviewModeActive) {

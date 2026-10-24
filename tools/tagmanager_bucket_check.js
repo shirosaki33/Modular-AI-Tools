@@ -69,6 +69,16 @@
     ];
     const BUCKET_KEYS = new Set(BUCKETS.map(([w, h]) => w + 'x' + h));
 
+    /* ▭ paisagem, ▯ retrato, □ quadrado — pra não ter que comparar os números */
+    function orientMark(w, h) {
+        if (w > h) return '▭';
+        if (h > w) return '▯';
+        return '□';
+    }
+    function formatRes(w, h) {
+        return orientMark(w, h) + ' ' + w + '×' + h;
+    }
+
     /* ---------- CSS ---------- */
     const style = document.createElement('style');
     style.innerHTML = `
@@ -80,18 +90,24 @@
         #btn-scan-buckets { flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; }
         #btn-scan-buckets:hover { color:#00ff99; border-color:#00ff99; }
         #btn-fix-bucket { display:none; background:#2a0000; border-color:#aa0000; color:#ff8080; }
+        #btn-fix-bucket.is-valid { background:#0d2a18; border-color:#00aa66; color:#00ff99; }
+        #btn-fix-bucket.is-unknown { background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; }
 
         #modal-fix-bucket .tool-modal { width: 620px; max-width: 92vw; max-height: 88vh; overflow-y: auto; }
-        .bucket-candidate-list { display:flex; flex-wrap:wrap; gap:8px; margin: 10px 0; }
+        .bucket-candidate-list { display:flex; flex-wrap:wrap; gap:8px; margin: 10px 0; max-height: 168px; overflow-y: auto; flex-shrink: 0; }
         .bucket-candidate-chip { background:#151515; border:1px solid #444; border-radius:8px; padding:8px 12px; cursor:pointer; font-size:12px; color:#ddd; text-align:center; transition:0.15s; }
         .bucket-candidate-chip:hover { border-color:#666; }
         .bucket-candidate-chip.active { border-color:#00ff99; background:#0d2a18; color:#00ff99; }
+        .bucket-candidate-chip.is-current { border-style: dashed; }
         .bucket-candidate-chip .bc-kept { display:block; font-size:10px; color:#888; margin-top:2px; }
         .bucket-candidate-chip.active .bc-kept { color:#66ffaa; }
 
-        #bucket-preview-wrap { position:relative; margin: 15px auto; background:#000; overflow:hidden; border:1px solid #333; border-radius:6px; max-width: 480px; width: 100%; line-height: 0; }
-        #bucket-preview-img { display:block; width:100%; height:auto; user-select:none; -webkit-user-drag:none; }
-        #bucket-crop-rect { position:absolute; border:2px solid #00ff99; box-shadow: 0 0 0 2000px rgba(0,0,0,0.55); cursor: grab; }
+        /* flex column + max-height esmagava a preview e o overflow cortava a base */
+        #bucket-preview-wrap { position:relative; margin: 15px auto; background:#000; overflow:hidden; border:1px solid #333; border-radius:6px; width: fit-content; max-width: 100%; line-height: 0; flex-shrink: 0; align-self: center; touch-action: none; cursor: grab; user-select: none; }
+        #bucket-preview-wrap.dragging { cursor: grabbing; }
+        #bucket-preview-img { display:block; width:auto; height:auto; max-width: min(480px, 100%); max-height: 52vh; object-fit: contain; user-select:none; -webkit-user-drag:none; position: relative; z-index: 0 !important; pointer-events: none !important; }
+        #bucket-crop-shade { position:absolute; pointer-events: none !important; box-shadow: 0 0 0 2000px rgba(0,0,0,0.55); box-sizing: border-box; z-index: 1 !important; }
+        #bucket-crop-rect { position:absolute; border:2px solid #00ff99; cursor: grab; box-sizing: border-box; z-index: 2 !important; pointer-events: auto !important; background: rgba(0,255,153,0.05); }
         #bucket-crop-rect.dragging { cursor: grabbing; }
         .bucket-warn-upscale { font-size:11px; color:#ffcc66; background:#2a1a00; border:1px solid #aa6600; padding:8px 10px; border-radius:6px; margin-top:10px; display:none; }
     `;
@@ -153,7 +169,10 @@
             const nameEl = img.element.querySelector('.list-item-name');
             const result = window._bucketResults.get(img);
             const resEl = img.element.querySelector('.list-item-resolution');
-            if (result && resEl && !resEl.textContent) resEl.textContent = ` · ${result.w}×${result.h}`;
+            if (result && resEl) {
+                const label = ` · ${formatRes(result.w, result.h)}`;
+                if (resEl.textContent !== label) resEl.textContent = label;
+            }
             const isBad = !!(result && result.bad);
             img.element.classList.toggle('bad-bucket', isBad);
             let badge = nameEl && nameEl.querySelector('.bucket-bad-badge');
@@ -164,7 +183,7 @@
                     nameEl.appendChild(badge);
                 }
                 if (badge) {
-                    badge.textContent = `🪣 ${result.w}×${result.h}`;
+                    badge.textContent = `🪣 ${formatRes(result.w, result.h)}`;
                     badge.title = 'Resolution is not an SDXL training bucket. Select this image and use "🪣 Fix Bucket".';
                 }
             } else if (badge) {
@@ -278,8 +297,8 @@
         const btn = document.createElement('button');
         btn.id = 'btn-fix-bucket';
         btn.className = 'btn-save-local';
-        btn.textContent = '🪣 Fix Bucket';
-        btn.title = 'This image is not on an SDXL bucket resolution — click to crop it to one';
+        btn.textContent = '🪣 Bucket';
+        btn.title = 'Crop or resize this image to any SDXL training bucket — works even if the resolution is already valid';
         btn.onclick = () => {
             if (typeof selectedIndices === 'undefined' || selectedIndices.size !== 1) return;
             const img = imageFiles[Array.from(selectedIndices)[0]];
@@ -294,17 +313,30 @@
         if (typeof selectedIndices === 'undefined' || selectedIndices.size !== 1 || typeof imageFiles === 'undefined') { btn.style.display = 'none'; return; }
         const img = imageFiles[Array.from(selectedIndices)[0]];
         const result = img && window._bucketResults.get(img);
-        btn.style.display = (result && result.bad) ? 'inline-block' : 'none';
+        btn.style.display = 'inline-block';
+        btn.classList.remove('is-valid', 'is-unknown');
+        if (result && result.bad) {
+            btn.textContent = '🪣 Fix Bucket';
+            btn.title = 'This image is not on an SDXL bucket resolution — click to crop it to one';
+        } else if (result) {
+            btn.classList.add('is-valid');
+            btn.textContent = '🪣 Change Bucket';
+            btn.title = `Already on an SDXL bucket (${formatRes(result.w, result.h)}). Click to crop or resize it to a different bucket.`;
+        } else {
+            btn.classList.add('is-unknown');
+            btn.textContent = '🪣 Bucket';
+            btn.title = 'Crop or resize this image to an SDXL training bucket';
+        }
     }
 
     /* ---------- SUGESTÃO DE BUCKETS (por proximidade de aspect ratio) ---------- */
-    function suggestBuckets(w, h, limit = 4) {
+    function suggestBuckets(w, h, limit = BUCKETS.length) {
         const imgAR = w / h;
         return BUCKETS
             .map(([bw, bh]) => {
                 const scale = Math.max(bw / w, bh / h);
                 const kept = (bw * bh) / (scale * scale * w * h);
-                return { bw, bh, diff: Math.abs(Math.log(bw / bh) - Math.log(imgAR)), kept };
+                return { bw, bh, diff: Math.abs(Math.log(bw / bh) - Math.log(imgAR)), kept, scale };
             })
             .sort((a, b) => a.diff - b.diff)
             .slice(0, limit);
@@ -312,7 +344,9 @@
 
     /* ---------- MODAL DE FIX + PREVIEW ARRASTÁVEL ---------- */
     function buildFixModal() {
-        if (document.getElementById('modal-fix-bucket')) return;
+        const existing = document.getElementById('modal-fix-bucket');
+        if (existing && document.getElementById('bucket-crop-shade')) return;
+        if (existing) existing.remove();
         const overlay = document.createElement('div');
         overlay.id = 'modal-fix-bucket';
         overlay.className = 'modal-overlay';
@@ -326,11 +360,13 @@
                 <div id="bucket-fix-info" style="font-size:12px; color:#aaa; margin-bottom:6px;"></div>
                 <div class="bucket-candidate-list" id="bucket-candidate-list"></div>
                 <div id="bucket-preview-wrap">
-                    <img id="bucket-preview-img" src="">
+                    <img id="bucket-preview-img" src="" alt="" draggable="false">
+                    <div id="bucket-crop-shade"></div>
                     <div id="bucket-crop-rect"></div>
                 </div>
-                <div id="bucket-upscale-warning" class="bucket-warn-upscale">⚠️ This bucket is larger than the original image — the result will be upscaled and may lose sharpness.</div>
-                <div style="font-size:11px; color:#666; margin-top:8px;">Drag the green box to choose which part of the image is kept. The original file will be moved to 📦 Archive before saving (fully recoverable from there).</div>
+                <div id="bucket-upscale-warning" class="bucket-warn-upscale">⚠️ This bucket is larger than the crop. Saving will upscale with Lanczos-3, which stays sharper than the browser's default resize.</div>
+                <div id="bucket-drag-hint" style="font-size:11px; color:#aaa; margin-top:8px;"></div>
+                <div style="font-size:11px; color:#666; margin-top:4px;">The original file will be moved to 📦 Archive before saving (fully recoverable from there).</div>
                 <div class="modal-buttons">
                     <button class="btn-cancel" onclick="window.closeModal('modal-fix-bucket')">Cancel</button>
                     <button id="btn-confirm-fix-bucket" style="background:#00aa66; color:#000; border:none; padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer;">✅ Apply Crop &amp; Save</button>
@@ -353,10 +389,15 @@
     function renderCandidateChips() {
         const list = document.getElementById('bucket-candidate-list');
         list.innerHTML = '';
-        _fixState.candidates.forEach((c, i) => {
+        const closest = _fixState.candidates[0];
+        _fixState.candidates.forEach((c) => {
+            const isCurrent = c.bw === _fixState.w && c.bh === _fixState.h;
             const chip = document.createElement('div');
-            chip.className = 'bucket-candidate-chip' + (c === _fixState.candidate ? ' active' : '');
-            chip.innerHTML = `${c.bw}×${c.bh}<span class="bc-kept">${Math.round(c.kept * 100)}% kept${i === 0 ? ' · closest AR' : ''}</span>`;
+            chip.className = 'bucket-candidate-chip' + (c === _fixState.candidate ? ' active' : '') + (isCurrent ? ' is-current' : '');
+            const notes = [];
+            if (isCurrent) notes.push('current');
+            if (c === closest) notes.push('closest AR');
+            chip.innerHTML = `${formatRes(c.bw, c.bh)}<span class="bc-kept">${Math.round(c.kept * 100)}% kept${notes.length ? ' · ' + notes.join(' · ') : ''}</span>`;
             chip.onclick = () => selectCandidate(c);
             list.appendChild(chip);
         });
@@ -366,7 +407,9 @@
         const c = _fixState.candidate;
         const { w, h } = _fixState;
         const scale = Math.max(c.bw / w, c.bh / h);
-        const cropW = c.bw / scale, cropH = c.bh / scale;
+        let cropW = c.bw / scale, cropH = c.bh / scale;
+        if (cropW > w) cropW = w;
+        if (cropH > h) cropH = h;
 
         if (_fixState.offsetX === null) _fixState.offsetX = (w - cropW) / 2;
         if (_fixState.offsetY === null) _fixState.offsetY = (h - cropH) / 2;
@@ -375,68 +418,247 @@
         _fixState.cropW = cropW; _fixState.cropH = cropH; _fixState.scale = scale;
 
         const previewImgEl = document.getElementById('bucket-preview-img');
-        const previewScale = previewImgEl.clientWidth / w;
-        _fixState.previewScale = previewScale;
+        const dispW = previewImgEl.clientWidth;
+        const dispH = previewImgEl.clientHeight;
+        if (!dispW || !dispH) return;
+        const scaleX = dispW / w;
+        const scaleY = dispH / h;
+        _fixState.previewScaleX = scaleX;
+        _fixState.previewScaleY = scaleY;
+        _fixState.previewScale = scaleX;
 
         const rect = document.getElementById('bucket-crop-rect');
-        rect.style.left = (_fixState.offsetX * previewScale) + 'px';
-        rect.style.top = (_fixState.offsetY * previewScale) + 'px';
-        rect.style.width = (cropW * previewScale) + 'px';
-        rect.style.height = (cropH * previewScale) + 'px';
+        const shade = document.getElementById('bucket-crop-shade');
+        const left = (_fixState.offsetX * scaleX) + 'px';
+        const top = (_fixState.offsetY * scaleY) + 'px';
+        const width = (cropW * scaleX) + 'px';
+        const height = (cropH * scaleY) + 'px';
+        rect.style.left = left;
+        rect.style.top = top;
+        rect.style.width = width;
+        rect.style.height = height;
+        if (shade) {
+            shade.style.left = left;
+            shade.style.top = top;
+            shade.style.width = width;
+            shade.style.height = height;
+        }
 
         document.getElementById('bucket-upscale-warning').style.display = (scale > 1) ? 'block' : 'none';
-    }
 
-    let _dragBound = false;
-    function setupCropDrag() {
-        const rect = document.getElementById('bucket-crop-rect');
-        let dragging = false, startX = 0, startY = 0, startOffX = 0, startOffY = 0;
-        rect.onmousedown = (e) => {
-            dragging = true; rect.classList.add('dragging');
-            startX = e.clientX; startY = e.clientY;
-            startOffX = _fixState.offsetX; startOffY = _fixState.offsetY;
-            e.preventDefault();
-        };
-        if (_dragBound) return; // listeners globais só precisam ser presos 1x
-        _dragBound = true;
-        document.addEventListener('mousemove', (e) => {
-            if (!dragging || !_fixState) return;
-            const dx = (e.clientX - startX) / _fixState.previewScale;
-            const dy = (e.clientY - startY) / _fixState.previewScale;
-            _fixState.offsetX = startOffX + dx;
-            _fixState.offsetY = startOffY + dy;
-            renderCropOverlay();
-        });
-        document.addEventListener('mouseup', () => {
-            dragging = false;
-            const r = document.getElementById('bucket-crop-rect');
-            if (r) r.classList.remove('dragging');
-        });
-    }
-
-    window.openFixBucketModal = function (img) {
-        const result = window._bucketResults.get(img);
-        if (!result || !result.bad) {
-            if (window.showAlert) window.showAlert('Scan the dataset first (🪣 button) to detect this image\'s resolution.', 'warn');
-            return;
+        const hint = document.getElementById('bucket-drag-hint');
+        if (hint) {
+            const slackX = Math.max(0, w - cropW);
+            const slackY = Math.max(0, h - cropH);
+            const keptPct = Math.round((c.kept || 0) * 100);
+            if (slackX < 1 && slackY < 1) {
+                hint.textContent = `This bucket matches the image aspect (${keptPct}% kept), so the green box covers the whole frame and cannot slide. Pick another size to crop.`;
+            } else if (slackX < 1) {
+                hint.textContent = `Drag the green box up or down — ${formatRes(c.bw, c.bh)} keeps ${keptPct}% and only has vertical margin.`;
+            } else if (slackY < 1) {
+                hint.textContent = `Drag the green box left or right — ${formatRes(c.bw, c.bh)} keeps ${keptPct}% and only has horizontal margin.`;
+            } else {
+                hint.textContent = `Drag the green box to choose what stays — ${formatRes(c.bw, c.bh)} keeps ${keptPct}% of the image.`;
+            }
         }
+    }
+
+    /* Listeners no window (capture), lendo o estado do módulo.
+       A versão antiga guardava "dragging" dentro de setupCropDrag e
+       reatribuía o mousedown a cada abertura: o mousemove continuava
+       olhando a flag da primeira vez, então o arraste morria no 2º open.
+       Capture no window também chega antes dos handlers globais do app. */
+    let _drag = null;
+    let _dragBound = false;
+    function onBucketPointerDown(e) {
+        const wrap = document.getElementById('bucket-preview-wrap');
+        if (!wrap || !_fixState || !_fixState.candidate) return;
+        if (e.button !== undefined && e.button !== 0) return;
+        if (!wrap.contains(e.target)) return;
+        if (_fixState.offsetX == null || _fixState.offsetY == null) renderCropOverlay();
+        _drag = {
+            id: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+            startOffX: _fixState.offsetX || 0,
+            startOffY: _fixState.offsetY || 0
+        };
+        wrap.classList.add('dragging');
+        const rect = document.getElementById('bucket-crop-rect');
+        if (rect) rect.classList.add('dragging');
+        try { wrap.setPointerCapture(e.pointerId); } catch (err) {}
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    function onBucketPointerMove(e) {
+        if (!_drag || !_fixState || e.pointerId !== _drag.id) return;
+        const sx = _fixState.previewScaleX > 0 ? _fixState.previewScaleX : 1;
+        const sy = _fixState.previewScaleY > 0 ? _fixState.previewScaleY : 1;
+        _fixState.offsetX = _drag.startOffX + (e.clientX - _drag.startX) / sx;
+        _fixState.offsetY = _drag.startOffY + (e.clientY - _drag.startY) / sy;
+        renderCropOverlay();
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    function onBucketPointerUp(e) {
+        if (!_drag || (e && e.pointerId !== undefined && e.pointerId !== _drag.id)) return;
+        _drag = null;
+        const wrap = document.getElementById('bucket-preview-wrap');
+        if (wrap) wrap.classList.remove('dragging');
+        const rect = document.getElementById('bucket-crop-rect');
+        if (rect) rect.classList.remove('dragging');
+    }
+    function setupCropDrag() {
+        const img = document.getElementById('bucket-preview-img');
+        if (img) {
+            img.draggable = false;
+            if (window.ResizeObserver && !img._bucketObserved) {
+                img._bucketObserved = true;
+                const ro = new ResizeObserver(() => {
+                    if (_fixState && !_drag) renderCropOverlay();
+                });
+                ro.observe(img);
+            }
+        }
+        if (_dragBound) return;
+        _dragBound = true;
+        window.addEventListener('pointerdown', onBucketPointerDown, true);
+        window.addEventListener('pointermove', onBucketPointerMove, true);
+        window.addEventListener('pointerup', onBucketPointerUp, true);
+        window.addEventListener('pointercancel', onBucketPointerUp, true);
+    }
+
+    window.openFixBucketModal = async function (img) {
+        let result = window._bucketResults.get(img);
+        if (!result) {
+            const size = await getImageSize(img);
+            if (!size) {
+                if (window.showAlert) window.showAlert('Could not read this image\'s resolution.', 'warn');
+                return;
+            }
+            markResult(img, size);
+            applyBadgesToList();
+            result = window._bucketResults.get(img);
+        }
+        if (!result) return;
         buildFixModal();
 
+        const alreadyValid = !result.bad;
         const candidates = suggestBuckets(result.w, result.h);
-        _fixState = { img, w: result.w, h: result.h, candidates, candidate: candidates[0], offsetX: null, offsetY: null };
+        let candidate = candidates[0];
+        if (alreadyValid) {
+            const other = candidates.find(c => c.bw !== result.w || c.bh !== result.h);
+            if (other) candidate = other;
+        }
+        _fixState = { img, w: result.w, h: result.h, candidates, candidate, offsetX: null, offsetY: null, alreadyValid };
 
-        document.getElementById('bucket-fix-info').textContent = `Current resolution: ${result.w}×${result.h} (not a valid SDXL bucket). Choose a target bucket below:`;
+        document.getElementById('bucket-fix-info').textContent = alreadyValid
+            ? `Current resolution: ${formatRes(result.w, result.h)} — already a valid SDXL bucket. Pick another size below to change it (dashed chip = current).`
+            : `Current resolution: ${formatRes(result.w, result.h)} (not a valid SDXL bucket). Choose a target bucket below:`;
         const previewImgEl = document.getElementById('bucket-preview-img');
-        previewImgEl.onload = () => renderCropOverlay();
+        const paintPreview = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (_fixState) renderCropOverlay();
+        }));
+        previewImgEl.onload = paintPreview;
+        previewImgEl.draggable = false;
         previewImgEl.src = img.url;
 
         renderCandidateChips();
-        if (previewImgEl.complete) renderCropOverlay();
         setupCropDrag();
 
         window.openModal('modal-fix-bucket');
         document.getElementById('btn-confirm-fix-bucket').onclick = () => window.applyFixBucket();
+        paintPreview();
+        if (previewImgEl.complete && previewImgEl.naturalWidth) paintPreview();
     };
+
+    /* ---------- LANCZOS-3 (separável, alpha pré-multiplicado) ----------
+       Usado quando o recorte não tem o tamanho exato do bucket. No upscale
+       o kernel fica em 3px de raio (mais nítido que o bilinear do canvas).
+       No downscale o kernel alarga para não serrilhar. */
+    const LANCZOS_A = 3;
+    function lanczosKernel(x) {
+        x = Math.abs(x);
+        if (x < 1e-8) return 1;
+        if (x >= LANCZOS_A) return 0;
+        const piX = Math.PI * x;
+        return (Math.sin(piX) / piX) * (Math.sin(piX / LANCZOS_A) / (piX / LANCZOS_A));
+    }
+    function buildLanczosWeights(srcSize, dstSize) {
+        const scale = dstSize / srcSize;
+        const filterScale = scale < 1 ? scale : 1;
+        const support = LANCZOS_A / filterScale;
+        const weights = new Array(dstSize);
+        for (let i = 0; i < dstSize; i++) {
+            const srcCenter = (i + 0.5) / scale - 0.5;
+            let i0 = Math.floor(srcCenter - support) + 1;
+            let i1 = Math.floor(srcCenter + support);
+            if (i0 < 0) i0 = 0;
+            if (i1 > srcSize - 1) i1 = srcSize - 1;
+            const taps = [];
+            let sum = 0;
+            for (let j = i0; j <= i1; j++) {
+                const wgt = lanczosKernel((j - srcCenter) * filterScale);
+                if (wgt === 0) continue;
+                taps.push(j, wgt);
+                sum += wgt;
+            }
+            if (sum !== 0) {
+                for (let k = 1; k < taps.length; k += 2) taps[k] /= sum;
+            }
+            weights[i] = taps;
+        }
+        return weights;
+    }
+    async function lanczosResizeRGBA(src, srcW, srcH, dstW, dstH) {
+        const xWeights = buildLanczosWeights(srcW, dstW);
+        const yWeights = buildLanczosWeights(srcH, dstH);
+        const mid = new Float32Array(dstW * srcH * 4);
+        for (let y = 0; y < srcH; y++) {
+            if ((y & 31) === 0) await new Promise(r => setTimeout(r, 0));
+            const srcRow = y * srcW;
+            const dstRow = y * dstW;
+            for (let x = 0; x < dstW; x++) {
+                const taps = xWeights[x];
+                let r = 0, g = 0, b = 0, a = 0;
+                for (let k = 0; k < taps.length; k += 2) {
+                    const idx = (srcRow + taps[k]) * 4;
+                    const wgt = taps[k + 1];
+                    const alpha = src[idx + 3] / 255;
+                    r += src[idx] * alpha * wgt;
+                    g += src[idx + 1] * alpha * wgt;
+                    b += src[idx + 2] * alpha * wgt;
+                    a += alpha * wgt;
+                }
+                const o = (dstRow + x) * 4;
+                mid[o] = r; mid[o + 1] = g; mid[o + 2] = b; mid[o + 3] = a;
+            }
+        }
+        const out = new Uint8ClampedArray(dstW * dstH * 4);
+        for (let y = 0; y < dstH; y++) {
+            if ((y & 31) === 0) await new Promise(r => setTimeout(r, 0));
+            const taps = yWeights[y];
+            for (let x = 0; x < dstW; x++) {
+                let r = 0, g = 0, b = 0, a = 0;
+                for (let k = 0; k < taps.length; k += 2) {
+                    const idx = (taps[k] * dstW + x) * 4;
+                    const wgt = taps[k + 1];
+                    r += mid[idx] * wgt;
+                    g += mid[idx + 1] * wgt;
+                    b += mid[idx + 2] * wgt;
+                    a += mid[idx + 3] * wgt;
+                }
+                const o = (y * dstW + x) * 4;
+                if (a > 1e-4) {
+                    out[o] = r / a;
+                    out[o + 1] = g / a;
+                    out[o + 2] = b / a;
+                }
+                out[o + 3] = a * 255;
+            }
+        }
+        return out;
+    }
 
     /* ---------- APLICA O CROP, ARQUIVA O ORIGINAL, SALVA O NOVO ---------- */
     window.applyFixBucket = async function () {
@@ -447,14 +669,32 @@
 
         try {
             const sourceImgEl = document.getElementById('bucket-preview-img');
-            const canvas = document.createElement('canvas');
-            canvas.width = candidate.bw; canvas.height = candidate.bh;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(sourceImgEl, _fixState.offsetX, _fixState.offsetY, _fixState.cropW, _fixState.cropH, 0, 0, candidate.bw, candidate.bh);
+            const cw = Math.max(1, Math.round(_fixState.cropW));
+            const ch = Math.max(1, Math.round(_fixState.cropH));
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.width = cw;
+            cropCanvas.height = ch;
+            const cctx = cropCanvas.getContext('2d', { willReadFrequently: true });
+            cctx.imageSmoothingEnabled = true;
+            cctx.imageSmoothingQuality = 'high';
+            cctx.drawImage(sourceImgEl, _fixState.offsetX, _fixState.offsetY, _fixState.cropW, _fixState.cropH, 0, 0, cw, ch);
+
+            let outCanvas = cropCanvas;
+            const resizing = cw !== candidate.bw || ch !== candidate.bh;
+            const upscaled = candidate.bw > cw || candidate.bh > ch;
+            if (resizing) {
+                btn.textContent = upscaled ? '⏳ Lanczos upscale...' : '⏳ Lanczos resize...';
+                const srcData = cctx.getImageData(0, 0, cw, ch);
+                const resized = await lanczosResizeRGBA(srcData.data, cw, ch, candidate.bw, candidate.bh);
+                outCanvas = document.createElement('canvas');
+                outCanvas.width = candidate.bw;
+                outCanvas.height = candidate.bh;
+                outCanvas.getContext('2d').putImageData(new ImageData(resized, candidate.bw, candidate.bh), 0, 0);
+            }
 
             const extLower = (img.name.split('.').pop() || 'png').toLowerCase();
             const mime = extLower === 'png' ? 'image/png' : extLower === 'webp' ? 'image/webp' : 'image/jpeg';
-            const blob = await new Promise(res => canvas.toBlob(res, mime, 0.95));
+            const blob = await new Promise(res => outCanvas.toBlob(res, mime, 0.95));
             if (!blob) throw new Error('Failed to generate the cropped image.');
 
             // Backup automático: manda a imagem + legenda originais pro 📦
@@ -485,7 +725,7 @@
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
             window.closeModal('modal-fix-bucket');
-            if (window.showAlert) window.showAlert(`Cropped to ${candidate.bw}×${candidate.bh}. Original safely kept in 📦 Archive.`, 'success');
+            if (window.showAlert) window.showAlert(`Saved at ${formatRes(candidate.bw, candidate.bh)}${upscaled ? ' with Lanczos upscale' : resizing ? ' with Lanczos resize' : ''}. Original safely kept in 📦 Archive.`, 'success');
         } catch (e) {
             console.error('[Bucket Fix] failed:', e);
             if (window.showAlert) window.showAlert('Error applying the bucket fix: ' + (e.message || e), 'error');

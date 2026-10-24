@@ -61,6 +61,13 @@
     document.head.appendChild(style);
 
     const APPS = [
+        {
+            key: 'hub',
+            icon: '🧰',
+            label: 'Modular AI Tools (Hub)',
+            localFile: 'index.html',
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/'
+        },
                 {
             key: 'png_reader',
             icon: '🕵️',
@@ -95,6 +102,20 @@
             label: 'LoRA Calculator',
             localFile: 'lora calculator.html',
             onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/lora%20calculator.html'
+        },
+        {
+            key: 'lora_evaluate',
+            icon: '📚',
+            label: 'Lora Evaluate',
+            localFile: 'Lora Evaluate.html',
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Evaluate.html'
+        },
+        {
+            key: 'prompt_helper',
+            icon: '✨',
+            label: 'Prompt Helper',
+            localFile: 'prompt helper.html',
+            onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/prompt%20helper.html'
         }
     ];
 
@@ -108,8 +129,10 @@
         const uiTitle = document.getElementById('app-title') ? document.getElementById('app-title').textContent : '';
         const filename = decodeURIComponent(window.location.pathname.split('/').pop() || '');
         
-        // Verificações Específicas primeiro para evitar conflitos (Calculator vs Reader)
-        if (/calculator/i.test(uiTitle) || /calculator/i.test(title)) return 'lora_calc';
+        // Verificações Específicas primeiro para evitar conflitos
+        if (/^index\.html$/i.test(filename) || /modular ai tools/i.test(title)) return 'hub';
+        if (/evaluate/i.test(uiTitle) || /evaluate/i.test(title) || /evaluate/i.test(filename)) return 'lora_evaluate';
+        if (/calculator/i.test(uiTitle) || /calculator/i.test(title) || /calculator/i.test(filename)) return 'lora_calc';
         
         // CORREÇÃO: Busca específica por 'lora' e 'png', removendo a palavra genérica 'reader'
         if (/lora/i.test(uiTitle) || /lora/i.test(title)) return 'lora_reader';
@@ -117,13 +140,16 @@
         
         // Verificações Padrão
         if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
+        if (/prompt helper/i.test(uiTitle) || /prompt helper/i.test(title) || /prompt.?helper/i.test(filename)) return 'prompt_helper';
         if (/tag/i.test(uiTitle) || /tag/i.test(title)) return 'tag_manager';
 
         // Fallbacks pelo nome do arquivo
+        if (/evaluate/i.test(filename)) return 'lora_evaluate';
         if (/calculator/i.test(filename)) return 'lora_calc';
-        if (/lora/i.test(filename) && !/calculator/i.test(filename)) return 'lora_reader';
+        if (/lora/i.test(filename) && !/calculator|evaluate/i.test(filename)) return 'lora_reader';
         if (/gallery|interface/i.test(filename)) return 'gallery';
         if (/png/i.test(filename)) return 'png_reader';
+        if (/prompt.?helper/i.test(filename)) return 'prompt_helper';
         if (/tag/i.test(filename)) return 'tag_manager';
 
         return null;

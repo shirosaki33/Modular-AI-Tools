@@ -5,6 +5,12 @@
    tag (active/master/preset/replace). Depende de window.dbSearchTagMatches
    (tagmanager_danbooru_core.js) e window.openDanbooruTagInfoPopout
    (tagmanager_danbooru_panel.js), ambos já carregados antes deste arquivo.
+
+   NOVO (cor por origem da sugestão): o nome de cada sugestão agora muda de
+   cor conforme de onde a tag veio — ver getSuggestionStyle() no final.
+   - Danbooru: cor da categoria (como sempre foi)
+   - e621 / e926: rosa dos alias (#f48fb1), um pouco mais fraco
+   - nenhuma das duas: cor da categoria, em tom mais escuro
 ========================================================================= */
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -99,7 +105,8 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
                             tagsArr.forEach(t => {
                                 const standardizedName = t.name.replace(/_/g, ' ');
                                 if (!combinedTags.some(ct => ct.name.replace(/_/g, ' ') === standardizedName)) {
-                                    combinedTags.push({ name: t.name, post_count: parseInt(t.post_count) || 0, category: t.category, isAlias: false });
+                                    // source:'e621' -> usado por getSuggestionStyle() pra pintar de rosa
+                                    combinedTags.push({ name: t.name, post_count: parseInt(t.post_count) || 0, category: t.category, isAlias: false, source: 'e621' });
                                 }
                             });
                         }
@@ -130,7 +137,8 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
                 
                 combinedTags.forEach(t => {
                     const div = document.createElement('div'); div.className = 'db-sugg-item';
-                    const color = CAT_COLORS[t.category] || "#aaa";
+                    const sty = getSuggestionStyle(t);
+                    const color = sty.color;
                     const displayName = t.name.replace(/_/g, ' ');
                     const aliasToSpaced = t.isAlias ? t.aliasTo.replace(/_/g, ' ') : '';
                     
@@ -140,7 +148,7 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
                         ? Number(t.post_count).toLocaleString()
                         : (t.isDeprecated ? 'Deprecated' : Number(t.post_count).toLocaleString());
                     
-                    div.innerHTML = `<span style="color:${color}; font-weight:bold;">${displayName}${arrowHtml}</span>
+                    div.innerHTML = `<span style="color:${color}; opacity:${sty.opacity}; font-weight:bold;">${displayName}${arrowHtml}</span>
                         <div style="display:flex; align-items:center; gap:5px;">${infoHtml}<span style="color:#666;">${countHtml}</span></div>`;
                     
                     div.onclick = () => {
@@ -164,6 +172,28 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
     });
  
     document.addEventListener('click', (e) => { if(!wrapper.contains(e.target)) suggBox.style.display = 'none'; });
+}
+
+/* Define a cor/opacidade do nome na sugestão conforme a ORIGEM da tag:
+   - Danbooru: cor da categoria (normal)
+   - e621/e926: rosa dos alias (#f48fb1), um pouco mais fraco
+   - nenhuma das duas: cor da categoria, mais escura */
+function getSuggestionStyle(t) {
+    const key = t.name.replace(/_/g, ' ').toLowerCase();
+    let source = (t.source === 'e621') ? 'e621' : null;
+
+    if (!source) {
+        const db = window.danbooruCache && window.danbooruCache[key];
+        const e6 = window.e621Cache && window.e621Cache[key];
+        if (t.post_count > 0 || t.isAlias || (db && (db.count > 0 || db.aliasTo))) source = 'danbooru';
+        else if (e6 && (e6.count > 0 || e6.aliasTo)) source = 'e621';
+        else source = 'none';
+    }
+
+    const baseColor = CAT_COLORS[t.category] || "#aaa";
+    if (source === 'e621') return { color: '#f48fb1', opacity: 0.75 };
+    if (source === 'none') return { color: baseColor, opacity: 0.55 };
+    return { color: baseColor, opacity: 1 };
 }
  
 const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };

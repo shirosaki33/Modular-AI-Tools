@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tag Interrogator</title>
+    
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+
+    <style>
+        /* === BASE STYLES === */
+        body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: Arial, Helvetica, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        #topbar { background: #1b1b1b; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #222; z-index: 20; flex-shrink: 0; }
+        #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1b1b1b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00aa66; }
+
+        /* === MAIN LAYOUT === */
+        #workspace { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 20px; box-sizing: border-box; } 
+        
+        /* Image Sidebar (Danbooru) */
+        #image-sidebar { 
+            width: 350px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; 
+            background: #1b1b1b; border-radius: 12px; padding: 15px; position: relative; box-sizing: border-box;
+        }
+        
+        .sidebar-header {
+            font-size: 14px; font-weight: bold; color: #aaa; margin-bottom: 15px; flex-shrink: 0;
+            padding-bottom: 10px; border-bottom: 1px solid #333; text-align: center;
+        }
+
+        #sidebar-grid { 
+            overflow-y: auto; flex: 1; padding-right: 5px; 
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; align-content: start; 
+        }
+        
+        .sidebar-thumb-wrap { position: relative; border-radius: 8px; overflow: hidden; aspect-ratio: 1 / 1; border: 2px solid transparent; cursor: pointer; transition: 0.15s; background: #0a0a0a; }
+        .sidebar-thumb-wrap:hover { border-color: #00ff99; transform: scale(1.02); }
+        .sidebar-thumb { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .2s ease; }
+        .sidebar-thumb.loaded { opacity: 1; }
+        .sidebar-thumb-spinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #555; }
+        .sidebar-thumb-wrap.errored .sidebar-thumb { display: none; }
+        .sidebar-thumb-wrap.errored .sidebar-thumb-spinner { color: #888033; } /* Corrigido contraste do triângulo de erro */
+
+        /* Rigid Central Area */
+        #main-content {
+            flex: 1; background: #1b1b1b; border-radius: 12px; padding: 25px;
+            display: flex; flex-direction: column; align-items: center; overflow: hidden; box-sizing: border-box;
+        }
+
+        .danbooru-container { 
+            width: 100%; max-width: 1200px; background: #0d0d0d; border: 1px solid #222; 
+            border-radius: 12px; padding: 30px; box-sizing: border-box; 
+            display: flex; flex-direction: column; flex: 1; overflow: hidden; 
+        }
+
+        /* === DANBOORU STYLES === */
+        .danbooru-header-text { font-size: 15px; color: #888; margin-bottom: 20px; text-align: center; font-weight: bold; flex-shrink: 0; }
+        
+        .danbooru-row { display: flex; gap: 10px; margin-bottom: 20px; align-items: stretch; position: relative; flex-shrink: 0; }
+        
+        .danbooru-input-wrapper { flex: 1; position: relative; }
+        .danbooru-input { 
+            width: 100%; box-sizing: border-box; background: #111; border: 1px solid #444; border-radius: 8px; 
+            color: #00ff99; padding: 12px 16px; font-size: 15px; outline: none; transition: 0.2s;
+        }
+        .danbooru-input:focus { border-color: #00aa66; }
+        
+        /* AutoComplete Dropdown */
+        .db-autocomplete { position: absolute; top: calc(100% + 4px); left: 0; background: #111; border: 1px solid #333; z-index: 100; border-radius: 8px; max-height: 250px; overflow-y: auto; width: 100%; box-shadow: 0 10px 25px rgba(0,0,0,0.8); box-sizing: border-box; }
+        .db-sugg-item { padding: 10px 14px; border-bottom: 1px solid #222; cursor: pointer; display: flex; justify-content: space-between; font-size: 14px; transition: 0.1s; align-items: center; }
+        .db-sugg-item:hover { background: #222; }
+
+        .danbooru-btn { background: #00aa66; color: #000; border: none; border-radius: 8px; padding: 0 25px; font-weight: bold; cursor: pointer; font-size: 15px; transition: 0.15s; }
+        .danbooru-btn:hover { background: #00cc88; transform: scale(1.02); }
+        .danbooru-btn-detect { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; border-radius: 8px; padding: 0 20px; cursor: pointer; font-size: 18px; transition: 0.15s; }
+        .danbooru-btn-detect:hover { background: #1e4a78; color: #fff; }
+        
+        /* Flexible Result Container */
+        .danbooru-result { 
+            background: #111; border: 1px solid #1e3d28; border-radius: 8px; 
+            padding: 25px; display: none; width: 100%; box-sizing: border-box; 
+            flex-direction: column; flex: 1; overflow: hidden;
+        }
+        .danbooru-result.open { display: flex; }
+        
+        .danbooru-tag-header { display: flex; justify-content: center; align-items: baseline; gap: 15px; border-bottom: 1px solid #222; padding-bottom: 15px; flex-shrink: 0; }
+        .danbooru-tag-title { font-size: 28px; font-weight: bold; color: #00ff99; margin: 0; }
+        .danbooru-tag-cat { font-size: 15px; color: #aaa; }
+        
+        /* Description & Translator */
+        .desc-header { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 10px; flex-shrink: 0; }
+        .danbooru-desc-label { font-size: 15px; color: #888; font-weight: bold; }
+        .danbooru-select { background: #111; color: #aaa; border: 1px solid #444; border-radius: 6px; padding: 6px 10px; font-size: 13px; outline: none; cursor: pointer; font-weight: bold; max-height: 250px;}
+        
+        /* Text Box w/ Dedicated Internal Scroll */
+        .danbooru-desc { 
+            color: #ccc; font-size: 16px; line-height: 1.7; 
+            flex: 1; overflow-y: auto; white-space: pre-wrap; padding: 20px; 
+            background: #0a0a0a; border-radius: 8px; border: 1px solid #222; 
+        }
+        
+        .danbooru-link { color: #4db8ff; text-decoration: none; font-size: 14px; border: 1px solid #2a5a8c; padding: 8px 16px; border-radius: 6px; display: inline-block; background: #0a1520; transition: 0.15s; margin-top: 20px; font-weight: bold; flex-shrink: 0; }
+        .danbooru-link:hover { background: #1a3a5c; color: #fff;}
+
+        /* Modals & Overlays (Zoom / Panning) */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2100; justify-content: center; align-items: center; backdrop-filter: blur(5px); overflow: hidden; }
+        .modal-overlay.active { display: flex; }
+        
+        #image-zoom-wrapper { max-width: 90%; max-height: 90%; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: default; position: relative; }
+        #image-zoom-wrapper.zoomed { cursor: grab; }
+        #image-zoom-wrapper.dragging { cursor: grabbing; }
+        
+        #image-popout, #video-popout { max-width: 100%; max-height: 90vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); user-select: none; transform-origin: center center; }
+        
+        #image-zoom-controls { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; background: rgba(17,24,39,0.9); padding: 8px 14px; border-radius: 30px; border: 1px solid #263b5a; z-index: 101; }
+        #image-zoom-controls button { padding: 6px 14px; border-radius: 20px; font-size: 14px; background: #222; color:#eee; border: 1px solid #444; cursor: pointer;}
+        #image-zoom-controls button:hover { background: #00aa66; color: #000; }
+        #zoom-level-display { color: #9ecfff; font-size: 12px; font-weight: bold; min-width: 46px; text-align: center; user-select: none; }
+
+        /* Detection Popout Modal */
+        .db-popout { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #111d16; border: 1px solid #1e4a30; border-radius: 12px; width: 90%; max-width: 500px; max-height: 70vh; display: none; flex-direction: column; z-index: 2101; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+        .db-popout-header { padding: 16px; background: #0f1c13; border-bottom: 1px solid #1e3d28; color: #00cc88; font-weight: bold; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; }
+        .db-popout-close { background: none; border: none; color: #888; font-size: 20px; cursor: pointer; transition: 0.15s; }
+        .db-popout-close:hover { color: #ff6060; }
+        .db-popout-body { padding: 15px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+        .db-tag-item { padding: 10px 12px; border: 1px solid #1e2a20; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; transition: 0.15s; background: #0a0f0c; }
+        .db-tag-item:hover { color: #00ff99; background: #1a2a1e; border-color: #00ff99; }
+
+        /* === DANBOORU CREDENTIALS === */
+        #api-cred-box { display: flex; align-items: center; gap: 6px; position: relative; }
+        .api-cred-input { background: #111; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 12px; padding: 6px 8px; outline: none; width: 100px; transition: 0.15s; }
+        .api-cred-input:focus { border-color: #00aa66; }
+        .api-cred-input::placeholder { color: #555; }
+        #api-cred-status { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; transition: 0.2s; box-shadow: 0 0 0 rgba(0,255,153,0); }
+        #api-cred-status.saved { background: #00ff99; box-shadow: 0 0 6px rgba(0,255,153,0.7); }
+        #api-cred-toggle { background: none; border: 1px solid #333; border-radius: 6px; color: #888; font-size: 12px; padding: 6px 8px; cursor: pointer; transition: 0.15s; }
+        #api-cred-toggle:hover { border-color: #00aa66; color: #00ff99; }
+        #api-cred-panel { position: absolute; top: calc(100% + 8px); left: 0; background: #1b1b1b; border: 1px solid #333; border-radius: 10px; padding: 14px; width: 260px; z-index: 200; box-shadow: 0 10px 25px rgba(0,0,0,0.8); display: none; flex-direction: column; gap: 8px; }
+        #api-cred-panel.open { display: flex; }
+        #api-cred-panel label { font-size: 11px; color: #888; font-weight: bold; }
+        #api-cred-panel .api-cred-input { width: 100%; box-sizing: border-box; }
+        #api-cred-panel small { color: #666; font-size: 10.5px; line-height: 1.4; }
+        #api-cred-clear { background: #2a1414; color: #ff8080; border: 1px solid #5c2a2a; border-radius: 6px; padding: 6px 10px; font-size: 11px; cursor: pointer; margin-top: 2px; }
+        #api-cred-clear:hover { background: #3a1a1a; }
+    </style>
+</head>
+<body>
+
+<div id="topbar">
+    <div style="flex: 1; display: flex; align-items: center;">
+        <div id="api-cred-box">
+            <button id="api-cred-toggle" title="Danbooru API credentials">🔑 API</button>
+            <span id="api-cred-status" title="No credentials saved"></span>
+
+            <div id="api-cred-panel">
+                <label for="api-cred-login">Login (username)</label>
+                <input type="text" id="api-cred-login" class="api-cred-input" placeholder="your_danbooru_username" autocomplete="off">
+
+                <label for="api-cred-key">API Key</label>
+                <input type="password" id="api-cred-key" class="api-cred-input" placeholder="your_api_key" autocomplete="off">
+
+                <small>Stored only in this browser (localStorage). Get your key in your Danbooru account under My Account → API Key. Both fields are required for authenticated requests.</small>
+                <button id="api-cred-clear">Clear saved credentials</button>
+            </div>
+        </div>
+    </div>
+    <div style="display: flex; justify-content: center; align-items: center;">
+        <span id="app-title">🏷️ Tag Interrogator 🏷️ </span>
+    </div>
+    <div class="topbar-section right" id="topbar-right" style="flex: 1; justify-content: flex-end; display: flex;">
+        </div>
+</div>
+
+<div id="workspace">
+    <div id="image-sidebar">
+        <div class="sidebar-header">Danbooru Examples</div>
+        <div id="sidebar-grid">
+            <div style="color: #555; text-align: center; font-size: 12px; grid-column: 1 / -1; margin-top: 20px;" id="sidebar-empty-msg">
+                Search a tag to view images here.
+            </div>
+        </div>
+    </div>
+
+    <div id="main-content">
+        <div class="danbooru-container">
+            <div class="danbooru-header-text">Search tags in English to get definitions and example images from the wiki.</div>
+            
+            <div style="display: flex; gap: 15px; margin-bottom: 15px; align-items: center; flex-wrap: wrap; background: #111; padding: 10px 15px; border-radius: 8px; border: 1px solid #222;">
+                <select id="dbRating" class="danbooru-select" title="Image Rating" style="background: #1b1b1b;">
+                    <option value="">Rating: Any (Depende da conta)</option>
+                    <option value="rating:g">Rating: General (Safe)</option>
+                    <option value="rating:s">Rating: Sensitive</option>
+                    <option value="rating:q">Rating: Questionable</option>
+                    <option value="rating:e" selected>Rating: Explicit (NSFW)</option>
+                </select>
+                
+                <label style="color:#aaa; font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Remove imagens que possuem tarjas/mosaicos (Censura Japonesa)">
+                    <input type="checkbox" id="dbNoCensored" style="accent-color: #00ff99; width: 16px; height: 16px;"> 
+                    Exclude Mosaics (Remove censura japonesa)
+                </label>
+            </div>
+
+            <div class="danbooru-row">
+                <div class="danbooru-input-wrapper">
+                    <input type="text" id="dbInput" class="danbooru-input" placeholder="Type a tag (e.g. 1girl, outdoors)..." autocomplete="off">
+                    <div id="dbAutocomplete" class="db-autocomplete" style="display: none;"></div>
+                </div>
+
+                <button class="danbooru-btn" id="dbSearchBtn">Search Tag</button>
+                <button class="danbooru-btn-detect" id="dbDetectBtn" title="Detect tags from prompts on screen">🔍✨</button>
+            </div>
+            
+            <div class="danbooru-result" id="dbResult">
+                <div class="danbooru-tag-header">
+                    <h1 class="danbooru-tag-title" id="dbTagName"></h1>
+                    <span class="danbooru-tag-cat" id="dbTagCat"></span>
+                </div>
+                
+                <div class="desc-header">
+                    <span class="danbooru-desc-label">Wiki Description</span>
+                    <select id="lang-select" class="danbooru-select" title="Translate description">
+                        <option value="">Original (EN)</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="es">Spanish</option>
+                        <option value="ja">日本語 (Japanese)</option>
+                        <option value="zh">中文 (Chinese)</option>
+                        <option value="ko">한국어 (Korean)</option>
+                        <option value="ru">Русский (Russian)</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="ar">العربية (Arabic)</option>
+                        <option value="hi">हिन्दी (Hindi)</option>
+                        <option value="nl">Dutch</option>
+                        <option value="pl">Polish</option>
+                        <option value="tr">Turkish</option>
+                        <option value="sv">Swedish</option>
+                        <option value="th">ไทย (Thai)</option>
+                        <option value="vi">Vietnamese</option>
+                        <option value="id">Indonesian</option>
+                    </select>
+                </div>
+                
+                <div class="danbooru-desc" id="dbTagDesc"></div>
+                
+                <div style="text-align: center;">
+                    <a href="#" target="_blank" class="danbooru-link" id="dbTagLink">Open on Danbooru ↗</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal-image" class="modal-overlay" onclick="window.closeModal('modal-image')">
+    <div id="image-zoom-wrapper" onclick="event.stopPropagation()">
+        <div id="media-spinner" style="position: absolute; color: #00ff99; font-size: 16px; font-weight: bold; z-index: 1; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">Carregando...</div>
+        
+        <img id="image-popout" src="" style="display: none;" referrerpolicy="no-referrer">
+        <video id="video-popout" src="" loop controls autoplay style="display: none;" referrerpolicy="no-referrer"></video>
+    </div>
+    
+    <div id="image-zoom-controls" onclick="event.stopPropagation()">
+        <button onclick="window.zoomImagePopout(-0.25)" title="Zoom Out">➖</button>
+        <span id="zoom-level-display">100%</span>
+        <button onclick="window.zoomImagePopout(0.25)" title="Zoom In">➕</button>
+        <button onclick="window.resetImageZoom()" title="Reset Zoom">⟳</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="dbOverlay" onclick="document.getElementById('dbPopout').style.display='none'; this.style.display='none';"></div>
+<div class="db-popout" id="dbPopout">
+    <div class="db-popout-header">
+        <span>🔍 Detected Tags</span>
+        <button class="db-popout-close" onclick="document.getElementById('dbPopout').style.display='none'; document.getElementById('dbOverlay').style.display='none';">✕</button>
+    </div>
+    <div class="db-popout-body" id="dbPopoutBody"></div>
+</div>
+
+<script src="tools/quick_links.js"></script>
+
+<script>
+    /* =========================================================
+       0. DANBOORU CREDENTIALS (LOGIN + API KEY) — localStorage
+       ========================================================= */
+    const CRED_LOGIN_KEY = 'danbooru_login';
+    const CRED_APIKEY_KEY = 'danbooru_api_key';
+
+    function getDanbooruCreds() {
+        try {
+            return {
+                login: localStorage.getItem(CRED_LOGIN_KEY) || '',
+                apiKey: localStorage.getItem(CRED_APIKEY_KEY) || ''
+            };
+        } catch (e) {
+            return { login: '', apiKey: '' };
+        }
+    }
+
+    async function fetchDanbooru(url) {
+        const { login, apiKey } = getDanbooruCreds();
+        let finalUrl = url;
+        
+        if (login && apiKey) {
+            const sep = url.includes('?') ? '&' : '?';
+            finalUrl = `${url}${sep}login=${encodeURIComponent(login)}&api_key=${encodeURIComponent(apiKey)}`;
+        }
+        
+        let res;
+        try {
+            res = await fetch(finalUrl);
+        } catch (e) {
+            if (e.message.includes('Failed to fetch')) {
+                throw new Error("O navegador bloqueou a requisição.\n\n⚠️ ISSO GERALMENTE É CAUSADO POR ADBLOCKERS (uBlock, Brave Shields) que bloqueiam URLs contendo 'api_key'.\n\nTente desativar a proteção para esta página local.");
+            }
+            throw e;
+        }
+        
+        if (!res.ok) {
+            if (res.status === 401) throw new Error('401 Unauthorized: Usuário ou API Key incorretos.');
+            if (res.status === 403) throw new Error('403 Forbidden: Permissão negada pelo Danbooru.');
+            if (res.status === 422) throw new Error('422 Unprocessable Entity: Limite de busca excedido (Ex: Buscar muitas tags sem conta premium).');
+            throw new Error(`Erro HTTP ${res.status}`);
+        }
+        return res;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const toggleBtn = document.getElementById('api-cred-toggle');
+        const panel = document.getElementById('api-cred-panel');
+        const loginInput = document.getElementById('api-cred-login');
+        const keyInput = document.getElementById('api-cred-key');
+        const statusDot = document.getElementById('api-cred-status');
+        const clearBtn = document.getElementById('api-cred-clear');
+        const box = document.getElementById('api-cred-box');
+
+        function refreshStatus() {
+            const { login, apiKey } = getDanbooruCreds();
+            const active = !!(login && apiKey);
+            statusDot.classList.toggle('saved', active);
+            statusDot.title = active ? `Authenticated as ${login}` : 'No credentials saved';
+        }
+
+        const saved = getDanbooruCreds();
+        loginInput.value = saved.login;
+        keyInput.value = saved.apiKey;
+        refreshStatus();
+
+        function persist() {
+            try {
+                localStorage.setItem(CRED_LOGIN_KEY, loginInput.value.trim());
+                localStorage.setItem(CRED_APIKEY_KEY, keyInput.value.trim());
+            } catch (e) {}
+            refreshStatus();
+        }
+
+        loginInput.addEventListener('input', persist);
+        keyInput.addEventListener('input', persist);
+
+        toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            panel.classList.toggle('open');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!box.contains(e.target)) panel.classList.remove('open');
+        });
+
+        clearBtn.addEventListener('click', () => {
+            loginInput.value = '';
+            keyInput.value = '';
+            try {
+                localStorage.removeItem(CRED_LOGIN_KEY);
+                localStorage.removeItem(CRED_APIKEY_KEY);
+            } catch (e) {}
+            refreshStatus();
+        });
+    });
+
+    /* =========================================================
+       1. MODAL CONTROL (LÓGICA REFEITA PARA VÍDEOS)
+       ========================================================= */
+    window.closeModal = (id) => {
+        document.getElementById(id).classList.remove('active');
+        const vid = document.getElementById('video-popout');
+        if (vid) vid.pause();
+    };
+
+    /* =========================================================
+       2. IMAGE / VIDEO ZOOM AND PANNING
+       ========================================================= */
+    let scale = 1, tx = 0, ty = 0;
+    let isPanning = false, panStartX = 0, panStartY = 0;
+    const MIN_ZOOM = 1, MAX_ZOOM = 8;
+
+    function applyTransform() {
+        const img = document.getElementById('image-popout');
+        const vid = document.getElementById('video-popout');
+        const wrapper = document.getElementById('image-zoom-wrapper');
+        const display = document.getElementById('zoom-level-display');
+        
+        if (img && img.style.display !== 'none') img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+        if (vid && vid.style.display !== 'none') vid.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+        
+        if (display) display.textContent = Math.round(scale * 100) + '%';
+        if (wrapper) wrapper.classList.toggle('zoomed', scale > 1);
+    }
+
+    window.resetImageZoom = function() {
+        scale = 1; tx = 0; ty = 0;
+        applyTransform();
+    };
+
+    window.zoomImagePopout = function(delta) {
+        scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale + delta));
+        if (scale === MIN_ZOOM) { tx = 0; ty = 0; }
+        applyTransform();
+    };
+
+    function openMediaModal(url, ext, fallbackImage) {
+        const imgPopout = document.getElementById('image-popout');
+        const vidPopout = document.getElementById('video-popout');
+        const spinner = document.getElementById('media-spinner');
+
+        imgPopout.style.display = 'none';
+        imgPopout.src = ''; 
+        vidPopout.style.display = 'none';
+        vidPopout.src = ''; 
+        
+        spinner.style.display = 'block';
+        spinner.textContent = 'Carregando Mídia...';
+
+        if (ext === 'mp4' || ext === 'webm') {
+            vidPopout.src = url;
+            vidPopout.style.display = 'block';
+            vidPopout.onloadeddata = () => spinner.style.display = 'none';
+            vidPopout.onerror = () => spinner.textContent = '⚠ Erro: O vídeo foi bloqueado ou removido.';
+        } else {
+            const finalUrl = (ext === 'zip' && fallbackImage) ? fallbackImage : url;
+            imgPopout.src = finalUrl;
+            imgPopout.style.display = 'block';
+            imgPopout.onload = () => spinner.style.display = 'none';
+            imgPopout.onerror = () => {
+                if (imgPopout.src && imgPopout.src !== window.location.href) {
+                    spinner.textContent = '⚠ Erro: Imagem Falhou ao Carregar. (Link quebrado no Danbooru?)';
+                    imgPopout.style.display = 'none';
+                }
+            };
+        }
+        
+        window.resetImageZoom();
+        document.getElementById('modal-image').classList.add('active');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const wrapper = document.getElementById('image-zoom-wrapper');
+        const imgPopout = document.getElementById('image-popout');
+        const vidPopout = document.getElementById('video-popout');
+        
+        if (!wrapper) return;
+
+        wrapper.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 0.3 : -0.3;
+            scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale + delta));
+            if (scale === MIN_ZOOM) { tx = 0; ty = 0; }
+            applyTransform();
+        }, { passive: false });
+
+        wrapper.addEventListener('mousedown', (e) => {
+            if (scale <= MIN_ZOOM) return;
+            isPanning = true;
+            panStartX = e.clientX - tx;
+            panStartY = e.clientY - ty;
+            wrapper.classList.add('dragging');
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            tx = e.clientX - panStartX;
+            ty = e.clientY - panStartY;
+            applyTransform();
+        });
+
+        document.addEventListener('mouseup', () => {
+            isPanning = false;
+            wrapper.classList.remove('dragging');
+        });
+
+        if(imgPopout) imgPopout.addEventListener('dblclick', (e) => { e.stopPropagation(); window.resetImageZoom(); });
+        if(vidPopout) vidPopout.addEventListener('dblclick', (e) => { e.stopPropagation(); window.resetImageZoom(); });
+    });
+
+    /* =========================================================
+       3. DANBOORU LOGIC AND WIKI TRANSLATOR
+       ========================================================= */
+    const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
+    const CAT_LABELS = { 0: "General", 1: "Artist", 3: "Copyright", 4: "Character", 5: "Meta" };
+    const GALLERY_LIMIT = 20;
+
+    let currentOriginalDesc = "";
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const dbInput = document.getElementById('dbInput');
+        const suggBox = document.getElementById('dbAutocomplete');
+        const dbResult = document.getElementById('dbResult');
+        const dbDesc = document.getElementById('dbTagDesc');
+        const langSelect = document.getElementById('lang-select');
+
+        async function translateDescription() {
+            const lang = langSelect.value;
+            if (!currentOriginalDesc) return;
+            
+            if (lang === "") {
+                dbDesc.textContent = currentOriginalDesc;
+                return;
+            }
+
+            dbDesc.textContent = "Translating...";
+            try {
+                const textToTranslate = currentOriginalDesc.slice(0, 1000); 
+                const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(textToTranslate)}&langpair=en|${lang}`);
+                const data = await res.json();
+                
+                if (data.responseData && data.responseData.translatedText) {
+                    let translated = data.responseData.translatedText;
+                    if (currentOriginalDesc.length > 1000) {
+                        translated += "\n\n... (Translation truncated due to free API text limit)";
+                    }
+                    dbDesc.textContent = translated;
+                } else {
+                    dbDesc.textContent = currentOriginalDesc;
+                }
+            } catch (e) {
+                console.warn("Translation error", e);
+                dbDesc.textContent = currentOriginalDesc;
+            }
+        }
+
+        langSelect.addEventListener('change', translateDescription);
+
+        let timeout = null;
+        dbInput.addEventListener('input', (e) => {
+            clearTimeout(timeout);
+            const val = e.target.value.trim().toLowerCase().replace(/ /g, '_');
+            if(val.length < 2) { suggBox.style.display = 'none'; return; }
+            
+            timeout = setTimeout(async () => {
+                try {
+                    const res = await fetchDanbooru(`https://danbooru.donmai.us/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);
+                    const tags = await res.json();
+                    suggBox.innerHTML = '';
+                    if(tags.length === 0) { suggBox.style.display = 'none'; return; }
+                    
+                    tags.forEach(t => {
+                        const div = document.createElement('div');
+                        div.className = 'db-sugg-item';
+                        const color = CAT_COLORS[t.category] || "#aaa";
+                        div.innerHTML = `
+                            <span style="color:${color}; font-weight:bold;">${t.name.replace(/_/g, ' ')}</span>
+                            <span style="color:#666;">${Number(t.post_count).toLocaleString()}</span>
+                        `;
+                        div.onclick = () => {
+                            dbInput.value = t.name.replace(/_/g, ' ');
+                            suggBox.style.display = 'none';
+                            performSearch();
+                        };
+                        suggBox.appendChild(div);
+                    });
+                    suggBox.style.display = 'block';
+                } catch(err) {}
+            }, 400);
+        });
+
+        document.addEventListener('click', (e) => {
+            if(!dbInput.parentNode.contains(e.target)) suggBox.style.display = 'none';
+        });
+
+        document.getElementById('dbSearchBtn').onclick = () => performSearch();
+        dbInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') performSearch(); });
+
+        async function performSearch(tagOverride) {
+            let tag = (tagOverride || dbInput.value).trim().toLowerCase().replace(/ /g, '_');
+            suggBox.style.display = 'none';
+            dbResult.classList.remove('open');
+
+            if (!tag) return;
+            if (!tagOverride) dbInput.value = tag.replace(/_/g, ' ');
+            
+            try {
+                const res = await fetchDanbooru(`https://danbooru.donmai.us/tags.json?search[name]=${encodeURIComponent(tag)}&limit=1`);
+                const data = await res.json();
+                
+                if (!data || data.length === 0) { 
+                    alert(`Tag "${tag}" not found on Danbooru.`); 
+                    return; 
+                }
+                
+                const t = data[0];
+                document.getElementById('dbTagName').textContent = t.name.replace(/_/g, ' ');
+                document.getElementById('dbTagCat').innerHTML = `<span style="color:${CAT_COLORS[t.category] || '#888'}">● ${CAT_LABELS[t.category] || 'Unknown'} (${Number(t.post_count).toLocaleString()} posts)</span>`;
+                document.getElementById('dbTagLink').href = `https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(t.name)}`;
+                
+                let desc = "No wiki description available.";
+                try {
+                    const wRes = await fetchDanbooru(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(t.name)}.json`);
+                    const wData = await wRes.json();
+                    if (wData && wData.body) desc = wData.body.replace(/\[.*?\]/g, ''); 
+                } catch(e) {}
+                
+                currentOriginalDesc = desc;
+                translateDescription();
+
+                dbResult.classList.add('open');
+                loadGallery(t.name);
+            } catch(e) { 
+                alert("Erro de conexão com o Danbooru:\n\n" + e.message); 
+            }
+        }
+
+        async function loadGallery(tagName) {
+            const grid = document.getElementById('sidebar-grid');
+            grid.innerHTML = '';
+            
+            try {
+                let queryTags = tagName;
+                const rating = document.getElementById('dbRating').value;
+                if (rating) queryTags += ` ${rating}`;
+                if (document.getElementById('dbNoCensored').checked) queryTags += ` -censored`;
+
+                const res = await fetchDanbooru(`https://danbooru.donmai.us/posts.json?tags=${encodeURIComponent(queryTags)}&limit=${GALLERY_LIMIT}`);
+                const posts = await res.json();
+
+                const usable = (posts || []).filter(p => !p.is_banned && !p.is_deleted && (p.preview_file_url || p.file_url));
+                
+                if (usable.length === 0) {
+                    grid.innerHTML = '<div style="color: #555; text-align: center; font-size: 12px; grid-column: 1 / -1; margin-top: 20px;">Nenhuma imagem disponível para os filtros atuais.</div>';
+                    return;
+                }
+
+                usable.forEach(p => {
+                    const thumbUrl = p.preview_file_url || p.large_file_url || p.file_url;
+                    let fullUrl = p.large_file_url || p.file_url || thumbUrl;
+                    
+                    if (p.file_ext === 'mp4' || p.file_ext === 'webm') {
+                        fullUrl = p.file_url; 
+                    }
+
+                    const wrap = document.createElement('div');
+                    wrap.className = 'sidebar-thumb-wrap';
+
+                    const spinner = document.createElement('div');
+                    spinner.className = 'sidebar-thumb-spinner';
+                    spinner.textContent = '...';
+                    wrap.appendChild(spinner);
+
+                    const img = document.createElement('img');
+                    img.className = 'sidebar-thumb';
+                    img.loading = 'lazy';
+                    img.alt = tagName;
+                    
+                    // SOLUÇÃO DO BLOQUEIO DA IMAGEM: Esta linha impede que o navegador diga ao Danbooru de onde o acesso está vindo.
+                    img.referrerPolicy = 'no-referrer';
+
+                    img.onload = () => {
+                        img.classList.add('loaded');
+                        spinner.style.display = 'none';
+                    };
+                    img.onerror = () => {
+                        wrap.classList.add('errored');
+                        spinner.textContent = '⚠';
+                    };
+                    
+                    img.onclick = () => openMediaModal(fullUrl, p.file_ext, p.large_file_url);
+
+                    img.src = thumbUrl;
+                    wrap.appendChild(img);
+                    grid.appendChild(wrap);
+                });
+            } catch (e) {
+                grid.innerHTML = `<div style="color: #ff6060; text-align: center; font-size: 12px; grid-column: 1 / -1; margin-top: 20px;">Falha ao carregar imagens.<br><br>${e.message}</div>`;
+            }
+        }
+
+        document.getElementById('dbDetectBtn').onclick = () => {
+            let text = "";
+            document.querySelectorAll('textarea').forEach(ta => { text += ta.value + ", "; });
+            
+            const tags = [...new Set(text.split(/[,|]/).map(t => t.trim().toLowerCase().replace(/ /g, '_')).filter(t => t.length > 2))];
+            const dBody = document.getElementById('dbPopoutBody');
+            dBody.innerHTML = '';
+            
+            if (tags.length === 0) {
+                dBody.innerHTML = '<div style="color:#888;text-align:center;padding:20px;">No tags found (requires textareas on screen).</div>';
+            } else {
+                tags.forEach(t => {
+                    const div = document.createElement('div');
+                    div.className = 'db-tag-item';
+                    div.textContent = t.replace(/_/g, ' ');
+                    div.onclick = () => {
+                        document.getElementById('dbPopout').style.display = 'none';
+                        document.getElementById('dbOverlay').style.display = 'none';
+                        performSearch(t);
+                    };
+                    dBody.appendChild(div);
+                });
+            }
+            document.getElementById('dbPopout').style.display = 'flex';
+            document.getElementById('dbOverlay').style.display = 'block';
+        };
+    });
+</script>
+
+</body>
+</html>

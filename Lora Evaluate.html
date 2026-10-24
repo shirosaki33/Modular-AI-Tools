@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lora Evaluate</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+:root{--bg:#111;--pn:#161616;--cd:#1b1b1b;--bd:#262626;--mu:#888;--ac:#00ff99;--ac2:#00aa66;--wn:#ffd84d;--er:#ff6666}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:#e0e0e0;font:13px/1.4 Inter,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--cd);border:1px solid #333;border-radius:8px;padding:8px 13px;font-weight:600;cursor:pointer;transition:.15s}
+button:hover{border-color:var(--ac)}button:disabled{opacity:.4;cursor:default}
+.pri{background:var(--ac2);color:#000;border-color:var(--ac2)}.pri:hover{background:#00cc88}
+select,input[type=text]{background:var(--pn);border:1px solid #2a2a2a;border-radius:8px;padding:0 12px;height:36px;outline:none}
+select:focus,input:focus{border-color:var(--ac)}
+a{color:var(--ac);text-decoration:none}a:hover{color:#fff;text-decoration:underline}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#333;border-radius:4px}
+/* topbar */
+#topbar{display:flex;align-items:center;gap:10px;padding:12px 20px;min-height:54px;background:#0d0d0d;box-shadow:0 4px 6px rgba(0,0,0,.3);z-index:20}
+.topbar-section{flex:1;display:flex;align-items:center;gap:8px}.center{justify-content:center}.right{justify-content:flex-end;position:relative}
+#app-title{font-size:18px;font-weight:700;color:#fff;white-space:nowrap}
+#help-btn{padding:5px 11px;color:#888;background:none}#help-btn:hover{color:var(--ac)}
+#help-pop{display:none;position:absolute;top:44px;right:0;width:320px;padding:14px 16px;background:#111827;border:1px solid #263b5a;border-radius:10px;z-index:1100;box-shadow:0 8px 24px rgba(0,0,0,.85);color:#ccc;font-size:12px}
+#help-pop.open{display:block}#help-pop h4{margin-bottom:8px;color:#9ecfff;font-size:12px}#help-pop ul{padding-left:18px}#help-pop li{margin-bottom:6px}#help-pop code{color:var(--ac)}
+/* filtros */
+#bar{display:flex;gap:8px;padding:10px 20px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--bd)}
+#bar button{height:36px;padding:0 12px}#q{flex:1;min-width:140px}
+#bar label{color:var(--mu);font-size:11px;display:flex;align-items:center;gap:8px}
+#bar input[type=range]{accent-color:var(--ac);width:110px}
+#notice{display:none;margin:10px 20px 0;padding:9px 14px;background:var(--pn);border:1px solid var(--bd);border-radius:8px;color:var(--mu);justify-content:space-between;align-items:center;gap:10px}
+#main{flex:1;display:flex;min-height:0}
+#side{width:176px;flex-shrink:0;padding:14px 8px;border-right:1px solid var(--bd);overflow:auto}
+#side h6{margin:10px 8px 6px;font-size:10px;color:var(--mu);letter-spacing:.06em}
+.cat{padding:8px 10px;border-radius:8px;cursor:pointer;color:#bbb;display:flex;justify-content:space-between;gap:8px}
+.cat:hover{background:var(--cd)}.cat.on{background:#0d1f18;color:var(--ac);font-weight:600}.cat.dim{opacity:.5}
+.cat i{font-style:normal;color:var(--mu);font-size:11px}.rt{display:flex;align-items:center;gap:4px}.hide{opacity:.4;font-size:12px}.hide:hover{opacity:1}
+/* grid */
+#grid{flex:1;overflow:auto;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--sz,160px),1fr));gap:14px;align-content:start}
+.card{background:var(--pn);border:1px solid var(--bd);border-radius:12px;overflow:hidden;cursor:pointer;position:relative;min-width:0}
+.card:hover{border-color:var(--ac)}
+.card img,.ph{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;background:#0d0d0d}
+.tg{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.72);border-radius:20px;padding:2px 9px 2px 7px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px}
+.dot{width:8px;height:8px;border-radius:50%;background:#555}.dot.found{background:var(--ac)}.dot.outdated{background:var(--wn)}.dot.notfound{background:var(--er)}
+.nm{padding:9px 10px 2px;font-weight:600}.sb{padding:0 10px 9px;color:var(--mu);font-size:11px}.nm,.sb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.star{position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:50%;border:0;padding:0;background:rgba(0,0,0,.72);color:#666;z-index:2}
+.star:hover,.star.on{color:var(--wn)}
+#empty{grid-column:1/-1;color:var(--mu);padding:48px 0;max-width:640px}#empty strong{display:block;color:#fff;font-size:16px;margin-bottom:8px}#empty code{color:var(--ac)}
+/* detalhe: lista | imagem | author text | model info */
+#detail{flex:1;display:none;min-width:0;min-height:0}
+#dl{width:200px;flex-shrink:0;border-right:1px solid var(--bd);overflow:auto;padding:10px 8px}
+.li{display:flex;gap:9px;align-items:center;padding:6px;border-radius:8px;cursor:pointer}.li:hover{background:var(--cd)}.li.on{background:#0d1f18}
+.li img,.li .ph{width:34px;height:34px;aspect-ratio:1;border-radius:6px;flex-shrink:0}
+.li div{min-width:0}.li b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.li small{color:var(--mu);font-size:11px}
+#dc{flex:1 1 0;min-width:260px;display:flex;flex-direction:column;padding:12px;gap:10px}
+#stage{flex:1;min-height:180px;background:#0a0a0a;border-radius:16px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+#stage img{max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}#stage.zm{cursor:grab}
+.nav{position:absolute;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:50%;padding:0;background:rgba(0,0,0,.6);z-index:3}
+#zc{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.72);border:1px solid var(--bd);border-radius:10px;padding:4px 8px;display:flex;align-items:center;gap:6px;z-index:3}
+#zc button{border:0;background:none;padding:3px 8px}#zl{color:var(--ac);font-weight:600;min-width:42px;text-align:center}
+#cnt{position:absolute;top:12px;left:14px;color:var(--mu);font-size:11px;z-index:3}#xc{position:absolute;top:10px;right:10px;z-index:3}
+#thumbs{display:flex;gap:8px;height:62px;flex-shrink:0;overflow:auto}
+#thumbs img{height:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:2px solid transparent;opacity:.55;cursor:pointer}#thumbs img.on{border-color:var(--ac);opacity:1}
+#ddesc,#dr{flex:0 0 clamp(280px,24vw,360px);overflow:auto;padding:16px;display:flex;flex-direction:column;gap:14px;border-left:1px solid var(--bd);background:var(--pn)}
+#ddesc{display:none}#detail.has-desc #ddesc{display:flex}
+/* cartões (mesmo estilo do Metadata Reader) */
+.box{background:var(--cd);border-radius:12px;padding:16px}
+.box>h3{font-size:14px;font-weight:600;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}.kv .f{grid-column:span 2}
+.kv label,.lb{display:block;color:#666;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.kv span{word-break:break-word}.mono{font-family:ui-monospace,monospace;font-size:11px;color:#9fd9bb;word-break:break-all}
+.bdg{font-size:9px;padding:3px 8px;border:1px solid #1a4a30;border-radius:999px;background:#0d1f18;color:var(--ac);letter-spacing:.08em}
+.hd{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}.hr{display:flex;gap:8px;align-items:center}h2{font-size:16px;color:#fff}
+.fn{color:#666;font-size:11px;word-break:break-all;margin-top:4px}
+.fb{padding:5px 10px;font-size:12px}.fb.on{color:var(--wn);border-color:#6b5500;background:#1a1400}
+.pill{border:1px solid var(--bd);border-radius:999px;padding:8px 14px;text-align:center;font-weight:600;font-size:12px}
+.pill.found{border-color:#0d5030;background:#061a10;color:#00dd88}.pill.outdated{border-color:#6b5500;background:#1a1400;color:var(--wn)}.pill.notfound{border-color:#5a1010;background:#1a0606;color:var(--er)}
+.mrow{display:flex;gap:8px;margin-top:10px}.mrow input{flex:1;min-width:0}
+.cd{font-size:12px;color:#ddd;line-height:1.6;word-break:break-word;max-height:40vh;overflow:auto;margin-bottom:6px}.cd p{margin-bottom:6px}.cd ul,.cd ol{padding-left:18px}
+.cd h1,.cd h2,.cd h3,.cd h4{font-size:13px;margin:8px 0 4px;color:#fff}.cd .img-placeholder{color:var(--ac);font-family:monospace}
+.pb{margin-bottom:10px}.pl{display:flex;justify-content:space-between;align-items:center;color:#666;font-size:10px;font-weight:600;margin-bottom:4px}
+.copy{padding:2px 8px;font-size:11px;color:#888}
+.pt{background:#0d0d0d;color:var(--ac);border:1px solid #1e1e1e;border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto}
+.tags{max-height:240px;overflow:auto}.tr{display:flex;align-items:center;gap:8px;font-size:12px;padding:2px 0}
+.tr b{width:110px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tr div{flex:1;height:5px;background:#252525;border-radius:9px}
+.tr i{display:block;height:100%;background:var(--ac2);border-radius:9px}.tr em{font-style:normal;color:var(--mu);width:34px;text-align:right}
+pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wrap;word-break:break-all}.x{display:none!important}
+/* rodapé */
+#pager{display:none;align-items:center;justify-content:center;gap:10px;padding:8px 20px;border-top:1px solid var(--bd);background:var(--pn)}#pginfo{color:var(--mu);min-width:150px;text-align:center}
+#foot{display:flex;justify-content:space-between;gap:12px;padding:6px 20px;color:var(--mu);font-size:11px;border-top:1px solid var(--bd)}#fr{text-align:right}
+#cr{text-align:center;font-size:11px;color:#555;padding:5px 0 8px}#cr a{font-weight:600}
+@media(max-width:800px){
+#main{flex-direction:column}#side{width:100%;max-height:108px;border-right:0;border-bottom:1px solid var(--bd);display:flex;flex-wrap:wrap}#side h6{width:100%}
+#detail{flex-direction:column;overflow:auto}#dl{display:none}#dc{flex:0 0 auto;min-height:50vh}#ddesc,#dr{flex:0 0 auto;border-left:0;border-top:1px solid var(--bd)}}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div class="topbar-section"><button class="pri" onclick="addFolder()">+ Add folder</button><button onclick="addFiles()">Add files</button></div>
+  <div class="topbar-section center"><span id="app-title">📚 Lora Evaluate 📚</span></div>
+  <div class="topbar-section right" id="topbar-right">
+    <button onclick="runQueue(1)" title="Look up Civitai by hash. Only files that are not in the cache yet.">Check Civitai</button>
+    <span style="position:relative"><button id="help-btn" title="Help">?</button><div id="help-pop"><h4>About Lora Evaluate</h4><ul>
+      <li>Only the <strong>first</strong> Civitai image is saved next to the LoRA as <code>name.preview.png</code> (or jpg/webp). The others are view-only.</li>
+      <li>Opening a LoRA rechecks Civitai so previews and author text stay up to date.</li>
+      <li>Use ★ to favorite LoRAs. The eye icon hides a category <b>and its LoRAs from All</b>; <b>🗂 Categories</b> builds your own from selected LoRAs.</li>
+      <li>Cache lives in <code>local/</code> on localhost and/or <code>lora_evaluate_cache.json</code> in your library folders.</li>
+      <li>Works best in Chrome or Edge (File System Access API).</li></ul></div></span>
+  </div>
+</div>
+<div id="bar">
+  <select id="fd" onchange="page=1;render()"><option value="">All folders</option></select>
+  <input type="text" id="q" placeholder="Filter by name…" oninput="page=1;render()">
+  <button onclick="asc=!asc;page=1;render()" title="Reverse order">⇅</button>
+  <select id="so" onchange="page=1;render()"><option value="name">Name</option><option value="size">Size</option><option value="date">Date</option><option value="base">Base</option></select>
+  <label>Card size <input type="range" min="110" max="320" value="160" oninput="$('grid').style.setProperty('--sz',this.value+'px')"></label>
+  <button onclick="rescan()" title="Rescan folders">↻</button>
+</div>
+<div id="notice"><span id="ntx"></span><button id="nbt">Allow</button></div>
+<div id="main">
+  <div id="side"><div id="cats"></div></div>
+  <div id="grid"></div>
+  <div id="detail">
+    <div id="dl"></div>
+    <div id="dc">
+      <div id="stage">
+        <div id="cnt"></div><div id="xc"><button onclick="closeDetail()">✕</button></div>
+        <button class="nav" style="left:12px" onclick="step(-1)">‹</button><img id="mi" alt="">
+        <button class="nav" style="right:12px" onclick="step(1)">›</button>
+        <div id="zc"><button onclick="zoom(-.3)">−</button><span id="zl">100%</span><button onclick="zoom(.3)">+</button><button onclick="zoom(0)">↺</button></div>
+      </div>
+      <div id="thumbs"></div>
+    </div>
+    <div id="ddesc"></div>
+    <div id="dr"></div>
+  </div>
+</div>
+<div id="pager">
+  <button id="pgprev" onclick="changePage(-1)">‹</button><span id="pginfo"></span><button id="pgnext" onclick="changePage(1)">›</button>
+  <button id="pgsize" onclick="togglePer()" title="Items per page"></button>
+</div>
+<div id="foot"><span id="fl"></span><span id="fr"></span></div>
+<div id="cr"><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank" rel="noopener">GitHub Repository</a><br>© 2026 shirosaki33</div>
+
+<!-- Mesmo módulo do Lora Metadata Reader: findVal, escHtml, detectSystemInfo, detectTrainingTiming, resolve*, sanitizeCivitaiDesc -->
+<script src="tools/lora_meta_reader.js?v=7"></script>
+<script>
+const $=id=>document.getElementById(id),esc=s=>window.escHtml(s??''),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const fv=(m,k)=>{const v=findVal(m,k);return v&&v!=='None'&&v!=='null'?v:null};
+const API='https://civitai.com/api/v1/',CACHE_PATH='local/lora_evaluate_cache.json',CF='lora_evaluate_cache.json';
+const PREV=['.preview.png','.preview.jpg','.preview.jpeg','.preview.webp','.png','.jpg','.jpeg','.webp'],SIZES=[25,50,75,100];
+const isLocal=['localhost','127.0.0.1'].includes(location.hostname);
+let roots=[],items=[],view=[],all=[],cat='All',cur=-1,asc=true,scale=1,tx=0,ty=0,gal=[],gi=0,page=1,per=100,busy=false,cache={},saveT,chain=Promise.resolve(),mode='none',favs=new Set(),hidden=new Set();
+const tried=new Set();
+
+/* ---------- IndexedDB (handles de pasta + favoritos) ---------- */
+const idb=()=>new Promise((ok,no)=>{const r=indexedDB.open('LoraEvaluateDB',2);r.onupgradeneeded=()=>{['h','kv'].forEach(s=>r.result.objectStoreNames.contains(s)||r.result.createObjectStore(s))};r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+const idbOp=async(store,fn,rw)=>{const d=await idb();return new Promise((ok,no)=>{const t=d.transaction(store,rw?'readwrite':'readonly'),q=fn(t.objectStore(store));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>no(t.error)})};
+const idbAll=async()=>{const d=await idb();return new Promise(ok=>{const s=d.transaction('h').objectStore('h'),k=s.getAllKeys(),v=s.getAll();s.transaction.oncomplete=()=>ok(k.result.map((x,i)=>[x,v.result[i]]))})};
+async function loadPrefs(){try{favs=new Set(await idbOp('kv',s=>s.get('favorites'))||[]);hidden=new Set(await idbOp('kv',s=>s.get('hiddenCats'))||[])}catch{}}
+const savePrefs=()=>{idbOp('kv',s=>s.put([...favs],'favorites'),1).catch(()=>{});idbOp('kv',s=>s.put([...hidden],'hiddenCats'),1).catch(()=>{})};
+const isFav=it=>favs.has(it.key)||(it._hash&&favs.has(it._hash));
+function toggleFav(it,e){e&&(e.preventDefault(),e.stopPropagation());const k=it._hash||it.key;isFav(it)?(favs.delete(k),favs.delete(it.key)):favs.add(k);savePrefs();cur>=0?showDetail(cur,1):render()}
+
+/* ---------- Cache (local/ via API + pastas da biblioteca) ---------- */
+function ingest(j){const m=j&&j.items&&typeof j.items==='object'?j.items:j;if(!m||typeof m!=='object'||Array.isArray(m))return;
+  for(const[k,v]of Object.entries(m)){if(!v||typeof v!=='object')continue;const p=cache[k];cache[k]=!p?v:(v.checkedAt||0)>=(p.checkedAt||0)?{...p,...v}:{...v,...p}}}
+async function loadFs(){let ok=false;const hs=[...roots.map(r=>r.handle),...(await idbAll()).map(x=>x[1])];
+  for(const h of hs){if(!h)continue;try{if(await h.queryPermission({mode:'readwrite'})!=='granted')continue;ingest(JSON.parse(await(await(await h.getFileHandle(CF)).getFile()).text()));ok=true}catch{}}return ok}
+async function loadCache(){await loadPrefs();try{await idbOp('kv',s=>s.delete('cache'),1)}catch{}cache={};let api=false;
+  if(isLocal)try{const r=await fetch('/'+CACHE_PATH+'?t='+Date.now(),{cache:'no-store'}),ct=r.headers.get('content-type')||'';
+    if(r.ok&&ct.includes('json')){ingest(await r.json());api=true}else if(r.status===404&&!ct.includes('html'))api=true}catch{}
+  const fs=await loadFs();mode=api&&fs?'both':api?'api':fs?'fs':'none'}
+async function persist(ka){let a=false,f=false;
+  if(isLocal||mode==='api'||mode==='both')try{const r=await fetch('/api/save_local_cache',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:CACHE_PATH,data:cache}),keepalive:!!ka});a=ka||r.ok}catch{}
+  const pl=JSON.stringify({items:cache,savedAt:Date.now()});
+  for(const r of roots)if(r.handle)try{const w=await(await r.handle.getFileHandle(CF,{create:true})).createWritable();await w.write(pl);await w.close();f=true}catch{}
+  mode=a&&f?'both':a?'api':f?'fs':mode}
+const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>{chain=chain.then(()=>persist()).catch(()=>{})},800)};
+addEventListener('pagehide',()=>{clearTimeout(saveT);Object.keys(cache).length&&persist(1)});
+const cacheLabel=()=>({both:'Cache: local/ + library folders',api:'Cache: local/ (server)',fs:'Cache: library folders'}[mode]||'Cache: created in the library folder when you add one');
+const KEEP='status modelId versionId name version base type trained creator downloads latest images description versionDescription previewSaved previewUrl fileName size path root checkedAt'.split(' ');
+const slim=c=>Object.fromEntries(KEEP.filter(k=>{const v=c[k];return v!=null&&v!==''&&!(Array.isArray(v)&&!v.length)}).map(k=>[k,c[k]]));
+function rec(it){if(it._hash&&cache[it._hash])return cache[it._hash];
+  const h=Object.entries(cache).find(([,c])=>c&&c.size===it.file.size&&c.fileName===it.name&&(!c.path||c.path===it.path)&&(!c.root||c.root===it.root.name));
+  if(h){it._hash=h[0];return h[1]}return null}
+function ensure(it,h){it._hash=h;const c=cache[h]||{};Object.assign(c,{fileName:it.name,size:it.file.size,path:it.path,root:it.root.name});return cache[h]=c}
+const st=it=>(rec(it)||{}).status||'';
+
+/* ---------- Leitura do .safetensors ---------- */
+async function readHeader(f){try{const n=Number(new DataView(await f.slice(0,8).arrayBuffer()).getBigUint64(0,true));if(n<=0||n>2e8)return{};
+  const m=JSON.parse(new TextDecoder().decode(await f.slice(8,8+n).arrayBuffer())).__metadata__;return m&&typeof m==='object'?m:{}}catch{return{}}}
+const CLS=[[/z\s*image|zimage/,'Z-Image'],[/krea/,'Krea'],[/qwen/,'Qwen'],[/flux\s*2|flux\.2|flux2/,'Flux 2'],[/flux/,'Flux'],[/anima/,'Anima'],[/noob/,'NoobAI'],[/illustrious|ilxl/,'Illustrious'],[/pony/,'Pony'],[/sd\s*3|sd3|stable\s*diffusion\s*3/,'SD 3'],[/sdxl|stable\s*diffusion\s*xl|\bxl\b/,'SDXL'],[/1\.5|sd\s*1|sd1|v1[- ]?5|sd15/,'SD 1.5'],[/chroma/,'Chroma'],[/hidream/,'HiDream'],[/wan\s*video|\bwan\b/,'Wan']];
+function classify(it){const c=rec(it)||{},t=[c.base,fv(it.meta,['ss_base_model_version','modelspec.architecture','ss_sd_model_name','base_model','sd_model_name','modelspec.base','lora_base_model']),it.name].join(' ').toLowerCase().replace(/[_-]+/g,' ');return(CLS.find(([r])=>r.test(t))||[,'Other'])[1]}
+const dimAlpha=m=>{const a=fv(m,['ss_network_dim','network_dim','lora_rank','rank','dim']),b=fv(m,['ss_network_alpha','network_alpha','alpha']);return a&&b?a+'/'+b:a||b||''};
+const trigger=it=>{const c=rec(it);return c&&c.trained&&c.trained[0]||fv(it.meta,['activation_text','activation_tag','trigger_word','trigger_phrase','trigger'])||''};
+const folderOf=it=>it.rel?it.root.name+'/'+it.rel:it.root.name;
+
+async function scan(root){const out=[];
+  async function walk(dir,rel,d){if(d>8)return;const imgs=new Map(),sts=[];
+    for await(const e of dir.values()){if(e.kind==='directory')await walk(e,rel?rel+'/'+e.name:e.name,d+1);else if(/\.safetensors$/i.test(e.name))sts.push(e);else if(/\.(png|jpe?g|webp)$/i.test(e.name))imgs.set(e.name.toLowerCase(),e)}
+    for(const e of sts){const file=await e.getFile(),b=e.name.replace(/\.safetensors$/i,'').toLowerCase(),x=PREV.find(s=>imgs.has(b+s)),pv=x&&imgs.get(b+x),path=(rel?rel+'/':'')+e.name;let url=null;
+      if(pv)try{url=URL.createObjectURL(await pv.getFile())}catch{}
+      out.push({root,dir,name:e.name,rel,path,file,previewName:pv?pv.name:null,key:path+'|'+file.size+'|'+file.lastModified,url,meta:{},cls:'Other'})}}
+  await walk(root.handle,'',0);for(const it of out){it.raw=await readHeader(it.file);it.meta=expandMeta(it.raw)}return out}
+async function scanAll(){items.forEach(i=>i.url&&i.url.startsWith('blob:')&&URL.revokeObjectURL(i.url));items=[];page=1;await loadFs();
+  for(const r of roots)items.push(...(r.handle?await scan(r):r.loose||[]));
+  items.forEach(i=>i.cls=classify(i));folders();render();await syncPrev();await runQueue()}
+const rescan=()=>{$('fl').textContent='Reading folders…';return scanAll()};
+async function addFolder(){try{const h=await showDirectoryPicker({mode:'readwrite'});await idbOp('h',s=>s.put(h,h.name),1);roots.find(r=>r.name===h.name)||roots.push({name:h.name,handle:h});$('fl').textContent='Reading '+h.name+'…';await scanAll()}catch(e){e.name!=='AbortError'&&alert('Could not open the folder: '+e.message)}}
+async function addFiles(){try{const hs=await showOpenFilePicker({multiple:true,types:[{description:'LoRA',accept:{'application/octet-stream':['.safetensors']}}]});
+  let r=roots.find(x=>!x.handle);if(!r)roots.push(r={name:'(loose files)',handle:null,loose:[]});
+  for(const h of hs){const file=await h.getFile(),raw=await readHeader(file);r.loose.push({root:r,dir:null,name:file.name,rel:'',path:file.name,file,previewName:null,key:file.name+'|'+file.size+'|'+file.lastModified,url:null,raw,meta:expandMeta(raw),cls:'Other'})}
+  await scanAll()}catch(e){e.name!=='AbortError'&&alert('Error: '+e.message)}}
+
+/* ---------- Civitai ---------- */
+async function sha256(f){const d=new Uint8Array(await crypto.subtle.digest('SHA-256',await f.arrayBuffer()));return Array.from(d,b=>b.toString(16).padStart(2,'0')).join('')}
+const imgUrls=v=>[...new Set((v.images||[]).filter(i=>i&&i.type!=='video'&&/^https:\/\//i.test(i.url||'')).map(i=>i.url))].slice(0,24);
+function apply(c,v){Object.assign(c,{status:'found',modelId:v.modelId,versionId:v.id,name:v.model?.name||v.name||null,version:v.name||null,base:v.baseModel||null,type:v.model?.type||null,
+  trained:Array.isArray(v.trainedWords)?v.trainedWords.slice(0,40):[],downloads:v.stats?.downloadCount??null,images:imgUrls(v),latest:null,
+  description:v._modelDescription||v.model?.description||c.description||null,versionDescription:v.description||null})}
+async function fillModel(c){try{const m=await(await fetch(API+'models/'+c.modelId)).json();c.creator=m.creator?.username||null;c.description=m.description||c.description||null;
+  const l=m.modelVersions?.[0];if(l&&l.id!==c.versionId){c.status='outdated';c.latest=l.name}}catch{}}
+const extOf=(b,u)=>{const t=(b.type||'').toLowerCase();return t.includes('png')?'png':t.includes('webp')?'webp':/jpe?g/.test(t)?'jpg':((String(u).toLowerCase().match(/\.(png|jpe?g|webp)(?:$|\?)/)||[])[1]||'png').replace('jpeg','jpg')};
+async function getBlob(u){let last;for(const x of[...(/\/original=true\//.test(u)?[u.replace('/original=true/','/width=1280/')]:[]),u])
+  try{const r=await fetch(x,{mode:'cors',credentials:'omit'});if(!r.ok)throw 0;const b=await r.blob();if(!b.size||(b.type&&!b.type.startsWith('image/')))throw 0;return b}catch(e){last=e}throw last}
+async function ensurePrev(it){const c=rec(it),f=c&&c.images&&c.images[0];if(!f||!it.dir)return false;
+  if(c.previewSaved&&it.url&&c.previewUrl===f)return true;const k=(it._hash||it.key)+'|'+f;if(tried.has(k))return!!it.url;tried.add(k);
+  try{const b=await getBlob(f),t=it.name.replace(/\.safetensors$/i,'')+'.preview.'+extOf(b,f),w=await(await it.dir.getFileHandle(t,{create:true})).createWritable();await w.write(b);await w.close();
+    if(it.previewName&&it.previewName.toLowerCase()!==t.toLowerCase())try{await it.dir.removeEntry(it.previewName)}catch{}
+    it.url&&it.url.startsWith('blob:')&&URL.revokeObjectURL(it.url);it.url=URL.createObjectURL(b);it.previewName=t;c.previewSaved=true;c.previewUrl=f;save();updCard(it);return true}catch{return false}}
+async function checkOne(it){$('fr').textContent='Hashing '+it.name+'…';await sleep(20);
+  const h=it._hash||await sha256(it.file),c=ensure(it,h),r=await fetch(API+'model-versions/by-hash/'+h);
+  if(r.status===404){c.status='notfound';c.images=[]}else if(r.ok){apply(c,await r.json());await fillModel(c);await ensurePrev(it)}else return false;
+  c.checkedAt=Date.now();cache[h]=slim(c);it.cls=classify(it);save();return true}
+async function runQueue(manual){if(busy)return;const t=items.filter(i=>!st(i));
+  if(!t.length){manual&&($('fr').textContent='Everything is already cached.');return}
+  busy=true;let bad=false;
+  for(let i=0;i<t.length;i++){$('fr').textContent='Civitai: '+(i+1)+'/'+t.length+'…';try{await checkOne(t[i])}catch{bad=true;break}updCard(t[i]);await sleep(250)}
+  busy=false;$('fr').textContent=bad?'Could not reach Civitai.':'';cur>=0?showDetail(cur,1):render()}
+async function syncPrev(){const t=items.filter(it=>{const c=rec(it);return c&&c.images&&c.images[0]&&it.dir&&!(c.previewSaved&&it.url&&c.previewUrl===c.images[0])});
+  for(let i=0;i<t.length;i++){$('fr').textContent='Saving preview '+(i+1)+'/'+t.length+'…';await ensurePrev(t[i])}busy||($('fr').textContent='')}
+async function recheckOne(it){[...tried].forEach(k=>k.startsWith((it._hash||it.key)+'|')&&tried.delete(k));$('fr').textContent='Checking…';try{await checkOne(it)}catch{}$('fr').textContent='';updCard(it)}
+async function recheck(){const it=view[cur];if(!it)return;await recheckOne(it);showDetail(Math.max(0,view.indexOf(it)),1)}
+async function manualSearch(){const h=$('mh').value.trim().toLowerCase(),it=view[cur];if(!h||!it)return;$('mh').disabled=true;
+  try{const r=await fetch(API+'model-versions/by-hash/'+encodeURIComponent(h));
+    if(!r.ok)alert('Hash was not found on Civitai.');
+    else{const c=ensure(it,it._hash||h);apply(c,await r.json());await fillModel(c);c.checkedAt=Date.now();await ensurePrev(it);cache[it._hash]=slim(c);save();it.cls=classify(it);render();showDetail(view.indexOf(it),1)}}
+  catch{alert('Network error.')}
+  $('mh')&&($('mh').disabled=false)}
+
+/* ---------- Lista ---------- */
+const CATS=['All','Illustrious','Pony','Anima','NoobAI','SDXL','SD 1.5','SD 3','Flux','Flux 2','Z-Image','Krea','Qwen','Chroma','HiDream','Wan','Other','Outdated','Local only','Not found'];
+const inCatRaw=(it,k)=>{const s=st(it);return k==='Favorites'?isFav(it):k==='Outdated'?s==='outdated':k==='Not found'?s==='notfound':k==='Local only'?!s:k.startsWith('c:')?!!(window.ccHas&&ccHas(it,k.slice(2))):it.cls===k};
+const inCat=(it,k)=>k==='All'?![...hidden].some(h=>inCatRaw(it,h)):inCatRaw(it,k);
+const catLabel=k=>k.startsWith('c:')?k.slice(2):k;
+function folders(){const s=[...new Set(items.map(folderOf))].sort(),v=$('fd').value;$('fd').innerHTML='<option value="">All folders</option>'+s.map(x=>`<option>${esc(x)}</option>`).join('');$('fd').value=s.includes(v)?v:''}
+function renderCats(){const cc=window.ccKeys?ccKeys():[],n=k=>items.filter(i=>inCat(i,k)).length,
+  hid=[...CATS.filter(k=>k!=='All'),...cc].filter(k=>hidden.has(k)),mine=cc.filter(k=>!hidden.has(k)),
+  row=(k,d)=>`<div class="cat${k===cat?' on':''}${d?' dim':''}" data-k="${esc(k)}"><span>${esc(catLabel(k))}</span><span class="rt"><i>${n(k)}</i>${k==='All'?'':`<span class="hide" data-hide="${esc(k)}" title="Hide / show">${d?'🙈':'👁️'}</span>`}</span></div>`;
+  $('cats').innerHTML=`<h6>FAVORITES</h6><div class="cat${cat==='Favorites'?' on':''}" data-k="Favorites"><span>★ Favorites</span><i>${n('Favorites')}</i></div><h6>LIBRARY</h6>`
+    +CATS.filter(k=>k==='All'||(!hidden.has(k)&&(n(k)||k===cat))).map(k=>row(k)).join('')
+    +(mine.length?'<h6>CUSTOM</h6>'+mine.map(k=>row(k)).join(''):'')
+    +(hid.length?'<h6>HIDDEN</h6>'+hid.map(k=>row(k,1)).join(''):'')}
+$('cats').onclick=e=>{const h=e.target.closest('[data-hide]');
+  if(h){const k=h.dataset.hide;hidden.has(k)?hidden.delete(k):hidden.add(k);savePrefs();renderCats();return}
+  const d=e.target.closest('.cat');if(d){cat=d.dataset.k;page=1;render()}};
+function filtered(){const q=$('q').value.toLowerCase().trim(),f=$('fd').value,
+  cmp={name:(a,b)=>a.name.localeCompare(b.name),size:(a,b)=>a.file.size-b.file.size,date:(a,b)=>a.file.lastModified-b.file.lastModified,base:(a,b)=>a.cls.localeCompare(b.cls)||a.name.localeCompare(b.name)}[$('so').value],
+  a=items.filter(it=>inCat(it,cat)&&(!q||it.name.toLowerCase().includes(q))&&(!f||folderOf(it)===f)).sort(cmp);return asc?a:a.reverse()}
+function pager(){const t=all.length,n=Math.max(1,Math.ceil(t/per));$('pager').style.display=t>per?'flex':'none';if(t<=per){page=1;return}
+  page=Math.min(n,Math.max(1,page));$('pginfo').textContent=`Page ${page} of ${n} · ${t} items`;$('pgsize').textContent=per+' / page';$('pgprev').disabled=page<=1;$('pgnext').disabled=page>=n}
+const changePage=d=>{page+=d;$('grid').scrollTop=0;render()};
+const togglePer=()=>{per=SIZES[(SIZES.indexOf(per)+1)%SIZES.length];page=1;$('grid').scrollTop=0;render()};
+const empty=()=>`<div id="empty"><strong>${items.length?'No LoRAs in this filter.':'No folder loaded.'}</strong><p>${items.length?'Try another category, folder, or name.':'Click <b>Add folder</b> and choose the directory with your .safetensors files (Chrome or Edge, desktop). Civitai data is cached in <code>local/lora_evaluate_cache.json</code> on localhost, or in the library folder when opened from <code>file://</code>.'}</p></div>`;
+const card=(it,i)=>`<div class="card" data-i="${i}" data-k="${esc(it.key)}"><button class="star${isFav(it)?' on':''}" data-star="${i}" title="Favorite">★</button><span class="tg"><span class="dot ${st(it)}"></span>${esc(it.cls)}</span>${it.url?`<img loading="lazy" alt="" src="${esc(it.url)}">`:'<div class="ph"></div>'}<div class="nm" title="${esc(it.name)}">${esc(it.name.replace(/\.safetensors$/i,''))}</div><div class="sb">${esc((trigger(it)||'—')+' · '+(dimAlpha(it.meta)||'—'))}</div></div>`;
+function render(){all=filtered();pager();const s=(page-1)*per;view=all.slice(s,s+per);renderCats();
+  $('grid').innerHTML=view.length?view.map(card).join(''):empty();
+  $('fl').textContent=`${items.length} LoRA${items.length===1?'':'s'}${roots.length?' · '+roots.map(r=>r.name).join(' · '):''} · showing ${all.length?`${s+1}–${s+view.length} / ${all.length}`:0} · ${cacheLabel()}`;window.ccAfter&&ccAfter()}
+function updCard(it){const el=[...document.querySelectorAll('.card')].find(c=>c.dataset.k===it.key);if(!el)return;
+  el.querySelector('.dot').className='dot '+st(it);el.querySelector('.tg').lastChild.textContent=it.cls;if(!it.url)return;
+  let i=el.querySelector('img');if(!i){i=document.createElement('img');i.alt='';el.querySelector('.ph').replaceWith(i)}if(i.src!==it.url)i.src=it.url}
+$('grid').onclick=e=>{const s=e.target.closest('[data-star]');if(s){const it=view[+s.dataset.star];it&&toggleFav(it,e);return}const c=e.target.closest('.card');if(c&&!(window.ccClick&&ccClick(c,e)))showDetail(+c.dataset.i)};
+
+/* ---------- Detalhe (campos via resolvers do lora_meta_reader.js) ---------- */
+const epoch=m=>{const a=fv(m,['ss_epoch']),b=fv(m,['ss_num_epochs','ss_num_train_epochs','num_train_epochs']);return a||b?(a||b)+' of '+(b||a):null};
+const steps=m=>{const b=fv(m,['ss_max_train_steps','max_train_steps']),a=fv(m,['ss_steps']),e=parseFloat(fv(m,['ss_epoch'])),t=parseFloat(fv(m,['ss_num_epochs','ss_num_train_epochs','num_train_epochs']));
+  if(b&&e>0&&t>0)return'≈'+Math.round(b/t*e)+' of '+b;return b?(a||b)+' of '+b:a};
+const algo=m=>{const v=fv(m,['ss_network_args','network_args']);
+  if(v){const o=parseJsonMeta(v);if(o&&typeof o==='object'){const d=o.use_dora||o.dora||o.dora_linear_layer;
+    return o.algo||o.algorithm||o.network_args_algo||([true,'True','1',1].includes(d)?'DoRA':null)||Object.entries(o).filter(([k])=>!/dora/.test(k)).map(([k,x])=>k+':'+x).join(', ')||null}return v}
+  const d=fv(m,['ss_use_dora','use_dora','ss_dora','dora']);return d&&(d==='1'||d.toLowerCase()==='true')?'DoRA':null};
+const opt=m=>{const v=fv(m,['ss_optimizer','ss_optimizer_type','optimizer_type']);return v?v.split(',')[0].replace(/\s*\([^)]*\)?/g,'').trim().split('.').pop().split('_')[0].split('-')[0].trim()||v:null};
+const SEC={
+ General:[['Prediction',resolvePredictionType],['Batch',resolveBatch],['Grad. acc.',['ss_gradient_accumulation_steps','gradient_accumulation_steps']],['Resolution',resolveResolution],['Clip skip',['ss_clip_skip','clip_skip']],['Epoch',epoch],['Steps',steps]],
+ Network:[['Module',['ss_network_module','network_module'],1],['Algorithm',algo],['Dim / Alpha',dimAlpha],['Conv dim / alpha',m=>{const a=fv(m,['ss_conv_dim','conv_dim']),b=fv(m,['ss_conv_alpha','conv_alpha']);return a||b?(a||'?')+' / '+(b||'?'):null}],['Dropout',['ss_network_dropout','network_dropout']],['IP noise γ',['ss_ip_noise_gamma','ip_noise_gamma']]],
+ Optimizer:[['Type',opt],['Scheduler',['ss_lr_scheduler','lr_scheduler']],['Learning rate',['ss_learning_rate','learning_rate']],['TE LR',['ss_text_encoder_lr','text_encoder_lr']],['UNet LR',['ss_unet_lr','unet_lr']],['SNR γ',['ss_min_snr_gamma','min_snr_gamma']],['Warmup',['ss_lr_warmup_steps','lr_warmup_steps']],['Noise offset',['ss_noise_offset','noise_offset']]],
+ Training:[['Date',m=>detectTrainingTiming(m).dateText],['Train time',m=>detectTrainingTiming(m).timeText],['Images',['ss_num_train_images','num_train_images']],['Tool',m=>{const i=detectSystemInfo(m);return i&&i.label+(i.version?' '+i.version:'')}],['Source',m=>{const i=detectSystemInfo(m);return i&&i.source&&i.source!==i.label?i.source:null}],['Seed',['ss_seed']]]};
+const tgl="this.nextElementSibling.classList.toggle('x')";
+const secHtml=m=>Object.entries(SEC).map(([t,rows])=>`<div class="box"><h3 onclick="${tgl}">${t}<span>▾</span></h3><div class="kv">${rows.map(([l,g,f])=>{const v=typeof g==='function'?g(m):fv(m,g);return`<div${f?' class="f"':''}><label>${l}</label><span>${v?esc(v):'—'}</span></div>`}).join('')}</div></div>`).join('');
+function tagsHtml(m){const o=parseJsonMeta(fv(m,['ss_tag_frequency','tag_frequency']));if(!o)return'';const g={};
+  Object.values(o).forEach(s=>s&&typeof s==='object'&&Object.entries(s).forEach(([k,v])=>g[k]=(g[k]||0)+Number(v)));
+  const a=Object.entries(g).sort((x,y)=>y[1]-x[1]).slice(0,60);if(!a.length)return'';
+  return`<div class="box"><h3>Training tags</h3><div class="tags">${a.map(([t,n])=>`<div class="tr"><b title="${esc(t)}">${esc(t)}</b><div><i style="width:${Math.max(2,n/a[0][1]*100)}%"></i></div><em>${n}</em></div>`).join('')}</div></div>`}
+const LABEL={found:'Found on Civitai',outdated:'Newer version on Civitai',notfound:'Not found on Civitai','':'Not checked yet'};
+const has=h=>h&&h.replace(/<[^>]*>/g,'').trim();
+
+function showDetail(i,keep){
+  if(i<0||i>=view.length)return;cur=i;const it=view[i],c=rec(it)||{},m=it.meta,s=st(it);
+  $('grid').style.display=$('side').style.display=$('bar').style.display=$('pager').style.display='none';$('detail').style.display='flex';
+  $('dl').innerHTML=view.map((x,j)=>`<div class="li${j===i?' on':''}" data-j="${j}">${x.url?`<img alt="" src="${esc(x.url)}">`:'<div class="ph"></div>'}<div><b>${esc(x.name.replace(/\.safetensors$/i,''))}</b><small>${esc(x.cls)}</small></div></div>`).join('');
+  $('dl').querySelector('.li.on')?.scrollIntoView({block:'nearest'});
+  gal=[];if(it.url)gal.push({src:it.url,kind:'local'});
+  (c.images||[]).filter(u=>/^https:\/\//i.test(u)).slice(it.url&&c.previewSaved?1:0).forEach(u=>gal.push({src:u,kind:'remote'}));
+  if(!keep){gi=0;resetZoom()}if(gi>=gal.length)gi=0;drawStage();
+  if(!keep&&!it._rc){it._rc=1;const id=it.key;recheckOne(it).finally(()=>{it._rc=0;cur>=0&&view[cur]&&view[cur].key===id&&showDetail(cur,1)})}
+
+  // Author text (agora ENTRE a imagem e o Model info)
+  const D=h=>h?window.sanitizeCivitaiDescLocal(h):'',vd=D(c.versionDescription),md=D(c.description),hasDesc=(s==='found'||s==='outdated')&&(has(vd)||has(md));
+  $('detail').classList.toggle('has-desc',!!hasDesc);
+  $('ddesc').innerHTML=hasDesc?`<div class="box"><h3>Author text</h3>${has(vd)?`<label class="lb">Version notes</label><div class="cd">${vd}</div>`:''}${has(md)?`<label class="lb">Model description</label><div class="cd">${md}</div>`:''}</div>`:'';
+
+  // Model info (sem Training tool e Downloads)
+  const fav=isFav(it),tw=c.trained||[],
+  link=c.modelId?`<a href="https://civitai.com/models/${c.modelId}${c.versionId?'?modelVersionId='+c.versionId:''}" target="_blank" rel="noopener">Civitai ↗</a>`:'',
+  info=[['Creator',c.creator||fv(m,['modelspec.author','ss_creator','creator','author','ss_author','model_author'])],['Version',c.version],
+    ['Base model',c.base||fv(m,['ss_sd_model_name','ss_base_model_version','base_model','lora_base_model','modelspec.architecture'])],['Type',c.type||fv(m,['lora_base_model'])],
+    ['Dim / rank',dimAlpha(m)||fv(m,['lora_rank','rank'])],['Steps',fv(m,['ss_max_train_steps','ss_steps','training_steps','max_train_steps'])]];
+  $('dr').innerHTML=`
+  <div><div class="hd"><h2>${esc(c.name||it.name.replace(/\.safetensors$/i,''))}</h2><div class="hr"><button class="fb${fav?' on':''}" onclick="toggleFav(view[cur],event)">${fav?'★ Favorited':'☆ Favorite'}</button>${link}</div></div><div class="fn">${esc(it.path)}</div></div>
+  <div class="pill ${s}">${LABEL[s]||LABEL['']}${s==='outdated'&&c.latest?': '+esc(c.latest):''}</div>
+  <div class="box"><h3>Model info<span class="bdg">${esc(String(c.type||'LoRA').toUpperCase())}</span></h3>
+    <div class="kv">${info.map(([l,v])=>`<div><label>${l}</label><span>${esc(v||'—')}</span></div>`).join('')}<div class="f"><label>Hash · SHA-256</label><span class="mono">${esc(it._hash||'not hashed yet')}</span></div></div>
+    <div class="mrow"><input type="text" id="mh" placeholder="Look up a hash manually"><button class="pri" onclick="manualSearch()">Search</button></div>
+    ${s?'<div class="mrow"><button onclick="recheck()" style="flex:1">Recheck this LoRA</button></div>':''}</div>
+  ${tw.length?`<div class="box"><h3>Author prompts</h3>${tw.map((p,n)=>`<div class="pb"><div class="pl">PROMPT ${n+1}<button class="copy" data-copy="${esc(p)}">Copy</button></div><div class="pt">${esc(p)}</div></div>`).join('')}</div>`:''}
+  ${secHtml(m)}${tagsHtml(m)}
+  <div class="box"><h3 onclick="${tgl}">Raw metadata<span>▾</span></h3><pre class="x">${esc(JSON.stringify(it.raw||m,null,2))}</pre></div>`;
+}
+$('dr').onclick=async e=>{const b=e.target.closest('[data-copy]');if(!b)return;try{await navigator.clipboard.writeText(b.dataset.copy);b.textContent='Copied'}catch{b.textContent='Fail'}setTimeout(()=>b.textContent='Copy',1200)};
+$('dl').onclick=e=>{const d=e.target.closest('.li');d&&showDetail(+d.dataset.j)};
+function closeDetail(){$('detail').style.display='none';$('detail').classList.remove('has-desc');$('grid').style.display='grid';$('side').style.display=$('bar').style.display='';cur=-1;render()}
+function step(d){if(cur<0)return;const n=(page-1)*per+cur+d;if(n<0||n>=all.length)return;const p=Math.floor(n/per)+1;
+  if(p!==page){page=p;view=all.slice((p-1)*per,p*per)}showDetail(n%per)}
+
+/* ---------- Stage / zoom ---------- */
+const thumbU=u=>u.replace('/original=true/','/width=240/');
+function drawStage(){const g=gal[gi];$('mi').style.display=gal.length?'':'none';if(gal.length){const mi=$('mi');mi.crossOrigin='anonymous';mi.onerror=()=>{mi.onerror=null;mi.removeAttribute('crossorigin');mi.src=g.src};mi.src=g.src}
+  $('cnt').textContent=gal.length?`${gi+1} / ${gal.length} · ${g.kind==='local'?'Local preview':'Civitai · view only'}`:'No preview';
+  $('thumbs').innerHTML=gal.length>1?gal.map((u,j)=>`<img alt="" loading="lazy" crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(thumbU(u.src))}" data-f="${esc(u.src)}" onerror="this.onerror=null;this.removeAttribute('crossorigin');this.src=this.dataset.f" class="${j===gi?'on':''}" data-g="${j}">`).join(''):'';applyZoom()}
+$('thumbs').onclick=e=>{const g=e.target.dataset.g;if(g!==undefined){gi=+g;resetZoom();drawStage()}};
+const applyZoom=()=>{$('mi').style.transform=`translate(${tx}px,${ty}px) scale(${scale})`;$('zl').textContent=Math.round(scale*100)+'%';$('stage').classList.toggle('zm',scale>1)};
+const resetZoom=()=>{scale=1;tx=ty=0};
+function zoom(d){if(!d)resetZoom();else{scale=Math.min(8,Math.max(1,scale+d));if(scale===1)tx=ty=0}applyZoom()}
+let pan=null;
+$('stage').addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?.3:-.3)},{passive:false});
+$('stage').addEventListener('mousedown',e=>{if(scale<=1||e.target.closest('button'))return;pan=[e.clientX-tx,e.clientY-ty];e.preventDefault()});
+document.addEventListener('mousemove',e=>{if(!pan)return;tx=e.clientX-pan[0];ty=e.clientY-pan[1];applyZoom()});
+document.addEventListener('mouseup',()=>pan=null);
+document.addEventListener('keydown',e=>{if(cur<0||/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))return;
+  if(e.key==='ArrowRight')step(1);else if(e.key==='ArrowLeft')step(-1);else if(e.key==='Escape')closeDetail()});
+$('help-btn').onclick=e=>{e.stopPropagation();$('help-pop').classList.toggle('open')};
+document.addEventListener('click',e=>$('help-pop').contains(e.target)||$('help-pop').classList.remove('open'));
+
+/* ---------- Init ---------- */
+async function init(){await loadCache();const stored=await idbAll(),need=[];roots=roots.filter(r=>!r.handle);
+  for(const[name,h]of stored){let ok=false;try{ok=await h.queryPermission({mode:'readwrite'})==='granted'}catch{}ok?roots.push({name,handle:h}):need.push(name)}
+  $('notice').style.display=need.length?'flex':'none';
+  if(need.length){$('ntx').textContent='The browser is asking for permission again for: '+need.join(', ');
+    $('nbt').onclick=async()=>{for(const[n,h]of stored)if(need.includes(n))try{await h.requestPermission({mode:'readwrite'})}catch{}await init()}}
+  roots.length?($('fl').textContent='Reading folders…',await scanAll()):render()}
+render();
+if(!window.showDirectoryPicker){$('ntx').textContent='This browser does not support the File System Access API. Use Chrome, Edge, or another Chromium browser on a desktop.';$('nbt').style.display='none';$('notice').style.display='flex'}
+else init();
+</script>
+<script src="tools/lora_custom_cats.js"></script>
+<script src="tools/quick_links.js"></script>
+</body>
+</html>

@@ -572,7 +572,7 @@ async function processFile(file) {
 	if (isStaleLoad(loadId, file)) return;
 
 	currentMeta = meta;
-	populateUI(meta);
+	populateUI(window.expandMeta ? window.expandMeta(meta) : meta);
 	
 	if(window.renderTagFrequency) window.renderTagFrequency(meta);
 	if(window.renderMetaRaw) window.renderMetaRaw(meta);
