@@ -3,7 +3,7 @@
    Gerencia os diretórios (IndexedDB), configurações (JSON) e presets (JSON).
 ========================================================================= */
 
-const dbName = 'GalleryDB';
+const dbName = 'TagManagerDirsDB';
 const storeName = 'directories';
 const settingsDbName = 'SettingsDB';
 const settingsStoreName = 'settings';

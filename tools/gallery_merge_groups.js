@@ -8,8 +8,8 @@
 
    IMPORTANTE: isso não move, renomeia nem apaga nenhum arquivo.
    Os arquivos de imagem e os .json continuam intactos e separados
-   no disco — o agrupamento existe só no IndexedDB deste navegador
-   (mesmo lugar onde tags, path visual etc. já são guardados) e só
+   no disco — o agrupamento existe só no arquivo _gallery_merge_groups.json dentro da pasta
+   (acompanha a pasta entre navegadores/PCs) e só
    serve para reduzir quantos "cards" aparecem na grade/paginação.
    ================================================================ */
 
@@ -20,8 +20,28 @@ let groupActiveIndex = new Map(); // primaryFileName -> índice sendo pré-visua
 let markedPrimaryFile = null; // arquivo marcado com ⭐ durante a seleção, para virar a principal do grupo
 
 /* ----------------------------------------------------------------
-   BANCO (IndexedDB) — um registro por pasta, como as outras features
+   ARMAZENAMENTO — arquivo dentro da própria pasta (como as tags, que
+   vivem nos .json). O IndexedDB é separado em cada navegador, então
+   ele agora serve apenas como ORIGEM DE MIGRAÇÃO: na primeira vez que
+   a pasta é aberta, o que existir no cache do navegador é importado
+   para o arquivo e, se a gravação der certo, o registro do IndexedDB
+   é apagado (limpo).
    ---------------------------------------------------------------- */
+const MERGE_GROUPS_FILE = '_gallery_merge_groups.json';
+
+async function getMergeGroupsFromDB(folderName) {
+    try {
+        const db = await initDB();
+        return await new Promise(r => {
+            const tx = db.transaction(storeName, 'readonly');
+            const req = tx.objectStore(storeName).get('mergegroups_' + folderName);
+            req.onsuccess = () => r(Array.isArray(req.result) ? req.result : []);
+            req.onerror = () => r([]);
+        });
+    } catch (e) { return []; }
+}
+
+// Fallback: só usado se não for possível gravar o arquivo na pasta
 async function saveMergeGroupsToDB(folderName, groupsArray) {
     const db = await initDB();
     return new Promise(r => {
@@ -31,31 +51,101 @@ async function saveMergeGroupsToDB(folderName, groupsArray) {
     });
 }
 
-async function getMergeGroupsFromDB(folderName) {
-    const db = await initDB();
-    return new Promise(r => {
-        const tx = db.transaction(storeName, 'readonly');
-        const req = tx.objectStore(storeName).get('mergegroups_' + folderName);
-        req.onsuccess = () => r(Array.isArray(req.result) ? req.result : []);
-        req.onerror = () => r([]);
-    });
+async function deleteMergeGroupsFromDB(folderName) {
+    try {
+        const db = await initDB();
+        await new Promise(r => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).delete('mergegroups_' + folderName);
+            tx.oncomplete = r;
+            tx.onerror = r;
+        });
+    } catch (e) { console.warn('Could not clean merge groups cache:', e); }
+}
+
+// Retorna o array de grupos, ou null se o arquivo não existe / é inválido
+async function getMergeGroupsFromFile(dirHandle) {
+    try {
+        const fh = await dirHandle.getFileHandle(MERGE_GROUPS_FILE);
+        const data = JSON.parse(await (await fh.getFile()).text());
+        const groups = Array.isArray(data) ? data : (data && data.groups);
+        return Array.isArray(groups) ? groups : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Retorna true se gravou com sucesso
+async function saveMergeGroupsToFile(dirHandle, groupsArray) {
+    try {
+        const fh = await dirHandle.getFileHandle(MERGE_GROUPS_FILE, { create: true });
+        const writable = await fh.createWritable();
+        await writable.write(JSON.stringify({ version: 1, groups: groupsArray }, null, 2));
+        await writable.close();
+        return true;
+    } catch (e) {
+        console.error('Could not save merge groups file:', e);
+        return false;
+    }
 }
 
 async function persistMergeGroups() {
     if (!currentHandle) return;
-    await saveMergeGroupsToDB(currentHandle.name, Array.from(mergeGroups.values()));
+    const groupsArray = Array.from(mergeGroups.values());
+    const ok = await saveMergeGroupsToFile(currentHandle, groupsArray);
+    if (ok) {
+        await deleteMergeGroupsFromDB(currentHandle.name); // nada de sobra no cache do navegador
+    } else {
+        await saveMergeGroupsToDB(currentHandle.name, groupsArray); // fallback
+        if (typeof showAlert === 'function') showAlert('⚠️ Merges saved only in this browser (could not write file to folder).', 'warn');
+    }
+}
+
+/* Junta os grupos do cache do navegador (dbGroups) aos do arquivo (fileGroups).
+   O arquivo tem prioridade: um grupo do cache só entra se NENHUM dos seus
+   membros já estiver em algum grupo do arquivo. */
+function combineMergeGroups(fileGroups, dbGroups) {
+    const result = [];
+    const used = new Set();
+    const add = (group, skipIfUsed) => {
+        if (!Array.isArray(group) || group.length < 2) return;
+        if (skipIfUsed && group.some(n => used.has(n))) return;
+        const clean = group.filter(n => !used.has(n));
+        if (clean.length < 2) return;
+        clean.forEach(n => used.add(n));
+        result.push(clean);
+    };
+    fileGroups.forEach(g => add(g, false));
+    dbGroups.forEach(g => add(g, true));
+    return result;
 }
 
 /* Chamado sempre que uma pasta/subpasta é carregada (depois de currentFiles
-   já estar populado — ver chamadas adicionadas em loadGallery/loadSubDir1/2).
-   Grupos cujos arquivos não existem mais nesta pasta são descartados. */
+   já estar populado). Fluxo:
+   1) lê o arquivo da pasta (se existir);
+   2) importa o que houver no cache (IndexedDB) deste navegador e atualiza o arquivo;
+   3) se o arquivo foi gravado com sucesso, limpa o IndexedDB.
+   Grupos cujos arquivos não existem mais nesta pasta são descartados da memória. */
 async function loadMergeGroupsIndex(dirHandle) {
     mergeGroups.clear();
     memberToPrimary.clear();
     groupActiveIndex.clear();
     if (!dirHandle) return;
 
-    const stored = await getMergeGroupsFromDB(dirHandle.name);
+    const fileGroups = (await getMergeGroupsFromFile(dirHandle)) || [];
+    const dbGroups   = await getMergeGroupsFromDB(dirHandle.name);
+
+    let stored = fileGroups;
+    if (dbGroups.length > 0) {
+        stored = combineMergeGroups(fileGroups, dbGroups);
+        const ok = await saveMergeGroupsToFile(dirHandle, stored);
+        if (ok) {
+            await deleteMergeGroupsFromDB(dirHandle.name);
+            if (typeof showAlert === 'function') showAlert('🔗 Merges imported from browser cache into the folder file.', 'success');
+        }
+        // se falhar, o cache é mantido para tentar de novo na próxima abertura
+    }
+
     stored.forEach(group => {
         if (!Array.isArray(group)) return;
         const valid = group.filter(name => currentFiles.some(f => f.name === name));

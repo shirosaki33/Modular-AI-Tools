@@ -67,8 +67,27 @@ function getCurrentMonthKey() {
 }
 
 /* ----------------------------------------------------------------
-   DATABASE (IndexedDB) - counts are stored per folder
+   ARMAZENAMENTO — arquivo dentro da própria pasta (acompanha a pasta
+   entre navegadores/PCs). O IndexedDB é separado em cada navegador,
+   então agora ele serve só como ORIGEM DE MIGRAÇÃO: o que existir no
+   cache é importado para o arquivo e, se a gravação der certo, o
+   registro do IndexedDB é apagado (limpo).
    ---------------------------------------------------------------- */
+const VIEW_COUNTS_FILE = '_gallery_view_counts.json';
+
+async function getViewCountsFromDB(folderName) {
+    try {
+        const db = await initDB();
+        return await new Promise(r => {
+            const tx = db.transaction(storeName, 'readonly');
+            const req = tx.objectStore(storeName).get('viewcounts_' + folderName);
+            req.onsuccess = () => r(req.result || null);
+            req.onerror = () => r(null);
+        });
+    } catch (e) { return null; }
+}
+
+// Fallback: só usado se não for possível gravar o arquivo na pasta
 async function saveViewCountsToDB(folderName, data) {
     const db = await initDB();
     return new Promise(r => {
@@ -78,24 +97,93 @@ async function saveViewCountsToDB(folderName, data) {
     });
 }
 
-async function getViewCountsFromDB(folderName) {
-    const db = await initDB();
-    return new Promise(r => {
-        const tx = db.transaction(storeName, 'readonly');
-        const req = tx.objectStore(storeName).get('viewcounts_' + folderName);
-        req.onsuccess = () => r(req.result || null);
-        req.onerror = () => r(null);
+async function deleteViewCountsFromDB(folderName) {
+    try {
+        const db = await initDB();
+        await new Promise(r => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).delete('viewcounts_' + folderName);
+            tx.oncomplete = r;
+            tx.onerror = r;
+        });
+    } catch (e) { console.warn('Could not clean view counts cache:', e); }
+}
+
+// Retorna o objeto salvo, ou null se o arquivo não existe / é inválido
+async function getViewCountsFromFile(dirHandle) {
+    try {
+        const fh = await dirHandle.getFileHandle(VIEW_COUNTS_FILE);
+        const data = JSON.parse(await (await fh.getFile()).text());
+        return (data && typeof data === 'object') ? data : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Retorna true se gravou com sucesso
+async function saveViewCountsToFile(dirHandle, data) {
+    try {
+        const fh = await dirHandle.getFileHandle(VIEW_COUNTS_FILE, { create: true });
+        const writable = await fh.createWritable();
+        await writable.write(JSON.stringify(data, null, 2));
+        await writable.close();
+        return true;
+    } catch (e) {
+        console.error('Could not save view counts file:', e);
+        return false;
+    }
+}
+
+// Grava o estado atual (viewCountsData) — em fila, para que duas aberturas
+// seguidas de imagem não tentem escrever o mesmo arquivo ao mesmo tempo.
+let _viewCountsWriteQueue = Promise.resolve();
+function persistViewCounts() {
+    if (!currentHandle) return Promise.resolve();
+    const handle = currentHandle;
+    const snapshot = JSON.parse(JSON.stringify(viewCountsData));
+    _viewCountsWriteQueue = _viewCountsWriteQueue.then(async () => {
+        const ok = await saveViewCountsToFile(handle, snapshot);
+        if (ok) {
+            await deleteViewCountsFromDB(handle.name);
+        } else {
+            await saveViewCountsToDB(handle.name, snapshot); // fallback
+            if (typeof showAlert === 'function') showAlert('⚠️ View counts saved only in this browser (could not write file to folder).', 'warn');
+        }
+    }).catch(e => console.error(e));
+    return _viewCountsWriteQueue;
+}
+
+/* Converte qualquer formato salvo (inclusive o antigo { weekKey, counts })
+   para o formato atual e zera o período que já virou. Retorna
+   { data, changed }. */
+function normalizeViewCounts(raw, weekKey, monthKey) {
+    if (!raw) return { data: { weekKey, weekCounts: {}, monthKey, monthCounts: {} }, changed: true };
+
+    const data = {
+        weekKey:     raw.weekKey  || '',
+        weekCounts:  raw.weekCounts || raw.counts || {},
+        monthKey:    raw.monthKey || '',
+        monthCounts: raw.monthCounts || {}
+    };
+    let changed = !!raw.counts;
+    if (data.weekKey !== weekKey)   { data.weekKey = weekKey;   data.weekCounts = {};  changed = true; }
+    if (data.monthKey !== monthKey) { data.monthKey = monthKey; data.monthCounts = {}; changed = true; }
+    return { data, changed };
+}
+
+function sumCountMaps(target, extra) {
+    Object.keys(extra || {}).forEach(k => {
+        target[k] = (target[k] || 0) + (Number(extra[k]) || 0);
     });
 }
 
-// NOTE: getHandles() and deleteHandle() in gallery_core.js already ignore the
-// 'viewcounts_' prefix (added alongside 'path_', 'autorename_', etc.), so
-// this store doesn't show up as a fake "directory" in the dropdown.
-
 /* ----------------------------------------------------------------
    LOAD/RESET per folder - called whenever a folder/subfolder loads.
-   Normalizes old (weekly-only) saved data so nobody loses their
-   existing weekly counts when this update lands.
+   Fluxo:
+   1) lê o arquivo da pasta (se existir) e zera períodos vencidos;
+   2) importa o que houver no cache (IndexedDB) deste navegador,
+      SOMANDO às contagens do arquivo (só dos períodos ainda vigentes);
+   3) grava o arquivo e, se deu certo, limpa o IndexedDB.
    ---------------------------------------------------------------- */
 async function loadViewCountsIndex(dirHandle) {
     if (!dirHandle) {
@@ -105,29 +193,33 @@ async function loadViewCountsIndex(dirHandle) {
 
     const weekKey  = getCurrentWeekKey();
     const monthKey = getCurrentMonthKey();
-    const stored   = await getViewCountsFromDB(dirHandle.name);
 
-    if (!stored) {
-        viewCountsData = { weekKey, weekCounts: {}, monthKey, monthCounts: {} };
-        await saveViewCountsToDB(dirHandle.name, viewCountsData);
-        return;
+    const fileRaw = await getViewCountsFromFile(dirHandle);
+    const dbRaw   = await getViewCountsFromDB(dirHandle.name);
+
+    const fileNorm = normalizeViewCounts(fileRaw, weekKey, monthKey);
+    let data = fileNorm.data;
+    let needsWrite = fileNorm.changed || !fileRaw;
+
+    if (dbRaw) {
+        const dbNorm = normalizeViewCounts(dbRaw, weekKey, monthKey).data;
+        sumCountMaps(data.weekCounts,  dbNorm.weekCounts);
+        sumCountMaps(data.monthCounts, dbNorm.monthCounts);
+        needsWrite = true;
     }
 
-    // Migrate the old shape ({ weekKey, counts }) to the new one, keeping
-    // whatever weekly numbers were already collected.
-    const normalized = {
-        weekKey:     stored.weekKey  || '',
-        weekCounts:  stored.weekCounts || stored.counts || {},
-        monthKey:    stored.monthKey || '',
-        monthCounts: stored.monthCounts || {}
-    };
+    viewCountsData = data;
 
-    let changed = false;
-    if (normalized.weekKey !== weekKey)   { normalized.weekKey = weekKey;   normalized.weekCounts = {};  changed = true; }
-    if (normalized.monthKey !== monthKey) { normalized.monthKey = monthKey; normalized.monthCounts = {}; changed = true; }
-
-    viewCountsData = normalized;
-    if (changed || stored.counts) await saveViewCountsToDB(dirHandle.name, viewCountsData);
+    if (needsWrite) {
+        const ok = await saveViewCountsToFile(dirHandle, data);
+        if (ok) {
+            if (dbRaw) {
+                await deleteViewCountsFromDB(dirHandle.name);
+                if (typeof showAlert === 'function') showAlert('👁️ View counts imported from browser cache into the folder file.', 'success');
+            }
+        }
+        // se falhar, o cache é mantido para tentar de novo na próxima abertura
+    }
 }
 
 /* ----------------------------------------------------------------
@@ -146,7 +238,7 @@ async function registerImageView(fileName) {
     viewCountsData.weekCounts[fileName]  = (viewCountsData.weekCounts[fileName]  || 0) + 1;
     viewCountsData.monthCounts[fileName] = (viewCountsData.monthCounts[fileName] || 0) + 1;
 
-    await saveViewCountsToDB(currentHandle.name, viewCountsData);
+    await persistViewCounts();
     updateViewCountBadge(fileName);
 }
 
