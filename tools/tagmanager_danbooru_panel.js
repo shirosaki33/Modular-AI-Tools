@@ -56,13 +56,33 @@
         .tag-row.ghost .tag-db-info, .master-tag-item.ghost .tag-db-info,
         .tag-row.ghost .tag-e621-info, .master-tag-item.ghost .tag-e621-info { margin-right: -2px; }
 
-        .dbp-source-toggle { display: flex; gap: 6px; margin-bottom: 10px; }
-        .dbp-source-btn { background: #151515; border: 1px solid #444; color: #aaa; padding: 6px 12px; font-size: 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        .dbp-source-btn:hover { color: #fff; border-color: #666; }
-        .dbp-source-btn.active-danbooru { background: #0a2a4c; border-color: #4db8ff; color: #4db8ff; }
-        .dbp-source-btn.active-e621 { background: #3a2a10; border-color: #ffb74d; color: #ffb74d; }
 
-        #modal-danbooru .tool-modal, #modal-db-tag-info .tool-modal, #modal-e621-tag-info .tool-modal { width: 700px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
+        #modal-db-tag-info .tool-modal, #modal-e621-tag-info .tool-modal { width: 700px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
+        #modal-danbooru .tool-modal { width: 1150px; max-width: 95vw; max-height: 90vh; overflow-y: auto; }
+
+        .dbp-cards { display: flex; gap: 12px; margin-top: 12px; align-items: stretch; }
+        .dbp-card { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: #0d0d0d; border: 1px solid #1e3d28; border-radius: 8px; overflow: hidden; }
+        .dbp-card[data-site="danbooru"] { border-color: #1f4468; }
+        .dbp-card[data-site="e621"] { border-color: #6b4a14; }
+        .dbp-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 12px; background: #151515; border-bottom: 1px solid #222; font-size: 12px; font-weight: bold; flex-shrink: 0; }
+        .dbp-card-status { font-size: 10px; color: #777; font-weight: normal; }
+        .dbp-card-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; height: 340px; overflow-y: auto; }
+        .dbp-empty { color: #555; font-size: 13px; font-style: italic; text-align: center; padding: 24px 10px; }
+        .dbp-tag-title { font-size: 16px; font-weight: bold; }
+        .dbp-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+        .dbp-tr-btn { background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .dbp-tr-btn:hover { background: #b890ff; color: #000; }
+        .dbp-open-link { color: #4db8ff; text-decoration: none; border: 1px solid #2a5a8c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block; }
+        .dbp-open-link.e621 { color: #ffb74d; border-color: #aa7722; }
+        .dbp-alias-box { background: #111; border: 1px dashed #333; border-radius: 6px; padding: 8px 10px; margin-bottom: 4px; font-size: 12px; }
+        .dbp-alias-box .lbl { color: #888; font-size: 10px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; display: block; }
+        .dbp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; justify-content: center; }
+        .dbp-chip { background: #151515; border: 1px solid #2a3a4a; color: #9ecfff; border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; user-select: none; }
+        .dbp-chip:hover { background: #1a3a5c; color: #fff; border-color: #4db8ff; }
+        .dbp-src-badge { font-size: 9px; font-weight: bold; padding: 1px 5px; border-radius: 8px; margin-left: 5px; border: 1px solid; vertical-align: middle; }
+        .dbp-src-badge.db { color: #4db8ff; border-color: #2a5a8c; background: #0a1a2a; }
+        .dbp-src-badge.e6 { color: #ffb74d; border-color: #aa7722; background: #2a1a05; }
+        @media (max-width: 800px) { .dbp-cards { flex-direction: column; } .dbp-card-body { height: 240px; } }
 
         .dbp-row { display: flex; gap: 8px; }
         .dbp-input {
@@ -106,11 +126,6 @@
 
     const DB_CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };
     const DB_CAT_LABELS = { 0: "General", 1: "Artist", 3: "Copyright", 4: "Character", 5: "Meta" };
-
-    // Fonte usada pela busca MANUAL do popout (switch 🅱️/🦊). Não afeta os
-    // ícones ❓/❔ nas tags (esses sempre checam as duas fontes independente
-    // do switch) nem o autocomplete dos outros campos do app.
-    window.tagInterrogatorSource = window.tagInterrogatorSource || 'danbooru';
 
     window.danbooruInfoEnabled = window.danbooruInfoEnabled !== undefined ? window.danbooruInfoEnabled : true;
     window.danbooruInfoShowIcons = window.danbooruInfoShowIcons !== undefined ? window.danbooruInfoShowIcons : true;
@@ -166,14 +181,37 @@
         }
     }
 
-    /* ---------- AUTOCOMPLETE NO CAMPO DE BUSCA MANUAL (dbpInput) ----------
-       Reaproveita window.dbSearchTagMatches (tagmanager_danbooru_core.js),
-       a MESMA função/cache já usada pelos campos de tag "normais" do app
-       (Active Image, All Dataset Tags, Presets, Replace — ver
-       setupDanbooruAutocomplete em tagmanager_caption_tag.js). Mostra o
-       dropdown ".db-autocomplete" (classes/CSS já injetadas por
-       tagmanager_caption_tag.js) logo abaixo do campo; clicar numa
-       sugestão preenche o input E já dispara a busca/wiki. */
+    /* ---------- DUAL LOOKUP: Danbooru + e621 SEARCHED TOGETHER, SIDE BY SIDE ----------
+       Same idea as the Prompt Helper: one search box fires both sites at the
+       same time and each site gets its own card listing what it found. Both
+       lookups go through the shared _core files (same caches as autocomplete,
+       counts and the background scan), so nothing is fetched twice. */
+    const DBP_ESC = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    const DBP_SITES = {
+        danbooru: {
+            key: 'danbooru', name: 'Danbooru', icon: '🅱️', badge: 'DB',
+            host: () => 'danbooru.donmai.us',
+            colors: () => DB_CAT_COLORS,
+            labels: () => DB_CAT_LABELS,
+            lookup: (t) => window.dbLookupSingleTag(t),
+            search: (q, n) => window.dbSearchTagMatches(q, n),
+            aliasBehavior: () => window.aliasClickBehavior || 'replace'
+        },
+        e621: {
+            key: 'e621', name: 'e621', icon: '🦊', badge: 'e6',
+            host: () => e621HostForLinks(),
+            colors: () => window.E621_CAT_COLORS || {},
+            labels: () => window.E621_CAT_LABELS || {},
+            lookup: (t) => window.e621LookupSingleTag(t),
+            search: (q, n) => window.e621SearchTagMatches(q, n),
+            aliasBehavior: () => window.e621AliasClickBehavior || 'replace'
+        }
+    };
+
+    let dbpSearchToken = 0;
+
+    /* ---------- AUTOCOMPLETE (merged from both sites) ---------- */
     function setupDbpAutocomplete() {
         const input = document.getElementById('dbpInput');
         const wrap = document.getElementById('dbpInputWrap');
@@ -187,48 +225,60 @@
         wrap._suggBox = suggBox;
 
         let timeout = null;
+        let token = 0;
+
         input.addEventListener('input', (e) => {
             clearTimeout(timeout);
             const rawVal = e.target.value.trim().toLowerCase();
             if (rawVal.length < 2) { suggBox.style.display = 'none'; return; }
             const val = rawVal.replace(/ /g, '_');
-            
-            const isE621 = window.tagInterrogatorSource === 'e621';
-            const delay = isE621 ? 800 : 350; 
-            
+            const myToken = ++token;
+
             timeout = setTimeout(async () => {
                 try {
-                    const searchFn = isE621 ? window.e621SearchTagMatches : window.dbSearchTagMatches;
-                    const catColors = isE621 ? window.E621_CAT_COLORS : DB_CAT_COLORS;
-                    
-                    const results = typeof searchFn === 'function' ? await searchFn(val, 8) : [];
-                    
-                    const currentValue = input.value.trim().toLowerCase();
-                    if (currentValue.length < 2 || currentValue !== rawVal) { 
-                        suggBox.style.display = 'none'; 
-                        return; 
-                    }
+                    const results = await Promise.all(Object.values(DBP_SITES).map(async (site) => {
+                        try {
+                            const list = typeof site.search === 'function' ? await site.search(val, 6) : [];
+                            return (list || []).map(t => ({ ...t, _site: site.key }));
+                        } catch (err) { return []; }
+                    }));
+                    if (myToken !== token) return; // stale response
+
+                    const merged = new Map();
+                    results.flat().forEach(t => {
+                        const k = t.name.replace(/_/g, ' ').toLowerCase();
+                        const ex = merged.get(k);
+                        if (!ex) {
+                            merged.set(k, { ...t, sites: [t._site] });
+                        } else {
+                            if (!ex.sites.includes(t._site)) ex.sites.push(t._site);
+                            if ((t.post_count || 0) > (ex.post_count || 0)) ex.post_count = t.post_count;
+                            if (!ex.isAlias && t.isAlias) { ex.isAlias = true; ex.aliasTo = t.aliasTo; }
+                        }
+                    });
+                    const list = Array.from(merged.values()).sort((a, b) => (b.post_count || 0) - (a.post_count || 0)).slice(0, 10);
 
                     suggBox.innerHTML = '';
-                    if (!results || results.length === 0) { suggBox.style.display = 'none'; return; }
+                    if (list.length === 0) { suggBox.style.display = 'none'; return; }
 
-                    results.forEach(t => {
-                        const div = document.createElement('div');
-                        div.className = 'db-sugg-item';
-                        const color = catColors[t.category] || '#aaa';
+                    list.forEach(t => {
+                        const firstSite = DBP_SITES[t.sites[0]];
+                        const color = (firstSite.colors()[t.category]) || '#aaa';
                         const displayName = t.name.replace(/_/g, ' ');
-                        const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${t.aliasTo.replace(/_/g, ' ')}</span>` : '';
+                        const aliasToSpaced = t.isAlias ? t.aliasTo.replace(/_/g, ' ') : '';
+                        const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${DBP_ESC(aliasToSpaced)}</span>` : '';
+                        const badges = t.sites.map(s => `<span class="dbp-src-badge ${s === 'e621' ? 'e6' : 'db'}">${DBP_SITES[s].badge}</span>`).join('');
                         const countHtml = (t.post_count > 0)
                             ? Number(t.post_count).toLocaleString()
                             : (t.isDeprecated ? 'Deprecated' : '0');
 
-                        div.innerHTML = `<span style="color:${color}; font-weight:bold;">${displayName}${arrowHtml}</span><span style="color:#666;">${countHtml}</span>`;
-                        
+                        const div = document.createElement('div');
+                        div.className = 'db-sugg-item';
+                        div.innerHTML = `<span style="color:${color}; font-weight:bold;">${DBP_ESC(displayName)}${arrowHtml}${badges}</span><span style="color:#666;">${countHtml}</span>`;
                         div.onclick = () => {
                             suggBox.style.display = 'none';
-                            const aliasBehavior = isE621 ? (window.e621AliasClickBehavior || 'replace') : (window.aliasClickBehavior || 'replace');
-                            const finalTag = (t.isAlias && aliasBehavior !== 'keep') ? t.aliasTo.replace(/_/g, ' ') : displayName;
-                            
+                            const keepAlias = firstSite.aliasBehavior() === 'keep';
+                            const finalTag = (t.isAlias && !keepAlias) ? aliasToSpaced : displayName;
                             input.value = finalTag;
                             dbpPerformSearch(finalTag);
                         };
@@ -236,30 +286,24 @@
                     });
                     suggBox.style.display = 'block';
                 } catch (err) {}
-            }, delay);
+            }, 600);
         });
 
-        // 1. REABRIR A LISTA: Quando o usuário clica ou foca na caixa de texto novamente
+        // Reopen the list when the user clicks/focuses the box again
         const showSuggBoxIfValid = () => {
-            if (input.value.trim().length >= 2 && suggBox.children.length > 0) {
-                suggBox.style.display = 'block';
-            }
+            if (input.value.trim().length >= 2 && suggBox.children.length > 0) suggBox.style.display = 'block';
         };
         input.addEventListener('focus', showSuggBoxIfValid);
         input.addEventListener('click', showSuggBoxIfValid);
 
-        // 2. FECHAR A LISTA: Quando o usuário clica em qualquer lugar de fora
+        // Close the list when clicking anywhere else
         document.addEventListener('click', (e) => {
-            if (!wrap.contains(e.target) && suggBox.style.display === 'block') {
-                suggBox.style.display = 'none';
-            }
-        }, true); // O 'true' garante a interceptação prioritária do clique
+            if (!wrap.contains(e.target) && suggBox.style.display === 'block') suggBox.style.display = 'none';
+        }, true);
     }
 
-    // BUG FIX: a lista do "🔍✨ Auto-detect" (#dbpDetectList) só fechava se o
-    // usuário clicasse num chip — clicar em qualquer outro lugar (inclusive
-    // fora do modal) deixava ela aberta tampando o texto abaixo. Agora fecha
-    // ao clicar fora dela e fora do botão que a abre.
+    // BUG FIX: the "🔍✨ Auto-detect" list (#dbpDetectList) only closed when a chip
+    // was clicked. Now it also closes when clicking outside it / its button.
     document.addEventListener('click', (e) => {
         const listEl = document.getElementById('dbpDetectList');
         const btnEl = document.getElementById('dbpDetectBtn');
@@ -269,7 +313,7 @@
         listEl.classList.remove('open');
     });
 
-    /* ---------- MODAL 1: BUSCA MANUAL + SCAN MANUAL ---------- */
+    /* ---------- MODAL 1: DUAL MANUAL SEARCH + MANUAL SCAN ---------- */
     function buildMainModal() {
         if (document.getElementById('modal-danbooru')) return;
 
@@ -278,6 +322,17 @@
         overlay.className = 'modal-overlay';
         overlay.onclick = () => window.closeModal('modal-danbooru');
 
+        const cardHtml = (site, titleColor) => `
+            <div class="dbp-card" data-site="${site.key}">
+                <div class="dbp-card-head">
+                    <span style="color:${titleColor};">${site.icon} ${site.name}</span>
+                    <span class="dbp-card-status" id="dbpStatus-${site.key}"></span>
+                </div>
+                <div class="dbp-card-body" id="dbpBody-${site.key}">
+                    <div class="dbp-empty">Type a tag and press Search (or pick from the suggestions).</div>
+                </div>
+            </div>`;
+
         overlay.innerHTML = `
             <div class="tool-modal" onclick="event.stopPropagation()">
                 <h3 style="display:flex; justify-content:space-between; align-items:center;">
@@ -285,30 +340,18 @@
                     <button onclick="window.closeModal('modal-danbooru')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
 
-                <div class="dbp-source-toggle">
-                    <button class="dbp-source-btn" id="dbpSourceDanbooru" title="Search manually on Danbooru">🅱️ Danbooru</button>
-                    <button class="dbp-source-btn" id="dbpSourceE621" title="Search manually on e621">🦊 e621</button>
-                </div>
-
                 <div class="dbp-row">
                     <div id="dbpInputWrap" style="position:relative; flex:1; min-width:0;">
-                        <input type="text" id="dbpInput" class="dbp-input" placeholder="Search a tag... e.g. 1girl" autocomplete="off" style="width:100%; box-sizing:border-box;">
+                        <input type="text" id="dbpInput" class="dbp-input" placeholder="Search a tag... e.g. 1girl (searches Danbooru + e621 together)" autocomplete="off" style="width:100%; box-sizing:border-box;">
                     </div>
                     <button class="dbp-btn" id="dbpSearchBtn">Search</button>
                     <button class="dbp-btn-detect" id="dbpDetectBtn" title="List all tags already in this dataset (❓ Danbooru / ❔ e621 = already has wiki info cached)">🔍✨</button>
                 </div>
                 <div class="dbp-detect-list" id="dbpDetectList"></div>
-                <div class="dbp-result" id="dbpResult">
-                    <div>
-                        <span class="dbp-tag-title" id="dbpTagName"></span>
-                        <span class="dbp-tag-cat" id="dbpTagCat"></span>
-                    </div>
-                    <div class="dbp-desc" id="dbpTagDesc"></div>
-                    
-                    <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
-                        <button id="dbpTranslateBtn" style="background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer;">🌐 Translate</button>
-                        <a href="#" target="_blank" id="dbpTagLink" style="color: #4db8ff; text-decoration: none; border: 1px solid #2a5a8c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block;">Open on Danbooru ↗</a>
-                    </div>
+
+                <div class="dbp-cards" id="dbpCards">
+                    ${cardHtml(DBP_SITES.danbooru, '#4db8ff')}
+                    ${cardHtml(DBP_SITES.e621, '#ffb74d')}
                 </div>
 
                 <hr style="border:0; border-top:1px solid #333; margin:14px 0;">
@@ -343,17 +386,21 @@
                 if (wrap && wrap._suggBox) wrap._suggBox.style.display = 'none';
             }
         });
-        document.getElementById('dbpTranslateBtn').onclick = () => translateDescNode(document.getElementById('dbpTagDesc'));
         document.getElementById('dbpDetectBtn').onclick = () => dbpRunAutoDetect();
 
-        document.getElementById('dbpSourceDanbooru').onclick = () => setTagInterrogatorSource('danbooru');
-        document.getElementById('dbpSourceE621').onclick = () => setTagInterrogatorSource('e621');
-        applySourceToggleUI();
+        // "Did you mean" chips inside the cards
+        document.getElementById('dbpCards').addEventListener('click', (e) => {
+            const chip = e.target.closest('.dbp-chip');
+            if (!chip) return;
+            const t = chip.getAttribute('data-tag');
+            document.getElementById('dbpInput').value = t;
+            dbpPerformSearch(t);
+        });
 
-        // Scan manual "normal": respeita o TTL/cache, igual ao background scan.
+        // Normal manual scan: respects TTL/cache, same as the background scan.
         document.getElementById('dbpScanBtn').onclick = () => window.runDanbooruInfoScan(false);
 
-        // Scan manual "forçado": ignora completamente o cache e recheca tudo.
+        // Forced manual scan: ignores the cache and rechecks everything.
         document.getElementById('dbpScanForceBtn').onclick = () => {
             if (confirm('Force recheck ALL dataset tags, even already-scanned ones?\nThis takes longer and hits the Danbooru API more.')) {
                 window.runDanbooruInfoScan(true);
@@ -363,76 +410,121 @@
         setupDbpAutocomplete();
     }
 
-    /* ---------- SWITCH DE FONTE (busca manual) ---------- */
-    function applySourceToggleUI() {
-        const btnDb = document.getElementById('dbpSourceDanbooru');
-        const btnE6 = document.getElementById('dbpSourceE621');
-        if (!btnDb || !btnE6) return;
-        const isE621 = window.tagInterrogatorSource === 'e621';
-        btnDb.classList.toggle('active-danbooru', !isE621);
-        btnE6.classList.toggle('active-e621', isE621);
-    }
+    /* Searches ONE site and paints its card. */
+    async function dbpSearchSite(site, tag, token) {
+        const bodyEl = document.getElementById('dbpBody-' + site.key);
+        const statusEl = document.getElementById('dbpStatus-' + site.key);
+        if (!bodyEl || !statusEl) return;
 
-    function setTagInterrogatorSource(source) {
-        window.tagInterrogatorSource = source;
-        applySourceToggleUI();
-        if (typeof window.saveSetting === 'function') window.saveSetting('tag-interrogator-source', source);
-        // Limpa o resultado atual — a fonte mudou, o resultado anterior não pertence mais a ela.
-        const resultBox = document.getElementById('dbpResult');
-        if (resultBox) resultBox.classList.remove('open');
-    }
+        bodyEl.innerHTML = '<div class="dbp-empty">Loading...</div>';
+        statusEl.textContent = '';
 
-    async function dbpPerformSearch(tagOverride) {
-        const input = document.getElementById('dbpInput');
-        const resultBox = document.getElementById('dbpResult');
-        const tag = (tagOverride || input.value).trim();
-        if (!tag) return;
-        input.value = tag;
-        resultBox.classList.remove('open');
+        const key = tag.trim().toLowerCase().replace(/_/g, ' ');
+        let info = null;
+        try {
+            info = await site.lookup(tag);
+        } catch (e) {
+            if (token !== dbpSearchToken) return;
+            bodyEl.innerHTML = `<div class="dbp-empty" style="color:#ff8080; font-style:normal;">Could not reach ${DBP_ESC(site.name)}.</div>`;
+            statusEl.textContent = 'error';
+            return;
+        }
+        if (token !== dbpSearchToken) return;
 
-        const isE621 = window.tagInterrogatorSource === 'e621';
-        const host = isE621 ? e621HostForLinks() : 'danbooru.donmai.us';
-        const lookupFn = isE621 ? window.e621LookupSingleTag : window.dbLookupSingleTag;
-        const catColors = isE621 ? window.E621_CAT_COLORS : DB_CAT_COLORS;
-        const catLabels = isE621 ? window.E621_CAT_LABELS : DB_CAT_LABELS;
-        const siteName = isE621 ? 'e621' : 'Danbooru';
+        // Tags marked "unknown" by the cores come back as an empty dummy — treat as not found.
+        const isDummy = info && !info.aliasTo && !(info.count > 0) &&
+            (!info.wikiName || (info.description && String(info.description).startsWith('Unknown custom tag')));
 
-        const info = await lookupFn(tag);
-        if (!info) {
-            if (window.showAlert) window.showAlert(`Tag "${tag}" not found on ${siteName}.`, 'warn');
+        if (!info || isDummy) {
+            statusEl.textContent = 'not found';
+            let suggestions = [];
+            try { suggestions = await site.search(key.replace(/ /g, '_'), 6); } catch (e) {}
+            if (token !== dbpSearchToken) return;
+
+            let html = `<div class="dbp-empty">Tag "<b style="color:#ccc;">${DBP_ESC(key)}</b>" not found on ${DBP_ESC(site.name)}.</div>`;
+            if (suggestions && suggestions.length) {
+                html += `<div style="font-size:11px; color:#888; text-align:center;">Did you mean:</div><div class="dbp-chips">` +
+                    suggestions.map(s => {
+                        const n = s.name.replace(/_/g, ' ');
+                        const c = (s.post_count > 0) ? Number(s.post_count).toLocaleString() : '';
+                        return `<span class="dbp-chip" data-tag="${DBP_ESC(n)}">${DBP_ESC(n)}${c ? ` <span style="color:#666;">${c}</span>` : ''}</span>`;
+                    }).join('') + `</div>`;
+            }
+            bodyEl.innerHTML = html;
             return;
         }
 
-        const key = tag.trim().toLowerCase().replace(/_/g, ' ');
-        document.getElementById('dbpTagName').textContent = key;
-        const deprecatedBadge0 = (info.isDeprecated) ? ` <span style="color:#888;">· Deprecated</span>` : '';
-        document.getElementById('dbpTagCat').innerHTML = `<span style="color:${catColors[info.category] || '#888'}">● ${catLabels[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge0}`;
-        const linkEl = document.getElementById('dbpTagLink');
-        linkEl.href = `https://${host}/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}`;
-        linkEl.textContent = `Open on ${siteName} ↗`;
+        const host = site.host();
+        const catColors = site.colors();
+        const catLabels = site.labels();
+        const targetName = (info.aliasTo || key).replace(/_/g, ' ');
+        const wikiName = info.wikiName || targetName.replace(/ /g, '_');
+        const deprecated = !!(info.isDeprecated || info.aliasTo);
+        statusEl.textContent = Number(info.count || 0).toLocaleString() + ' posts';
 
-        const descEl = document.getElementById('dbpTagDesc');
-        descEl.innerHTML = "Loading full wiki description...";
-        descEl.dataset.original = "";
-        resultBox.classList.add('open');
+        let html = '';
+        if (info.aliasTo) {
+            html += `<div class="dbp-alias-box">
+                <span class="lbl">Original tag (deprecated)</span><b style="color:#ffcc66;">${DBP_ESC(key)}</b>
+                <span class="lbl" style="margin-top:6px;">Redirects to</span><b style="color:#00ff99;">${DBP_ESC(targetName)}</b>
+                <div style="font-size:11px; color:#777; margin-top:6px; line-height:1.4;">${DBP_ESC(site.name)} merged the original tag into the one above. The count and wiki below belong to the new tag.</div>
+            </div>`;
+        }
+        html += `<div class="dbp-tag-title" style="color:${site.key === 'e621' ? '#ffb74d' : '#4db8ff'};">${DBP_ESC(targetName)}</div>`;
+        html += `<div class="dbp-tag-cat"><span style="color:${catColors[info.category] || '#888'}">● ${DBP_ESC(catLabels[info.category] || 'Unknown')}</span> · ${Number(info.count || 0).toLocaleString()} posts${deprecated ? ' <span style="color:#888;">· Deprecated</span>' : ''}</div>`;
+        html += `<div class="dbp-desc" id="dbpDesc-${site.key}">Loading full wiki description...</div>`;
+        html += `<div class="dbp-card-actions">
+            <button class="dbp-tr-btn" id="dbpTr-${site.key}" style="display:none;">🌐 Translate</button>
+            <a href="https://${host}/wiki_pages/${encodeURIComponent(wikiName)}" target="_blank" class="dbp-open-link ${site.key}">Open on ${DBP_ESC(site.name)} ↗</a>
+        </div>`;
+        bodyEl.innerHTML = html;
+
+        const descEl = document.getElementById('dbpDesc-' + site.key);
+        const trBtn = document.getElementById('dbpTr-' + site.key);
+        descEl.dataset.original = '';
 
         try {
-            const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent(info.wikiName || key.replace(/ /g, '_'))}.json`);
+            const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent(wikiName)}.json`);
+            if (token !== dbpSearchToken) return;
             if (wRes.ok) {
                 const wData = await wRes.json();
                 if (wData && wData.body && wData.body.trim()) {
                     descEl.dataset.original = wData.body;
-                    descEl.innerHTML = window.formatDanbooruDText(wData.body);
+                    // formatDanbooruDText builds Danbooru links; point them to this card's own site.
+                    descEl.innerHTML = window.formatDanbooruDText(wData.body).split('https://danbooru.donmai.us/').join(`https://${host}/`);
+                    trBtn.style.display = 'inline-block';
+                    trBtn.onclick = () => translateDescNode(descEl);
                 } else {
-                    descEl.innerHTML = `No wiki description available on ${siteName}.`;
+                    descEl.innerHTML = `No wiki description available on ${DBP_ESC(site.name)}.`;
                 }
             } else {
-                 descEl.innerHTML = "Wiki not found or error loading.";
+                descEl.innerHTML = 'Wiki not found or error loading.';
             }
-        } catch(e) {
-            descEl.textContent = info.hasWikiInfo ? info.description : 'No wiki description available.';
-            descEl.dataset.original = info.hasWikiInfo ? info.description : '';
+        } catch (e) {
+            if (token !== dbpSearchToken) return;
+            if (info.hasWikiInfo && info.description) {
+                descEl.dataset.original = info.description;
+                descEl.innerHTML = window.formatDanbooruDText(info.description);
+                trBtn.style.display = 'inline-block';
+                trBtn.onclick = () => translateDescNode(descEl);
+            } else {
+                descEl.innerHTML = 'No wiki description available.';
+            }
         }
+    }
+
+    /* Fires BOTH sites at the same time. */
+    async function dbpPerformSearch(tagOverride) {
+        const input = document.getElementById('dbpInput');
+        const tag = (tagOverride || input.value).trim();
+        if (!tag) return;
+        input.value = tag;
+
+        const wrap = document.getElementById('dbpInputWrap');
+        if (wrap && wrap._suggBox) wrap._suggBox.style.display = 'none';
+
+        const token = ++dbpSearchToken;
+        await Promise.all(Object.values(DBP_SITES).map(site => dbpSearchSite(site, tag, token)));
     }
 
     function e621HostForLinks() {
@@ -985,7 +1077,7 @@
         btn.id = 'btn-open-tag-interrogator';
         btn.title = 'Search Danbooru/e621 tags & scan dataset for tag info';
         btn.textContent = '🏷️ Tag Interrogator';
-        btn.onclick = () => { buildMainModal(); applySourceToggleUI(); window.openModal('modal-danbooru'); };
+        btn.onclick = () => { buildMainModal(); window.openModal('modal-danbooru'); };
         rightBar.insertBefore(btn, anchor);
         updateTopbarButtonVisibility();
     }
@@ -1071,14 +1163,12 @@
         window.danbooruInfoEnabled = await window.getSetting('danbooru-info-enabled', true);
         window.danbooruInfoShowIcons = await window.getSetting('danbooru-info-show-icons', true);
         window.danbooruInfoShowButton = await window.getSetting('danbooru-info-show-button', true);
-        window.tagInterrogatorSource = await window.getSetting('tag-interrogator-source', 'danbooru');
 
         injectTopbarButton();
         injectSettingsToggles();
         buildMainModal();
         buildTagInfoModal();
         buildE621TagInfoModal();
-        applySourceToggleUI();
         hookAutoDanbooruScan();
     });
 
