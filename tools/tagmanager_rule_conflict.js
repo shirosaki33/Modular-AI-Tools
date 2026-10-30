@@ -70,10 +70,6 @@
         return this.factoryRules;
     };
 
-    window.RulesDB.migrateOldIndexedDB = async function() {
-    // Migração legada desativada para impedir o reset acidental do user_config.json
-	};
-
     window.RulesDB.cleanBloatedJSON = async function() {
         let customRules = await window.getSetting('custom-conflict-rules', []);
         if (!Array.isArray(customRules)) customRules = [];
@@ -119,10 +115,14 @@
             }
             let customRules = await window.getSetting('custom-conflict-rules', []);
             if (!Array.isArray(customRules)) customRules = [];
+            // FIX: drop any leftover copy that still carries this factory id (older versions saved edited copies with the factory id).
+            customRules = customRules.filter(r => r.id !== id);
             let factoryBase = this.getFactoryRules().find(r => r.id === id);
             if (!factoryBase) return false;
             let newItem = { id: Date.now() + "_" + Math.random().toString(36).substr(2, 9), category: factoryBase.category, isDefault: false };
-            if (factoryBase.keepTag !== undefined || factoryBase.name !== undefined) Object.assign(newItem, factoryBase);
+            // FIX: Object.assign(newItem, factoryBase) overwrote the NEW id/isDefault with the factory ones (def_*, true).
+            // The "custom" copy then collided with the original, could not be deleted and was wiped by cleanBloatedJSON.
+            if (factoryBase.keepTag !== undefined || factoryBase.name !== undefined) Object.assign(newItem, factoryBase, { id: newItem.id, isDefault: false });
             else newItem.tags = Array.isArray(factoryBase.tags) ? [...factoryBase.tags] : [];
             
             if (data.name !== undefined) {
@@ -163,6 +163,11 @@
             if (!deletedDefaults.includes(id)) {
                 deletedDefaults.push(id);
                 await window.saveSetting('deleted-default-rules', deletedDefaults);
+            }
+            // FIX: also remove edited copies that still carry the factory id, otherwise 🗑️ appeared to do nothing.
+            let leftovers = await window.getSetting('custom-conflict-rules', []);
+            if (Array.isArray(leftovers) && leftovers.some(r => r.id === id)) {
+                await this.saveAllRules(leftovers.filter(r => r.id !== id));
             }
             return true;
         } else {
@@ -219,15 +224,13 @@
             </div>
         `;
         
-        setTimeout(() => {
-            const cb = document.getElementById(cbId);
-            if (cb) {
-                cb.onchange = async (e) => {
-                    await window.saveSetting(settingKey, e.target.checked); 
-                    window.RulesCore.applyUserRulesToGlobals();
-                };
-            }
-        }, 0);
+        const cb = header.querySelector('#' + cbId);
+        if (cb) {
+            cb.onchange = async (e) => {
+                await window.saveSetting(settingKey, e.target.checked); 
+                window.RulesCore.applyUserRulesToGlobals();
+            };
+        }
 
         wrap.appendChild(header);
 
@@ -408,10 +411,15 @@
     window.RulesUI.refreshModalBody = async function() {
         const body = document.getElementById('conflict-manager-body');
         if (!body) return;
+        // FIX: two overlapping refreshes (double click, edit + restore...) both appended their panels → duplicated sections.
+        // Only the latest call is allowed to write into the body.
+        const seq = window.RulesUI._refreshSeq = (window.RulesUI._refreshSeq || 0) + 1;
         const rows = await window.RulesDB.getAllRules();
+        if (seq !== window.RulesUI._refreshSeq) return;
         body.innerHTML = '';
-        for (const section of this.sections) {
+        for (const section of window.RulesUI.sections) {
             const el = await section.fn(rows);
+            if (seq !== window.RulesUI._refreshSeq) return;
             if (el) body.appendChild(el);
         }
     };
@@ -748,7 +756,6 @@
 
     // --- BOOTSTRAPPER ---
     window.addEventListener('DOMContentLoaded', async () => {
-        await window.RulesDB.migrateOldIndexedDB();
         if (typeof window.getSetting === 'function') {
             window.enableConflictWarnings = await window.getSetting('toggle-conflict-warnings', true);
             window.enableCounterConflict = await window.getSetting('enable-counter-conflict', true);

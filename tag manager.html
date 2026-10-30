@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
 <head>
     <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tag Manager</title>
-    
+
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
-    
+
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.min.js"></script>
-    
+
     <style>
         :root {
             --thumb-size: 70px;
@@ -17,7 +17,7 @@
         }
 
         body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: Arial, Helvetica, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        
+
         body.is-resizing * { user-select: none !important; }
         body.is-resizing .panel { pointer-events: none !important; transition: none !important; }
         #col-list, #col-tools, #col-presets { will-change: width; }
@@ -27,14 +27,14 @@
         .topbar-section.left { justify-content: flex-start; }
         .topbar-section.center { justify-content: center; text-align: center; }
         .topbar-section.right { justify-content: flex-end; }
-        
+
         #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
-        
+
         button, select, input[type="text"], input[type="password"], input[type="number"], textarea { background: #333; color: #fff; border: 1px solid #444; padding: 8px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; font-weight: bold; outline: none; transition: 0.15s; }
         button { cursor: pointer; border: none; }
         button:hover { background: #00aa66; color: #000; }
         select:focus, input:focus, textarea:focus { border-color: #00aa66; }
-        
+
         select.folder-select { max-width: 140px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; background: #111; color: #aaa; border: 1px solid #333;}
 
         .btn-save-local { background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.1s; }
@@ -50,7 +50,7 @@
         .settings-dropdown input[type="checkbox"] { width: auto; margin: 0; accent-color: #00ff99;}
         .settings-group-label { font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; margin-top: 2px; margin-bottom: -2px; }
 
-        #workspace { display: flex; flex: 1; overflow: hidden; position: relative; } 
+        #workspace { display: flex; flex: 1; overflow: hidden; position: relative; }
         .view-layer { display: none; width: 100%; height: 100%; padding: 15px; gap: 0; box-sizing: border-box; }
         .view-layer.active { display: flex; }
 
@@ -60,7 +60,7 @@
 
         .panel { background: #1b1b1b; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #222; transition: 0.2s ease-in-out;}
         .panel-header { background: #222; padding: 10px 15px; font-size: 13px; font-weight: bold; color: #aaa; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;}
-        
+
         .search-toggle-btn { background: transparent; border: none; font-size: 16px; cursor: pointer; filter: grayscale(1) opacity(0.4); padding: 0 6px; transition: 0.2s; user-select: none; }
         .search-toggle-btn.active { filter: none; opacity: 1; text-shadow: 0 0 8px rgba(0,255,153,0.5); }
         .search-toggle-btn:hover { transform: scale(1.1); }
@@ -77,7 +77,7 @@
         .logic-btn.active { background: #0d2a18; color: #00ff99; border-color: #00aa66; }
         #btn-filter-fav-tags { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.4em 0.7em; }
         #btn-filter-suggest-img { flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.4em 0.7em; }
-        
+
         .selection-actions { display: none; gap: 5px; padding: 10px 15px; background: #1a1a1a; border-bottom: 1px solid #333; flex-shrink: 0; }
         .btn-multi { flex: 1; padding: 8px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: 0.1s; }
         .btn-add-all { background: #1a3a5c; color: #4db8ff; border-color: #2a5a8c; }
@@ -112,14 +112,14 @@
         .list-item.has-data .list-item-status { color: #00ff99; }
         .list-item.is-nl .list-item-status { color: #b890ff; }
 
-        /* VÁCUO DA IMAGEM */
+        /* Drop indicator while reordering images */
         .list-item.drag-over-top { border-top: 4px solid #4db8ff !important; padding-top: 20px !important; transition: 0.1s; }
         .list-item.drag-over-bottom { border-bottom: 4px solid #4db8ff !important; padding-bottom: 20px !important; transition: 0.1s; }
 
         #editor-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         #tags-editor-container { display: flex; flex: 1; flex-direction: column; background: #111; overflow: hidden; }
         #tag-list-vertical { flex: 1; overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 20px;}
-        
+
         .tag-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6em 1.1em; border-bottom: 1px solid #222; background: #151515; font-size: var(--editor-font-size); user-select: none; transition: background 0.1s; cursor: grab; }
         .tag-row:hover { background: #1f1f1f; }
         .tag-row:active { cursor: grabbing; }
@@ -148,13 +148,13 @@
         .master-tag-item:hover { background: #222; }
         .master-tag-item.selected-master { background: #0a3a5c; border-left: 3px solid #4db8ff; color: #fff; padding-left: calc(1em - 3px); }
 
-        .auto-panel { width: 600px; padding: 30px; background: #1b1b1b; border-radius: 12px; border: 1px solid #333; display: flex; flex-direction: column; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.5); max-height: 90vh; overflow-y: auto; }
+        .auto-panel { width: 660px; max-width: 96vw; padding: 30px; background: #1b1b1b; border-radius: 12px; border: 1px solid #333; display: flex; flex-direction: column; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.5); max-height: 90vh; overflow-y: auto; }
         .meta-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 6px; font-weight: bold; display: block; letter-spacing: 0.5px; }
-        
+
         .btn-action { background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; padding: 14px; border-radius: 8px; font-size: 14px; width: 100%; font-weight: bold; }
         .btn-action.run { background: #00aa66; color: #000; border-color: #00cc88; margin-top: 15px;}
         .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
-        
+
         #model-select, #hardware-select, #vlm-model-select, #ollama-model-select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
         .progress-box { width: 100%; background: #111; border: 1px solid #333; border-radius: 6px; overflow: hidden; display: none; height: 12px; margin-top: 15px;}
         .progress-fill { width: 0%; height: 100%; background: #00ff99; transition: 0.2s; }
@@ -201,7 +201,7 @@
     <div class="topbar-section left">
         <button onclick="window.loadTemporaryFolder()">📁 Load Folder</button>
         <button id="btn-save-folder" onclick="window.saveFolderToList()" style="display:none; background: #0d2a18; color: #00ff99; border: 1px solid #00aa66;" title="Save folder to dropdown list">+ Add to List</button>
-        
+
         <select id="dir-list" class="folder-select" onchange="window.loadSelectedDirectory()">
             <option value="">Saved directories...</option>
         </select>
@@ -214,23 +214,23 @@
         <select id="sub-dir-3" class="folder-select" onchange="window.loadSubDir3()" style="display:none;" title="Deeper Folders">
             <option value="">-- Current Folder --</option>
         </select>
-        
+
         <button id="btn-refresh" onclick="window.refreshDataset()" style="display:none; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c;" title="Refresh Folder">🔄</button>
         <button id="btn-remove" onclick="window.removeDirectory()" style="display:none; background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c;" title="Remove from saved list">Remove</button>
     </div>
-    
+
     <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
         <div id="app-title">🏷️ Tag Manager 🏷️</div>
         <span id="current-folder-display" style="display: none;"></span>
         <div id="last-edited-display" style="font-size: 10px; color: #666; display: block; margin-top: 4px; font-weight: bold; letter-spacing: 0.5px;">Last edited: Never</div>
     </div>
-    
+
     <div class="topbar-section right" id="topbar-right">
         <select id="topbar-save-format" style="margin-right: 15px; width: 80px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()" title="Only shown for images with no caption file yet">
             <option value="txt">.txt</option>
             <option value="json">.json</option>
         </select>
-        
+
         <div style="display:flex; align-items:center; gap:5px; margin-right: 10px;" title="Font Size (Tags/NL)">
             <span style="font-size: 11px; color: #888;">🔤</span>
             <input type="range" id="font-slider" min="11" max="26" value="13" style="width: 70px; accent-color: #00ff99;" oninput="window.updateEditorFontSize(this.value)">
@@ -267,17 +267,8 @@
 
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
-    <div class="settings-group-label">🌐 Danbooru</div>
-    <button onclick="window.manualDanbooruSync()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; font-size: 11px; width: 100%; margin-top: 5px;" title="Manually fetches missing tag counts from Danbooru for the current dataset.">🔄 Sync Danbooru (Dataset)</button>
-
-    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-
-    <div class="settings-group-label">🦊 e621</div>
-    <label><input type="checkbox" id="toggle-e621" onchange="window.toggleE621()"> Enable e621 (Furry) Suggestions</label>
-    <label style="margin-left: 15px;"><input type="checkbox" id="toggle-e621-sfw" onchange="window.toggleE621Sfw()"> 🛡️ Force Safe-for-Work (e926)</label>
-
-    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
-
+    <!-- Danbooru / e621 options (alias tags, e621, icons) live in the Tag Interrogator popout
+         (tagmanager_danbooru_panel.js). Only its master switch is added here, before Backup. -->
     <div class="settings-group-label">💾 Backup</div>
     <div style="display: flex; gap: 5px;">
         <button onclick="window.exportBackup()" style="background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; font-size: 11px; flex: 1;" title="Export all presets and settings to a JSON file.">💾 Export Backup</button>
@@ -321,23 +312,23 @@
 
 <div id="workspace">
     <div id="view-editor" class="view-layer active">
-        
+
         <div class="panel" id="col-list">
             <div class="panel-header">
                 <div style="display:flex; align-items:center; gap:10px;">
                     Dataset <span id="list-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
                     <button id="btn-unhide-all" class="btn-save-local" style="display:none; background:transparent; border: 1px solid #4db8ff; color:#4db8ff; padding: 2px 6px; font-size: 12px; margin-left: 5px;" onclick="window.unhideAllImages()" title="Unhide All Images">👁️‍🗨️ Unhide</button>
                 </div>
-                
+
                 <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
                     <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
                     <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
-                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>                    
+                    <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
                     <button class="btn-save-local" id="btn-img-filter-sel" style="background:#151515; border-color:#555; color:#aaa; padding: 2px 6px; font-size: 14px;" onclick="window.cycleImageFilter()" title="Filter Images by Type">🏷️ All</button>
                 </div>
             </div>
-            
+
             <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0; display:flex; gap:6px; align-items:center;">
                 <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="flex:1; min-width:0; box-sizing:border-box; font-size:12px; padding:6px 10px;">
                 <button id="btn-reorder-mode" title="Unlock Reorder Mode" style="flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s;" onclick="window.toggleReorderMode()">🔒</button>
@@ -346,7 +337,7 @@
             </div>
 
             <div id="image-list"></div>
-            
+
             <div style="padding: 10px; background: #151515; border-top: 1px solid #222; flex-shrink: 0; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 11px; color: #555;">🔍</span>
                 <input type="range" id="thumb-slider" min="70" max="500" value="70" style="flex: 1; accent-color: #00ff99;" oninput="window.updateThumbSize(this.value)">
@@ -381,20 +372,19 @@
             </div>
 
             <div class="inline-add-box" id="active-add-container">
-    <button id="btn-active-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('active')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
-    <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-    
-    <!-- Envolvemos o input e os botões de ação num grupo flexível que preenche o espaço -->
-    <div style="display: flex; flex: 1; gap: 8px;">
-        <input type="text" id="active-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">                
-        <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
-        <select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
-        <button class="btn-inline-add" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff;" onclick="window.addEmptyNLTag()" title="Create Empty NL Tag">📝 Add NL</button>
-    </div>
+                <button id="btn-active-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('active')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
+                <button id="btn-active-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('active')" title="Search ON: typing filters the list. Search OFF: typing only adds tags.">🔍</button>
 
-    
-    <button id="btn-convert-format" onclick="window.toggleActiveFormat()" style="display:none; background:#2a1a00; color:#ffcc66; border:1px solid #aa6600;" title="Convert selected image(s) between .txt and .json">🔄 .txt</button>
-</div>
+                <!-- Input + action buttons in one flexible group that fills the remaining space -->
+                <div style="display: flex; flex: 1; gap: 8px;">
+                    <input type="text" id="active-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.activeSearchMode) filterActiveTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('active'); }">
+                    <button class="btn-inline-add" onclick="inlineAdd('active')">Add</button>
+                    <select id="active-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+                    <button class="btn-inline-add" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff;" onclick="window.addEmptyNLTag()" title="Create Empty NL Tag">📝 Add NL</button>
+                </div>
+
+                <button id="btn-convert-format" onclick="window.toggleActiveFormat()" style="display:none; background:#2a1a00; color:#ffcc66; border:1px solid #aa6600;" title="Convert selected image(s) between .txt and .json">🔄 .txt</button>
+            </div>
         </div>
 
         <div class="resizer vertical" id="resizer-presets" style="display: none;"></div>
@@ -405,7 +395,7 @@
                     <span style="color: #00ff99;">🌟 User Presets</span>
                 </div>
             </div>
-            
+
             <div id="preset-tag-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111;">
             </div>
 
@@ -415,10 +405,10 @@
                 <button class="btn-multi btn-add-all" onclick="addSelectedPresetTagsTo('all')">➕ Add to All</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedPresetTags()">🗑️ Remove</button>
             </div>
-            
+
             <div class="inline-add-box" style="border-top: 1px solid #222; background: #111;">
-                <button id="btn-preset-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('preset')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="preset-add-input" placeholder="Search or Add tag..." oninput="if(window.presetSearchMode) filterPresetTagsByName(this.value)">                
+                <button id="btn-preset-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('preset')" title="Search ON: typing filters the list. Search OFF: typing only adds tags.">🔍</button>
+                <input type="text" id="preset-add-input" placeholder="Search or Add tag..." oninput="if(window.presetSearchMode) filterPresetTagsByName(this.value)">
                 <button class="btn-inline-add" style="background:#00aa66; border-color:#00cc88; color:#000;" onclick="window.addPresetTagFromInput()">Save</button>
             </div>
         </div>
@@ -444,7 +434,7 @@
                 <button id="btn-filter-suggest-img" class="logic-btn" style="display:none;" onclick="window.toggleSuggestFilterImg()" title="Show Only Ghost Tags">💡</button>
                 <button id="btn-filter-nl-master" class="logic-btn" style="display:none; flex: 0 0 auto; font-size: var(--editor-font-size); padding: 0.4em 0.7em;" onclick="window.toggleMasterNLFilter()" title="Show Only NL">NL</button>
             </div>
-            
+
             <div class="tools-content"><div id="master-tag-list"></div></div>
 
             <div id="master-selection-actions" class="selection-actions">
@@ -453,13 +443,13 @@
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('master')">🔄 Replace</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedMasterTags()">🗑️ Remove</button>
             </div>
-            
+
             <div class="inline-add-box">
                 <button id="btn-master-autocomplete-mode" class="search-toggle-btn" onclick="window.toggleAutocompleteMode('master')" title="Autocomplete: showing full Danbooru list (click to show only tags already used in this dataset)">🌐</button>
-                <button id="btn-master-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('master')" title="Lupa Ligada: O texto filtra a lista. Lupa Desligada: Apenas adiciona tags.">🔍</button>
-                <input type="text" id="master-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('master'); }">                
+                <button id="btn-master-search-toggle" class="search-toggle-btn active" onclick="toggleSearchMode('master')" title="Search ON: typing filters the list. Search OFF: typing only adds tags.">🔍</button>
+                <input type="text" id="master-add-input" placeholder="Search or Add tag..." autocomplete="off" oninput="if(window.masterSearchMode) filterMasterTagsByName(this.value)" onkeydown="if(event.key === 'Enter') { event.preventDefault(); inlineAdd('master'); }">
                 <button class="btn-inline-add" onclick="inlineAdd('master')">Add</button>
-				<select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
+                <select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
             </div>
         </div>
     </div>
@@ -470,19 +460,20 @@
         <div id="file-protocol-warning" style="display: none; background: #2a0000; border: 1px solid #aa0000; padding: 12px; border-radius: 8px; margin-bottom: 20px; color: #ff6060; font-size: 13px; line-height: 1.5;">
             <b>⚠️ LOCAL FILE RESTRICTION:</b> You are running this tool directly via <code>file://</code>. Browsers restrict CPU multi-threading and GPU acceleration in this mode. <b>It is highly recommended to use Localhost or the Online version for Auto Captioning.</b> Use this direct file mode only for manually editing already existing captions.
         </div>
-        
+
         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 20px;">
             <h2 style="margin: 0; color: #eee;">Batch Process Settings</h2>
             <button onclick="window.closeModal('view-auto')" style="background: transparent; border: none; color: #ff4444; font-size: 24px; cursor: pointer; font-weight: bold; line-height: 1; padding: 0;" title="Close Auto Caption">&times;</button>
         </div>
-        
+
         <div style="display: flex; gap: 15px; margin-bottom: 25px;">
-            <div style="flex:1;">
+            <div style="flex:1.4;">
                 <label class="meta-label">Processing Mode</label>
                 <select id="batch-mode-select" onchange="window.updateBatchUI()" style="width: 100%; background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; font-size: 13px;">
                     <option value="tags">🏷️ Tagger (ONNX)</option>
                     <option value="nl-vlm">🖥️ Natural Language (Offline VLMs)</option>
                     <option value="ollama-vision">🦙 Ollama (Auto-detected Vision Models)</option>
+                    <option value="pytorch">🔥 PyTorch / ONNX (local server)</option>
                 </select>
             </div>
             <div style="flex:1;">
@@ -508,6 +499,7 @@
                         <option value="">-- Set Model Folder First --</option>
                     </select>
                 </div>
+                <span id="tagger-source-hint" style="font-size: 11px; color: #888; display: block; margin-top: 8px; line-height: 1.4;">On localhost, ONNX taggers inside <code>models/onnx</code> are found automatically. Use <b>Set Directory</b> to add any other folder.</span>
             </div>
             <div style="display: flex; gap: 10px; margin-bottom: 15px;">
                 <div style="flex:1;"><label class="meta-label">Confidence Threshold</label><input type="number" id="threshold" value="0.35" step="0.05" min="0" max="1" style="width: 100%;"></div>
@@ -519,37 +511,85 @@
             </div>
         </div>
 
+        <!-- Shared by "Natural Language (Offline VLMs)" and "PyTorch / ONNX". Driven by tagmanager_batch_vlm.js,
+             which plugs the same engine files the Prompt Helper uses into this panel. -->
         <div id="batch-vlm-settings" style="display: none;">
-            <div id="vlm-download-warning" style="background: #1a1500; border: 1px solid #aa8800; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #ffcc66; font-size: 12px; line-height: 1.5;">
-                <b>⚠️ Offline Model Download:</b> Upon running for the first time, it will automatically download the selected Vision Model to your browser's internal cache.
-                <div id="vlm-dl-container" style="display:none; margin-top: 10px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:bold;">
-                        <span id="vlm-dl-file">Preparing Download...</span><span id="vlm-dl-percent">0%</span>
+            <div id="vlm-engine-ui">
+                <div class="vlm-card">
+                    <div class="vlm-top">
+                        <span id="vlm-badge">…</span>
+                        <span id="vlm-info"></span>
                     </div>
-                    <div style="width:100%; background:#222; height:8px; border-radius:4px; overflow:hidden;">
-                        <div id="vlm-dl-bar" style="width:0%; height:100%; background:#ffcc66; transition: 0.1s;"></div>
+                    <div id="vlm-model-status"></div>
+                </div>
+
+                <label class="meta-label">Model</label>
+                <div class="vlm-row vlm-model-row">
+                    <select id="vlm-model-select"></select>
+                    <button type="button" class="vlm-btn" id="vlm-unload" title="Free the model from memory / VRAM (files stay on disk)">⏏ Unload from memory</button>
+                    <button type="button" class="vlm-btn vlm-btn-warn" id="vlm-delete" title="Delete the downloaded files of the selected model">🧹 Delete downloaded model</button>
+                </div>
+
+                <div class="vlm-row" id="vlm-storage-row">
+                    <span class="vlm-sub" id="vlm-storage-label">Storage</span>
+                    <select id="vlm-storage" style="flex:1;"></select>
+                    <button type="button" class="vlm-btn" id="vlm-pick-folder" style="display:none;" title="Add a folder with models (WebGPU: org/model/onnx/...; PyTorch: any folder with models)">📁 Set model folder</button>
+                </div>
+
+                <div class="vlm-row" id="vlm-task-row">
+                    <span class="vlm-sub">Task</span>
+                    <select id="vlm-task" style="flex:1;"></select>
+                </div>
+
+                <div id="vlm-prompt-row" style="display:none; margin-bottom: 15px;">
+                    <label class="meta-label">Task Prompt (Model Input)</label>
+                    <textarea id="batch-vlm-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
+                    <span style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM and other chat-style models: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
+                </div>
+
+                <div class="vlm-row" id="vlm-tokens-row">
+                    <span class="vlm-sub">Max tokens</span>
+                    <input type="number" id="vlm-max-tokens" min="16" max="1024" step="16" value="256" style="width: 80px;">
+                    <span id="vlm-beams-wrap" style="display:none; align-items:center; gap:8px;">
+                        <span class="vlm-sub">Beams</span>
+                        <input type="number" id="vlm-beams" min="1" max="8" value="3" style="width: 60px;">
+                    </span>
+                </div>
+
+                <div class="vlm-row" id="vlm-tagger-row" style="display:none;">
+                    <span class="vlm-sub">Threshold</span>
+                    <input type="number" id="vlm-threshold" min="0.01" max="0.99" step="0.01" value="0.35" style="width: 80px;" title="Minimum confidence for a tag to be kept">
+                </div>
+                <div id="vlm-tagger-extra" style="display:none; margin-bottom: 15px;">
+                    <div style="margin-bottom: 10px;">
+                        <label class="meta-label">Additional Prefix</label>
+                        <input type="text" id="vlm-prefix" placeholder="Ex: 1girl, masterpiece, " style="width: 100%;">
+                    </div>
+                    <div>
+                        <label class="meta-label">Exclude Tags (Comma separated)</label>
+                        <input type="text" id="vlm-exclude" placeholder="Ex: simple background, white background" style="width: 100%;">
                     </div>
                 </div>
-            </div>
-            <div id="vlm-ollama-info" style="display:none; background: #001a2a; border: 1px solid #0066aa; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #66ccff; font-size: 12px; line-height: 1.5;">
-                <b>ℹ️ Runs via local Ollama:</b> JoyCaption does not download anything to the browser. It requires <a href="https://ollama.com" target="_blank" style="color:#9ecfff;">Ollama</a> running locally with the <code>user-v4/joycaption-beta</code> model already pulled (<code>ollama pull user-v4/joycaption-beta</code>), listening on <code>http://127.0.0.1:11434</code>.
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label class="meta-label">Select Vision Language Model (VLM)</label>
-                <select id="vlm-model-select" onchange="window.updateVlmPromptDefault()" style="width: 100%; box-sizing: border-box;">
-                    <option value="HuggingFaceTB/SmolVLM-256M-Instruct">SmolVLM 256M Instruct (~200MB) - Fast, great with GPU (WebGPU)</option>
-                    <option value="HuggingFaceTB/SmolVLM-500M-Instruct">SmolVLM 500M Instruct (~450MB) - Better quality, GPU (WebGPU)</option>
-                    <option value="onnx-community/Florence-2-base-ft">Florence-2 Base FT (~300MB) - Excellent for Captioning, unstable WebGPU</option>
-                    <option value="api/joycaption">JoyCaption Beta (Via Ollama Local) - Best for Concept Art</option>
-                </select>
-            </div>
-            <div id="vlm-clear-cache-container" style="margin-bottom: 15px;">
-                <button type="button" onclick="window.clearVlmModelCache()" style="width: 100%; background: #2a1a00; color: #ffcc66; border: 1px solid #aa6600;" title="Deletes the downloaded model from the browser cache">🧹 Clear Model Cache (VLM)</button>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label class="meta-label">Task Prompt (Model Input)</label>
-                <textarea id="batch-vlm-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
-                <span id="vlm-prompt-help" style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM/JoyCaption: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
+
+                <div style="margin-bottom: 15px;">
+                    <label class="meta-label">Save Result As</label>
+                    <select id="vlm-output-mode" style="width: 100%; box-sizing: border-box;">
+                        <option value="auto">✨ Automatic (taggers and "Generate tags" → tags, everything else → NL caption)</option>
+                        <option value="nl">📝 Natural Language caption (saved as NL: tag)</option>
+                        <option value="tags">🏷️ Booru-style tags (merged into existing tags)</option>
+                    </select>
+                </div>
+
+                <div class="vlm-dl" id="vlm-dl-container">
+                    <div class="vlm-dl-head"><span id="vlm-dl-file"></span><span id="vlm-dl-percent"></span></div>
+                    <div class="vlm-dl-track" id="vlm-dl-track"><div id="vlm-dl-bar"></div></div>
+                </div>
+                <div id="vlm-status"></div>
+
+                <div style="display:flex; gap:10px; margin-bottom: 15px;">
+                    <button type="button" class="vlm-btn" id="vlm-load" style="flex:1; padding:10px;" title="Only download / load the model now (the batch also does it automatically)">⬇️ Load model now</button>
+                    <button type="button" class="vlm-btn" id="vlm-cancel" style="flex:0; padding:10px 16px;">⏹ Cancel</button>
+                </div>
             </div>
         </div>
 
@@ -591,7 +631,7 @@
         </div>
 
         <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0 20px 0;">
-        
+
         <div style="display:flex; align-items:center; gap:10px; background:#0d1f13; border:1px solid #1a5c3a; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
             <input type="checkbox" id="review-mode-toggle" style="width:auto; margin:0;">
             <label for="review-mode-toggle" style="font-size:12px; color:#66ffaa; font-weight:bold; cursor:pointer; user-select:none;">💡 Review Mode — only suggest text/tags (ghost), don't overwrite or save to disk</label>
@@ -604,12 +644,12 @@
                 <option value="json">.json (Sidecar)</option>
             </select>
         </div>
-        
+
         <button id="btn-create-empty" class="btn-action" onclick="window.generateEmptyFiles()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">📄 Generate Empty Missing Files</button>
-        
+
         <div class="progress-box" id="progress-container"><div class="progress-fill" id="progress-bar"></div></div>
         <div class="progress-text" id="progress-text">0 / 0 Processed</div>
-        
+
         <div style="display: flex; gap: 10px; margin-top: 15px;">
             <button id="btn-start-batch" class="btn-action run" style="margin-top: 0; flex: 2;" onclick="window.startBatchTagging()" disabled>▶ Start Batch Process</button>
             <button id="btn-cancel-batch" class="btn-action" style="margin-top: 0; flex: 1; background: #4a1118; color: #ffb6c0; border-color: #7a222c; display: none;" onclick="window.stopBatchTagging()">⏹ Cancel</button>
@@ -630,35 +670,58 @@
 </div>
 
 <div id="modal-help" class="modal-overlay" onclick="window.closeModal('modal-help')">
-    <div class="tool-modal" style="width: 550px;" onclick="event.stopPropagation()">
+    <div class="tool-modal" style="width: 640px; max-width: 94vw;" onclick="event.stopPropagation()">
         <h3>❓ Help & Instructions</h3>
-        <div style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 65vh; overflow-y: auto;">
-            <h4 style="color: #00ff99; margin-top: 0; margin-bottom: 5px;">Auto Caption / Batch Tagger (ONNX)</h4>
-            <p style="margin-top: 0; margin-bottom: 10px; background:#0d1f2a; border:1px solid #144a63; padding: 8px 10px; border-radius: 6px;"><b>📁🔁 Recursive Mode:</b> enable the checkbox above the settings to caption a whole franchise folder in one go — it scans every subfolder (one per character, for example) starting from the folder you currently have loaded, instead of just the folder/subfolder shown in the dropdowns. Each image is tagged and saved right next to itself, inside its own character subfolder. Note: Review Mode (ghost suggestions) is not available together with Recursive Mode — tags are written directly to disk in this mode.</p>
-            <p style="margin-top: 0; margin-bottom: 10px;">To use the Auto Captioner via ONNX WebGPU, you need to download the model files locally:</p>
+        <div style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 68vh; overflow-y: auto; padding-right: 6px;">
+            <h4 style="color: #00ff99; margin-top: 0; margin-bottom: 5px;">Auto Caption — overview</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">Open <b>🤖 Auto-Caption</b>, pick a <b>Processing Mode</b> and press <b>▶ Start Batch Process</b>. There are four modes: <b>🏷️ Tagger (ONNX)</b>, <b>🖥️ Natural Language (Offline VLMs)</b>, <b>🦙 Ollama</b> and <b>🔥 PyTorch / ONNX (local server)</b> — the last one exists only on localhost.</p>
+            <p style="margin-top: 0; margin-bottom: 10px; background:#0d1f2a; border:1px solid #144a63; padding: 8px 10px; border-radius: 6px;"><b>📁🔁 Recursive Mode:</b> enable the checkbox above the settings to caption a whole franchise folder in one go — it scans every subfolder (one per character, for example) starting from the folder you currently have loaded, instead of just the folder/subfolder shown in the dropdowns. Each image is tagged and saved right next to itself, inside its own character subfolder. The app's own folders (<code>_trash</code>, <code>_archive</code>, <code>_rename_cache</code>) are skipped. Note: Review Mode (ghost suggestions) is not available together with Recursive Mode — tags are written directly to disk in this mode.</p>
+            <p style="margin-top: 0; margin-bottom: 10px; background:#0d1f13; border:1px solid #1a5c3a; padding: 8px 10px; border-radius: 6px;"><b>💡 Review Mode</b> writes nothing to disk: the results appear as ghost tags that you accept one by one. <b>Second Model Review</b> (Tagger mode) runs another ONNX tagger afterwards and only adds the tags the first one missed.</p>
+
+            <h4 style="color: #00ff99; margin-bottom: 5px; margin-top: 15px;">🏷️ Tagger (ONNX)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">Runs WD14 / SmilingWolf style taggers directly in the browser (WebGPU or CPU). You need the model file and its tag list:</p>
             <ol style="padding-left: 20px; margin-bottom: 15px;">
                 <li style="margin-bottom: 8px;">
-                    Download a WD14 ONNX model and its CSV tags file.<br>
+                    Download a WD14 ONNX model and its CSV tags file (<code>model.onnx</code> + <code>selected_tags.csv</code>).<br>
                     <span style="font-size: 11px; color: #888;">SmilingWolf Official Links:</span><br>
-                    <a href="https://huggingface.co/SmilingWolf" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 HuggingFace Models</a> | 
+                    <a href="https://huggingface.co/SmilingWolf" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 HuggingFace Models</a> |
                     <a href="https://github.com/SmilingWolf" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 GitHub Repository</a>
                 </li>
-                <li style="margin-bottom: 8px;">Ensure both files have the <b>exact same base name</b> (e.g., <code>model.onnx</code> and <code>model.csv</code>).</li>
-                <li style="margin-bottom: 8px;">Place them together in a dedicated folder on your computer.</li>
-                <li style="margin-bottom: 8px;">In the "Auto Captioner" tab, click <b>"📁 Set Directory"</b> and select that folder.</li>
+                <li style="margin-bottom: 8px;">Keep both files in the same folder. The CSV is matched in this order: <code>&lt;model name&gt;.csv</code>, <code>&lt;model name&gt;_tags.csv</code>, <code>selected_tags.csv</code>, <code>tags.csv</code>.</li>
+                <li style="margin-bottom: 8px;"><b>Localhost:</b> put them anywhere inside <code>models/onnx</code> (one sub-folder per model works great) — they appear in the list by themselves.</li>
+                <li style="margin-bottom: 8px;"><b>Any other place:</b> click <b>"📁 Set Directory"</b> and select the folder; it is scanned recursively and remembered.</li>
             </ol>
-            <h4 style="color: #b890ff; margin-bottom: 5px; margin-top: 15px;">Natural Language (Offline VLMs)</h4>
-            <p style="margin-top: 0; margin-bottom: 10px;">Generates natural English descriptions. SmolVLM and Florence-2 run fully offline inside your browser; JoyCaption runs via a local Ollama server instead:</p>
+            <p style="margin-top: 0; margin-bottom: 10px;"><b>Threshold</b> is the minimum confidence for a tag. <b>Additional Prefix</b> adds tags to the beginning of every image; <b>Exclude Tags</b> removes the ones you list.</p>
+
+            <h4 style="color: #b890ff; margin-bottom: 5px; margin-top: 15px;">🖥️ Natural Language (Offline VLMs)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">Generates natural English descriptions with Florence-2 or SmolVLM, fully inside your browser (WebGPU, falling back to CPU automatically):</p>
             <ul style="padding-left: 20px; margin-bottom: 15px;">
-                <li style="margin-bottom: 8px;"><b>SmolVLM (recommended for GPU):</b> lightweight Hugging Face model, with stable WebGPU support. Use natural language instructions in the prompt field.</li>
-                <li style="margin-bottom: 8px;"><b>Florence-2:</b> great for captions, but WebGPU support may be unstable depending on driver/browser (in that case, falls back to CPU automatically).</li>
-                <li style="margin-bottom: 8px;"><b>100% Offline (SmolVLM/Florence-2):</b> the model is downloaded directly from HuggingFace into your browser cache on the first run.</li>
-                <li style="margin-bottom: 8px;"><b>WebGPU Accelerated (SmolVLM/Florence-2):</b> utilizes your graphics card for rapid processing. If unavailable, it falls back to Local CPU WASM.</li>
-                <li style="margin-bottom: 8px;"><b>JoyCaption Beta (via local Ollama):</b> best for concept art, but doesn't run in the browser — it sends each image to <a href="https://ollama.com" target="_blank" style="color: #4db8ff; text-decoration: none;">🔗 Ollama</a> running on your machine. Setup: install Ollama, run <code>ollama pull user-v4/joycaption-beta</code>, and leave Ollama running (listening on <code>http://127.0.0.1:11434</code>) before starting the batch. Nothing is downloaded/cached by the browser for this model, so the "Clear Model Cache" button doesn't apply to it.</li>
+                <li style="margin-bottom: 8px;"><b>Model list:</b> <code>✅</code> already on your disk, <code>⬇️</code> will be downloaded on first use. On localhost the files are saved in the <code>models/</code> folder and found automatically.</li>
+                <li style="margin-bottom: 8px;"><b>Storage:</b> <i>Auto</i> (the <code>models/</code> folder on localhost, the browser cache elsewhere), <i>Browser cache</i>, or <i>Choose a folder</i> (Chrome / Edge) — the same layouts as in the Prompt Helper.</li>
+                <li style="margin-bottom: 8px;"><b>Florence-2:</b> pick a <b>Task</b> (Caption, Detailed, More detailed, OCR, Object labels). <b>SmolVLM:</b> write the instruction in the prompt box. WebGPU can be unstable with some drivers — the app then retries without graph optimization and finally on the CPU.</li>
+                <li style="margin-bottom: 8px;"><b>⏏ Unload from memory</b> frees RAM / VRAM (files stay on disk). <b>🧹 Delete downloaded model</b> removes the files the app downloaded (it is dimmed for models it does not own). <b>⬇️ Load model now</b> only prepares the model; the batch loads it automatically. <b>⏹ Cancel</b> appears while a download / load is running.</li>
+                <li style="margin-bottom: 8px;"><b>Save Result As:</b> <i>Automatic</i> saves captions as an <code>NL:</code> tag and tag-like results (taggers, "Generate tags", object labels) as normal tags.</li>
             </ul>
-            
+
             <h4 style="color: #66ccff; margin-bottom: 5px; margin-top: 15px;">🦙 Ollama (Auto-detected Vision Models)</h4>
-            <p style="margin-top: 0; margin-bottom: 10px;">Third processing mode. It asks your local Ollama server which installed models support vision and lists only those, so you never have to type model names. Works with Qwen2.5-VL / Qwen3-VL, LLaVA, Gemma 3, Llama 3.2 Vision, MiniCPM-V, etc. Choose <b>Natural Language</b> for a caption or <b>Booru-style tags</b> to get a comma-separated tag list merged into the existing tags. If the list is empty or the connection fails, make sure Ollama is running (and, if needed, started with <code>OLLAMA_ORIGINS=*</code>).</p>
+            <p style="margin-top: 0; margin-bottom: 10px;">It asks your local Ollama server which installed models support vision and lists only those, so you never have to type model names. Works with Qwen2.5-VL / Qwen3-VL, LLaVA, Gemma 3, Llama 3.2 Vision, MiniCPM-V, JoyCaption (<code>ollama pull user-v4/joycaption-beta</code>), etc. Choose <b>Natural Language</b> for a caption or <b>Booru-style tags</b> to get a comma-separated tag list merged into the existing tags. If the list is empty or the connection fails, make sure Ollama is running (and, if needed, started with <code>OLLAMA_ORIGINS=*</code>).</p>
+
+            <h4 style="color: #ff9966; margin-bottom: 5px; margin-top: 15px;">🔥 PyTorch / ONNX (local server)</h4>
+            <p style="margin-top: 0; margin-bottom: 10px;">The model runs in <b>Python</b> instead of the browser: the page talks to <code>server_max.py</code> (port 8100), which uses <code>florence_backend.py</code> and PyTorch (CUDA if you have an NVIDIA GPU, otherwise CPU). It can run bigger models, <b>Florence-2 PromptGen v2.0 (MiaoshouAI)</b>, any model saved in a folder on your PC (safetensors / <code>pytorch_model.bin</code>), other vision-language models, and ONNX taggers through Python. Start the app with the localhost <code>.bat</code> file; the mode is hidden on the online version.</p>
+            <p style="margin-top: 0; margin-bottom: 6px;"><b>Install</b> (Python 3.10+, use the same Python that starts the server, then restart the server):</p>
+            <pre style="background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; padding:8px 10px; margin:0 0 10px; overflow-x:auto; color:#b8f0d0; font-size:12px;">python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+python -m pip install transformers pillow huggingface_hub
+python -m pip install einops timm
+python -m pip install onnxruntime</pre>
+            <ul style="padding-left: 20px; margin-bottom: 15px;">
+                <li style="margin-bottom: 8px;">The first line is PyTorch with CUDA 12.4 — copy the exact command for your system from <a href="https://pytorch.org/get-started/locally/" target="_blank" style="color:#4db8ff; text-decoration:none;">pytorch.org</a>. CPU only: <code>python -m pip install torch</code>.</li>
+                <li style="margin-bottom: 8px;"><code>einops timm</code> are needed by PromptGen and the <code>microsoft/</code> Florence models. For the newest native Florence-2 (<code>florence-community/</code>) update with <code>python -m pip install -U transformers</code>.</li>
+                <li style="margin-bottom: 8px;">ONNX taggers through Python need <code>onnxruntime</code> (or <code>onnxruntime-gpu</code> for CUDA — install only one of the two).</li>
+                <li style="margin-bottom: 8px;">Check the GPU: <code>python -c "import torch; print(torch.cuda.is_available())"</code> should print <code>True</code>. The badge at the top of the panel shows <b>🔥 CUDA</b>, <b>🖥️ CPU only</b>, or what is missing.</li>
+                <li style="margin-bottom: 8px;"><b>Models:</b> PromptGen v2.0 (tasks: Generate tags, Caption, Detailed, More detailed, Analyze, Mixed, Mixed +), Florence-2 Base / Large, plus everything found in <code>models/</code> and in folders added with <b>📁 Add model folder</b> (<code>🏷️</code> ONNX taggers, <code>📁</code> local models). Downloads go to <code>models/</code> and then work offline. Raise <b>Max tokens</b> (512–1024) for the long PromptGen tasks.</li>
+                <li style="margin-bottom: 8px;">Only Hugging Face repositories <code>microsoft/Florence-2*</code>, <code>florence-community/Florence-2*</code> and <code>MiaoshouAI/Florence-2*</code> are downloaded automatically (they need remote code). Local Florence-2 folders that ship their own Python code (<code>auto_map</code> in <code>config.json</code>) run that code too — <b>only add folders you trust</b>.</li>
+                <li style="margin-bottom: 8px;">The local server only accepts requests from pages it serves itself (<code>localhost</code> / <code>127.0.0.1</code>); other websites open in the browser cannot use it.</li>
+            </ul>
 
             <h4 style="color: #ff6060; margin-bottom: 5px; margin-top: 15px;">⚠️ Performance & Execution Mode</h4>
             <ul style="padding-left: 20px; margin-bottom: 15px;">
@@ -676,10 +739,13 @@
 
 <canvas id="offscreen-canvas" width="448" height="448" style="display:none;"></canvas>
 
-<!-- Módulos UI Divididos -->
+<!-- UI modules (load order matters) -->
 <script src="tools/quick_links.js"></script>
 <script src="tools/tagmanager_globals.js"></script>
+<script src="tools/tagmanager_tm.js"></script>
+<script src="tools/tagmanager_alert.js"></script>
 <script src="tools/tagmanager_db.js"></script>
+<script src="tools/tagmanager_booru_core.js"></script>
 <script src="tools/tagmanager_danbooru_core.js"></script>
 <script src="tools/tagmanager_e621_core.js"></script>
 <script src="tools/tagmanager_batch_tagger.js"></script>
@@ -688,7 +754,7 @@
 <script src="tools/tagmanager_danbooru_autocomplete.js"></script>
 <script src="tools/tagmanager_danbooru_alias.js"></script>
 
-<!-- NOVOS SCRIPTS DE ALIAS E PONTE (BRIDGE) INJETADOS AQUI -->
+<!-- Alias scripts + bridge -->
 <script src="tools/tagmanager_e621_alias.js"></script>
 <script src="tools/tagmanager_alias_bridge.js"></script>
 
@@ -698,7 +764,16 @@
 <script src="tools/tagmanager_ui_presets.js"></script>
 <script src="tools/tagmanager_ui_list.js"></script>
 <script src="tools/tagmanager_ui_core.js"></script>
+
+<!-- Auto-Caption VLM engines (same files as the Prompt Helper). tagmanager_batch_vlm.js must come first and after ui_core. -->
+<script src="tools/tagmanager_batch_vlm.js"></script>
+<script src="tools/prompt_helper_florence_webgpu.js"></script>
+<script src="tools/prompt_helper_florence_pytorch.js"></script>
+
+<script src="tools/thumb_loader.js"></script>
 <script src="tools/tagmanager_render_hooks.js"></script>
+<!-- Double-click protection on tag removal (ghost double clicks from worn mice / Windows 11) -->
+<script src="tools/tagmanager_remove_cooldown.js"></script>
 <script src="tools/tagmanager_auto_task_queue.js"></script>
 <script src="tools/tagmanager_pin_image.js"></script>
 <script src="tools/tagmanager_compact_view.js"></script>

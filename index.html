@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -144,11 +144,11 @@
     <script>
         // Desabilita os botões "Local" se a pessoa estiver acessando pelo GitHub Pages
         document.addEventListener('DOMContentLoaded', () => {
-            const isRunningOnline = window.location.protocol !== 'file:' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+            const isRunningOnline = window.location.protocol !== 'file:' && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
             if (isRunningOnline) {
                 document.querySelectorAll('.btn-local').forEach(btn => {
                     btn.classList.add('disabled');
-                    btn.title = 'Indisponível na versão Web';
+                    btn.title = 'Not available in the web version';
                     btn.removeAttribute('href');
                 });
             }

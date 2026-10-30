@@ -121,7 +121,7 @@ window.openDetectPopout = async function() {
 	const rawTags = extractTagsFromMeta();
 	if (rawTags.length === 0) { body.innerHTML = '<div class="detect-popout-empty">No training tags found. Load a LoRA first.</div>'; return; }
 	const unique = [...new Set(rawTags.map(t => t.toLowerCase().replace(/ /g,'_')))].slice(0, 200);
-	let found = [];
+	let found = [], failedChunks = 0;
 	try {
 		const chunkSize = 30;
 		for (let i = 0; i < unique.length; i += chunkSize) {
@@ -129,10 +129,13 @@ window.openDetectPopout = async function() {
 			const query = chunk.map(t => 'search[name_array][]=' + encodeURIComponent(t)).join('&');
 			const res = await fetch('https://danbooru.donmai.us/tags.json?' + query + '&limit=' + chunkSize);
 			if (res.ok) found = found.concat(await res.json());
+			else failedChunks++;
+			if (i + chunkSize < unique.length) await new Promise(r => setTimeout(r, 300)); // respeita o limite da API
 		}
 	} catch(e) { body.innerHTML = '<div class="detect-popout-empty" style="color:#f66">Network error. Check your connection.</div>'; return; }
 	found.sort((a,b) => b.post_count - a.post_count);
 	renderDetectPopout(found, null);
+	if (failedChunks > 0 && typeof window.showOtAlert === 'function') window.showOtAlert(`Danbooru did not answer ${failedChunks} request(s) (rate limit?) — the list may be incomplete.`);
 };
 
 function extractTagsFromMeta() {
@@ -158,7 +161,7 @@ window.renderDetectPopout = function(tags, filterCat) {
 	filtered.forEach(t => {
 		const info = DANBOORU_CAT[t.category] || { label: '', color: '#888' };
 		const item = document.createElement('div'); item.className = 'detect-tag-item';
-		item.innerHTML = '<span class="detect-tag-dot" style="background:' + info.color + '"></span><span class="detect-tag-label">' + t.name.replace(/_/g,' ') + '</span><span class="detect-tag-count">' + Number(t.post_count).toLocaleString() + ' posts</span>';
+		item.innerHTML = '<span class="detect-tag-dot" style="background:' + info.color + '"></span><span class="detect-tag-label">' + window.escHtml(String(t.name || '').replace(/_/g,' ')) + '</span><span class="detect-tag-count">' + Number(t.post_count).toLocaleString() + ' posts</span>';
 		item.onclick = () => { if(document.getElementById('danbooruInput')) document.getElementById('danbooruInput').value = t.name; window.closeDetectPopout(); if(window.danbooruSearch) window.danbooruSearch(t.name); };
 		body.appendChild(item);
 	});

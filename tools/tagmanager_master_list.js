@@ -6,19 +6,25 @@
    aceitar/rejeitar ghost tag globalmente, aplicar filtros na lista de
    imagens (window.applyFilters), remover/adicionar tags em massa.
 
-   NOTA: window.globalConvertToCustomNL vive em tagmanager_nl_inline_editor.js
-   (o arquivo original tinha essa função duplicada aqui — removido).
+   NOTA: window.globalConvertToCustomNL vive em tagmanager_nl_inline_editor.js.
+   Todo texto vindo de tags entra no HTML via esc() (window.escHTML).
 ========================================================================= */
+
+const _mlEsc = (v) => (typeof window.escHTML === 'function' ? window.escHTML(v) : String(v));
+function _mlSplitTags(content) {
+    return content ? content.split(',').map(t => t.trim()).filter(t => t) : [];
+}
+
 
 window.showOnlyFavoriteTags = false;
 window.toggleFavTagsFilter = function() {
     window.showOnlyFavoriteTags = !window.showOnlyFavoriteTags;
     const btn = document.getElementById('btn-filter-fav-tags');
-    if (window.showOnlyFavoriteTags) { btn.style.color = '#00ff99'; btn.style.borderColor = '#00aa66'; btn.textContent = '⭐'; } 
+    if (window.showOnlyFavoriteTags) { btn.style.color = '#00ff99'; btn.style.borderColor = '#00aa66'; btn.textContent = '⭐'; }
     else { btn.style.color = '#888'; btn.style.borderColor = '#444'; btn.textContent = '☆'; }
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 };
- 
+
 window.masterNLFilterMode = 'HIDDEN';
 window.toggleMasterNLFilter = function() {
     const states = ['HIDDEN', 'EXCLUSIVE', 'ALL'];
@@ -26,7 +32,7 @@ window.toggleMasterNLFilter = function() {
     window.masterNLFilterMode = states[(idx + 1) % states.length];
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 };
- 
+
 window.pinnedMasterTag = window.pinnedMasterTag || null;
 window.toggleMasterTagPin = function(tag) {
     window.pinnedMasterTag = (window.pinnedMasterTag === tag) ? null : tag;
@@ -34,52 +40,40 @@ window.toggleMasterTagPin = function(tag) {
     if (typeof window.applyFilters === 'function') window.applyFilters();
     if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
 };
- 
+
 window.renderMasterTagList = function() {
-    const container = document.getElementById('master-tag-list'); 
+    const esc = _mlEsc;
+    const container = document.getElementById('master-tag-list');
     if(!container) return;
     container.innerHTML = '';
-    
+
     const presetCol = document.getElementById('col-presets');
     const presetsVisible = presetCol && presetCol.style.display !== 'none';
-    
+
     let tagCounts = new Map();
     let nlSet = new Set();
-    
+
     if(typeof imageFiles !== 'undefined') {
         imageFiles.forEach(img => {
-            if (img.hidden) return;
-            if (img.hasFile && img.content) {
-                if (img.type === 'tags') {
-                    img.content.split(',').forEach(t => {
-                        const cleanTag = t.trim();
-                        if (cleanTag) {
-                            tagCounts.set(cleanTag, (tagCounts.get(cleanTag) || 0) + 1);
-                            if (window.checkIfNL(cleanTag)) nlSet.add(cleanTag);
-                        }
-                    });
-                } else if (img.type === 'nl') {
-                    const cleanTag = img.content.trim();
-                    if (cleanTag) {
-                        tagCounts.set(cleanTag, (tagCounts.get(cleanTag) || 0) + 1);
-                        nlSet.add(cleanTag);
-                    }
-                }
-            }
+            if (img.hidden || !img.hasFile || !img.content) return;
+            _mlSplitTags(img.content).forEach(cleanTag => {
+                tagCounts.set(cleanTag, (tagCounts.get(cleanTag) || 0) + 1);
+                if (window.checkIfNL(cleanTag)) nlSet.add(cleanTag);
+            });
         });
     }
- 
+
     let favTags = new Set(datasetConfig.favoriteTags || []);
     let sortedMasterTags = typeof masterTagSet !== 'undefined' ? Array.from(masterTagSet).sort() : [];
- 
+
     const masterTagCountBadge = document.getElementById('master-tag-count');
     if (masterTagCountBadge) {
         const totalUniqueTags = sortedMasterTags.filter(t => !nlSet.has(t) && (tagCounts.get(t) || 0) > 0).length;
         masterTagCountBadge.textContent = totalUniqueTags;
     }
- 
+
     let hasAnyNL = nlSet.size > 0;
- 
+
     const btnNLFilter = document.getElementById('btn-filter-nl-master');
     if (btnNLFilter) {
         btnNLFilter.style.display = hasAnyNL ? 'inline-block' : 'none';
@@ -97,7 +91,7 @@ window.renderMasterTagList = function() {
             btnNLFilter.title = "Show: NL Only";
         }
     }
- 
+
     // ATUALIZAÇÃO DO BOTÃO "CONVERT TO NL/TAG" NA BARRA DE AÇÕES MASTER
     const masterConvertBtn = document.querySelector('#master-selection-actions .btn-nl-edit');
     if (masterConvertBtn) {
@@ -113,7 +107,7 @@ window.renderMasterTagList = function() {
             masterConvertBtn.onclick = window.globalConvertToCustomNL;
         }
     }
- 
+
     if (window.pinnedMasterTag) {
         const pTag = window.pinnedMasterTag;
         const pCount = tagCounts.get(pTag) || 0;
@@ -124,34 +118,34 @@ window.renderMasterTagList = function() {
             <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
                 <span class="tag-pin active" style="color:#4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Unpin this tag">📌</span>
                 <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${pCount}</span>
-                <span class="tag-name" style="color:#4db8ff; font-weight:bold;">${pTag}</span>
+                <span class="tag-name" style="color:#4db8ff; font-weight:bold;">${esc(pTag)}</span>
             </div>
         `;
         pItem.querySelector('.tag-pin').onclick = (e) => { e.stopPropagation(); window.toggleMasterTagPin(pTag); };
         container.appendChild(pItem);
     }
-    
+
     if (!window.showGhostTagsInList) {
         sortedMasterTags.forEach((tag, index) => {
             const count = tagCounts.get(tag) || 0;
             if (count === 0) return;
-            
+
             const isCustomNL = nlSet.has(tag);
-            
+
             if (window.masterNLFilterMode === 'HIDDEN' && isCustomNL) return;
             if (window.masterNLFilterMode === 'EXCLUSIVE' && !isCustomNL) return;
-            
+
             if (window.showOnlyFavoriteTags && !favTags.has(tag)) return;
- 
+
             const item = document.createElement('div'); item.className = 'master-tag-item';
             item.setAttribute('data-tag-name', tag.toLowerCase());
             if (favTags.has(tag) && window.enableFavHighlight !== false) item.classList.add('glow-favorite');
-            
+
             let isSelected = masterSelectedTags.has(tag);
             let statusHtml = '';
             let conflictsForThisTag = [];
             let similarsForThisTag = [];
- 
+
             if (isSelected) {
                 item.classList.add('selected-master');
                 if (window.enableConflictWarnings && typeof window.checkTagStatusWithActive === 'function') {
@@ -159,27 +153,28 @@ window.renderMasterTagList = function() {
                     conflictsForThisTag = status.conflicts; similarsForThisTag = status.similars;
                     if (conflictsForThisTag.length > 0) {
                         item.classList.add('conflict');
-                        statusHtml += `<span class="conflict-warning" title="Conflict with: ${conflictsForThisTag.join(', ')}">⚠️ Conflict: ${conflictsForThisTag.join(', ')}</span>`;
+                        const list = esc(conflictsForThisTag.join(', '));
+                        statusHtml += `<span class="conflict-warning" title="Conflict with: ${list}">⚠️ Conflict: ${list}</span>`;
                     } else if (similarsForThisTag.length > 0) {
                         item.classList.add('similar');
-                        statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${similarsForThisTag.join(', ')}">🟨 Similar: ${similarsForThisTag.join(', ')}</span>`;
+                        const list = esc(similarsForThisTag.join(', '));
+                        statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${list}">🟨 Similar: ${list}</span>`;
                     }
                 }
             }
-            
+
             const isPinned = window.pinnedMasterTag === tag;
             const dbCached = window.danbooruCache ? (window.danbooruCache[tag.toLowerCase()] || window.danbooruCache[tag]) : null;
-
-            // FEATURE 1: tag-alias (tem seta ➜) fica clicável no nome pra converter globalmente
-            const isConvertibleAliasMaster = !!(window.showDanbooruCounts && window.enableAliasConvertClick !== false && dbCached && dbCached.aliasTo && !isCustomNL);
-
-            const dbAliasArrowHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL)
-                ? `<span class="tag-alias-arrow${isConvertibleAliasMaster ? ' tag-name-convertible' : ''}" title="${isConvertibleAliasMaster ? `Click to convert this alias tag globally to '${dbCached.aliasTo}'` : `Danbooru redirects this tag to '${dbCached.aliasTo}'`}">➜ ${dbCached.aliasTo}</span>` : '';
+            // Alias (Danbooru, ou e621 se o Danbooru não tiver) — tagmanager_alias_bridge.js.
+            const aliasInfo = (!isCustomNL && typeof window.getTagAliasInfo === 'function') ? window.getTagAliasInfo(tag) : null;
+            const aliasParts = typeof window.renderTagAliasParts === 'function' ? window.renderTagAliasParts(aliasInfo) : { arrow: '', icon: '', nameAttrs: '', nameClass: '' };
+            const isConvertibleAliasMaster = !!(aliasInfo && aliasInfo.convertible);
+            const dbAliasArrowHtml = aliasParts.arrow;
 
             // FEATURE 2: tag "real" (não-alias) mostra os aliases unificados (Danbooru + e621)
             const reverseAliasHtmlMaster = (!isCustomNL && !isConvertibleAliasMaster && typeof window.renderCombinedAliasPreviewHTML === 'function')
                 ? window.renderCombinedAliasPreviewHTML(tag.toLowerCase()) : '';
-            
+
             const e621CachedForCount = window.showE621 && window.e621Cache ? (window.e621Cache[tag.toLowerCase()] || window.e621Cache[tag]) : null;
             const bestCountInfo = (window.showDanbooruCounts && !isCustomNL && typeof window.pickBestTagCount === 'function')
                 ? window.pickBestTagCount(dbCached, e621CachedForCount) : null;
@@ -188,22 +183,21 @@ window.renderMasterTagList = function() {
                     ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;" title="${bestCountInfo.source === 'e621' ? 'e621' : 'Danbooru'} count (highest of the two sources)">${window.formatDbCount(bestCountInfo.count)}</span>`
                     : (bestCountInfo.deprecated ? `<span style="font-size: 10px; color: #666; margin-right: 8px; user-select: none;">Deprecated</span>` : ''))
                 : '';
- 
+
             const isAlreadyPreset = !isCustomNL && window._presetTagsSet && window._presetTagsSet.has(tag);
             if (isAlreadyPreset && (presetsVisible || window.presetHighlightsAlwaysVisible) && window.enablePresetHighlight !== false) item.classList.add('is-preset');
             const presetIconHtml = (isAlreadyPreset || isCustomNL) ? '' : `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>`;
             const ghostIconHtmlMaster = (window.enableGhostConvertIcon !== false && !isCustomNL) ? `<span class="tag-to-ghost" title="Convert to Ghost globally">💡</span>` : '';
-            
-            const dbAliasInfoHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL)
-                ? `<span class="tag-alias-info-icon tag-db-info" title="View Alias Tag Info">❓</span>` : '';
- 
+
+            const dbAliasInfoHtml = aliasParts.icon;
+
             item.innerHTML = `
                 <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
                     <span class="tag-pin${isPinned ? ' active' : ''}" style="color: ${isPinned ? '#4db8ff' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Pin as a mandatory filter">📌</span>
                     <span class="tag-star" style="color: ${favTags.has(tag) ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${favTags.has(tag) ? '⭐' : '☆'}</span>
                     ${presetIconHtml}
                     <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
-                    <span class="tag-name${isConvertibleAliasMaster ? ' tag-name-convertible' : ''}" style="${isCustomNL ? 'color:#b890ff;' : ''}"${isConvertibleAliasMaster ? ` title="Click to convert this alias tag globally to &quot;${dbCached.aliasTo}&quot;"` : ''}>${tag}</span>
+                    <span class="tag-name${aliasParts.nameClass}" style="${isCustomNL ? 'color:#b890ff;' : ''}"${aliasParts.nameAttrs}>${esc(tag)}</span>
                     ${dbAliasArrowHtml}
                     ${reverseAliasHtmlMaster}
                     ${statusHtml}
@@ -215,7 +209,7 @@ window.renderMasterTagList = function() {
                     <span class="tag-remove" title="Global Remove">&times;</span>
                 </div>
             `;
- 
+
             if (conflictsForThisTag.length > 0) {
                 const warningSpan = item.querySelector('.conflict-warning');
                 if(warningSpan) {
@@ -223,7 +217,7 @@ window.renderMasterTagList = function() {
                     warningSpan.onmouseleave = () => { conflictsForThisTag.forEach(ct => { const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`); if (targetRow) targetRow.classList.remove('glow-conflict'); }); };
                 }
             }
- 
+
             if (similarsForThisTag.length > 0) {
                 const simSpan = item.querySelector('.similar-warning');
                 if(simSpan) {
@@ -231,17 +225,17 @@ window.renderMasterTagList = function() {
                     simSpan.onmouseleave = () => { similarsForThisTag.forEach(ct => { const targetRow = document.querySelector(`.tag-row[data-tag-name="${CSS.escape(ct)}"]`); if (targetRow) targetRow.classList.remove('glow-similar'); }); };
                 }
             }
-            
+
             const pinEl = item.querySelector('.tag-pin');
             if (pinEl) pinEl.onclick = (e) => { e.stopPropagation(); window.toggleMasterTagPin(tag); };
- 
+
             const starEl = item.querySelector('.tag-star');
             starEl.onclick = async (e) => {
                 e.stopPropagation();
                 const currentlyFav = favTags.has(tag);
                 if (currentlyFav) favTags.delete(tag); else favTags.add(tag);
                 datasetConfig.favoriteTags = Array.from(favTags);
-                if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited(); 
+                if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
                 if (window.showOnlyFavoriteTags && currentlyFav) { item.style.display = 'none'; } else {
                     starEl.textContent = currentlyFav ? '☆' : '⭐'; starEl.style.color = currentlyFav ? '#444' : '#00ff99';
                     if (window.enableFavHighlight !== false && !window.showOnlyFavoriteTags) {
@@ -250,53 +244,35 @@ window.renderMasterTagList = function() {
                 }
                 if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
             };
- 
+
             const presetBtn = item.querySelector('.tag-save-preset');
             if (presetBtn) {
                 presetBtn.onclick = (e) => { e.stopPropagation(); if(typeof window.savePresetTag === 'function') { window.savePresetTag(tag); if(typeof window.showAlert === 'function') window.showAlert(`Tag "${tag}" saved to Presets!`, 'success'); } };
             }
- 
-            const aliasInfoIcon = item.querySelector('.tag-alias-info-icon');
-            if (aliasInfoIcon && dbCached && dbCached.aliasTo) {
-                aliasInfoIcon.onclick = (e) => { 
-                    e.stopPropagation(); 
-                    if(typeof window.openDanbooruTagInfoPopout === 'function') {
-                        window.openDanbooruTagInfoPopout(dbCached.aliasTo, tag);
-                    }
-                };
-            }
 
-            if (isConvertibleAliasMaster) {
-                const convertibleElsMaster = item.querySelectorAll('.tag-name-convertible');
-                convertibleElsMaster.forEach(el => {
-                    el.onclick = (e) => {
-                        e.stopPropagation();
-                        window.convertAliasTagGlobally(tag, dbCached.aliasTo);
-                    };
-                });
-            }
-            
+            if (aliasInfo && typeof window.bindTagAliasRow === 'function') window.bindTagAliasRow(item, tag, aliasInfo);
+
             if (!isCustomNL) item.ondblclick = (e) => { e.stopPropagation(); window.addTagToSelected(tag, document.getElementById('master-add-pos') ? document.getElementById('master-add-pos').value : 'bottom'); };
-            
+
             item.onclick = (e) => {
-                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon') || e.target.classList.contains('tag-name-convertible')) { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-pin') || e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon') || e.target.classList.contains('tag-name-convertible')) {
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.globalRemoveTags([tag]); }
-					if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.globalConvertTagToGhost(tag); }
-                    return; 
+                    if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.globalConvertTagToGhost(tag); }
+                    return;
                 }
-                
-                if (e.shiftKey && masterSelectedTags.size > 0) {
+
+                if (e.shiftKey && masterSelectedTags.size > 0 && lastSelectedMasterTagIndex !== null) {
                     const start = Math.min(lastSelectedMasterTagIndex, index), end = Math.max(lastSelectedMasterTagIndex, index);
                     masterSelectedTags.clear(); for (let i = start; i <= end; i++) masterSelectedTags.add(sortedMasterTags[i]);
                 } else if (e.ctrlKey || e.metaKey) {
                     if (masterSelectedTags.has(tag)) masterSelectedTags.delete(tag); else masterSelectedTags.add(tag);
                     lastSelectedMasterTagIndex = index;
                 } else {
-                    if (masterSelectedTags.has(tag) && masterSelectedTags.size === 1) { masterSelectedTags.clear(); } 
+                    if (masterSelectedTags.has(tag) && masterSelectedTags.size === 1) { masterSelectedTags.clear(); }
                     else { masterSelectedTags.clear(); masterSelectedTags.add(tag); lastSelectedMasterTagIndex = index; }
                 }
-                
-                window.renderMasterTagList(); 
+
+                window.renderMasterTagList();
                 if (typeof window.applyFilters === 'function') window.applyFilters();
                 if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
                 if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
@@ -304,8 +280,8 @@ window.renderMasterTagList = function() {
             container.appendChild(item);
         });
     }
- 
-    let pendingCounts = new Map(); 
+
+    let pendingCounts = new Map();
     if(typeof imageFiles !== 'undefined') {
         imageFiles.forEach(img => {
             if (img.hidden) return;
@@ -314,17 +290,17 @@ window.renderMasterTagList = function() {
             }
         });
     }
- 
+
     let sortedGhostTags = Array.from(pendingCounts.keys()).sort();
- 
+
     if (window.showGhostTagsInList && sortedGhostTags.length > 0) {
         const label = document.createElement('div'); label.className = 'ghost-section-label'; label.textContent = '💡 Pending Suggestions';
         container.appendChild(label);
- 
+
         sortedGhostTags.forEach((tag, gIndex) => {
             const isCustomNL = nlSet.has(tag);
             if (isCustomNL) return;
- 
+
             const count = pendingCounts.get(tag);
             const item = document.createElement('div');
             item.className = 'master-tag-item ghost';
@@ -332,7 +308,7 @@ window.renderMasterTagList = function() {
             item.innerHTML = `
                 <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
                     <span style="color:#00aa66; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
-                    <span class="tag-name">${tag}</span>
+                    <span class="tag-name">${esc(tag)}</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span class="tag-ghost-accept" title="Accept globally">✓</span>
@@ -343,31 +319,30 @@ window.renderMasterTagList = function() {
             item.querySelector('.tag-ghost-reject').onclick = (e) => { e.stopPropagation(); window.rejectGhostTagGlobal(tag); };
             item.onclick = (e) => {
                 if (e.target.classList.contains('tag-ghost-accept')) return;
-                if (e.shiftKey && masterSelectedGhostTags.size > 0) {
+                if (e.shiftKey && masterSelectedGhostTags.size > 0 && lastSelectedGhostTagIndex !== null) {
                     const start = Math.min(lastSelectedGhostTagIndex, gIndex), end = Math.max(lastSelectedGhostTagIndex, gIndex);
                     masterSelectedGhostTags.clear(); for (let i = start; i <= end; i++) masterSelectedGhostTags.add(sortedGhostTags[i]);
                 } else if (e.ctrlKey || e.metaKey) {
                     if (masterSelectedGhostTags.has(tag)) masterSelectedGhostTags.delete(tag); else masterSelectedGhostTags.add(tag);
                     lastSelectedGhostTagIndex = gIndex;
                 } else {
-                    if (masterSelectedGhostTags.has(tag) && masterSelectedGhostTags.size === 1) { masterSelectedGhostTags.clear(); } 
+                    if (masterSelectedGhostTags.has(tag) && masterSelectedGhostTags.size === 1) { masterSelectedGhostTags.clear(); }
                     else { masterSelectedGhostTags.clear(); masterSelectedGhostTags.add(tag); lastSelectedGhostTagIndex = gIndex; }
                 }
-                window.renderMasterTagList(); 
+                window.renderMasterTagList();
                 if (typeof window.applyFilters === 'function') window.applyFilters();
                 if (typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
             };
             container.appendChild(item);
         });
     }
- 
+
     if (typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
     if (window.masterSearchMode && typeof window.filterMasterTagsByName === 'function') window.filterMasterTagsByName(document.getElementById('master-add-input') ? document.getElementById('master-add-input').value : '');
 }
- 
+
 window.acceptGhostTagGlobal = function(tag) {
-    const globalExt = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
-    let count = 0; const affected = [];
+    const affected = [];
     imageFiles.forEach(img => {
         if (img.hidden) return;
         if (img.pendingAdd && img.pendingAdd.includes(tag)) {
@@ -375,219 +350,116 @@ window.acceptGhostTagGlobal = function(tag) {
             if (typeof pendingTagsStore !== 'undefined') {
                 if (img.pendingAdd.length > 0) pendingTagsStore[img.baseName] = img.pendingAdd; else delete pendingTagsStore[img.baseName];
             }
-            if (!img.hasFile) img.type = 'tags';
-            if (img.type === 'tags') {
-                let tags = img.content ? img.content.split(',').map(t => t.trim()).filter(t => t) : [];
-                if (!tags.includes(tag)) tags.push(tag);
-                img.content = tags.join(', ');
-            } else if (img.type === 'nl') {
-                let text = img.content ? img.content.trim() : "";
-                img.content = text ? text + ", " + tag : tag;
-            }
-            img.hasFile = true;
-            if (!img.ext) img.ext = globalExt;
-            affected.push(img); count++;
+            affected.push(img);
         }
     });
-    if(typeof window.markDirty === 'function') window.markDirty(affected);
-    if(typeof masterTagSet !== 'undefined') masterTagSet.add(tag);
+    window.TM.tags.add(affected, tag, 'bottom');
+    // Também conta como mudança as imagens que já tinham a tag (só perderam a sugestão).
+    if (typeof window.markDirty === 'function') window.markDirty(affected);
     if(typeof masterSelectedGhostTags !== 'undefined') masterSelectedGhostTags.delete(tag);
- 
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    window.renderMasterTagList();
-    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.refreshListStatus === 'function') window.refreshListStatus();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+
+    window.TM.tags.refreshViews();
     if (typeof window.savePendingTagsStore === 'function') {
         const handle = window.currentImagesHandle || window.rootHandle;
         window.savePendingTagsStore(handle);
     }
-    if(typeof window.showAlert === 'function') window.showAlert(`Tag "${tag}" accepted on ${count} image(s).`, 'success');
+    if(typeof window.showAlert === 'function') window.showAlert(`Tag "${tag}" accepted on ${affected.length} image(s).`, 'success');
 }
- 
+
 window.applyFilters = function() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
     imageFiles.forEach(img => {
         if (img.hidden) { if (img.element) img.element.style.display = 'none'; return; }
         let visible = true;
+        const tags = _mlSplitTags(img.content);
+
         if (visible && window.imageNameFilter) {
             const nameLower = (img.name || '').toLowerCase();
             if (!nameLower.includes(window.imageNameFilter)) visible = false;
         }
         if (visible && window.pinnedMasterTag) {
-            if (img.type === 'tags' && img.content) {
-                const tags = img.content.split(',').map(t => t.trim());
-                if (!tags.includes(window.pinnedMasterTag)) visible = false;
-            } else if (img.type === 'nl' && img.content) {
-                if (img.content.trim() !== window.pinnedMasterTag) visible = false;
-            } else { visible = false; }
+            if (!tags.includes(window.pinnedMasterTag)) visible = false;
         }
- 
+
         const totalSelected = masterSelectedTags.size + masterSelectedGhostTags.size;
         if (visible && window.imageFilterMode !== 'ALL') {
-            let hasTag = false; let hasNL = false;
-            if (img.type === 'nl') hasNL = true;
-            else if (img.type === 'tags' && img.content) {
-                const tags = img.content.split(',').map(t=>t.trim()).filter(t=>t);
-                hasNL = tags.some(t => window.checkIfNL(t));
-                hasTag = tags.some(t => !window.checkIfNL(t));
-            }
+            const hasNL = tags.some(t => window.checkIfNL(t));
+            const hasTag = tags.some(t => !window.checkIfNL(t));
             if (window.imageFilterMode === 'TAGS' && !hasTag) visible = false;
             if (window.imageFilterMode === 'NL' && !hasNL) visible = false;
         }
- 
+
         if (visible && totalSelected > 0) {
-            if (img.type === 'tags') {
-                const tags = img.content.split(',').map(t => t.trim());
-                const pending = img.pendingAdd || [];
-                let matchCount = 0;
-                for (let ft of masterSelectedTags) { if (tags.includes(ft)) matchCount++; }
-                for (let gt of masterSelectedGhostTags) { if (pending.includes(gt)) matchCount++; }
-                
-                if (filterMode === 'AND' && matchCount !== totalSelected) visible = false;
-                if (filterMode === 'OR' && matchCount === 0) visible = false;
-                if (filterMode === 'XOR' && matchCount !== 1) visible = false;
-                if (filterMode === 'NOT' && matchCount > 0) visible = false;
-            } else if (img.type === 'nl') {
-                const content = img.content ? img.content.trim() : "";
-                const pending = img.pendingAdd || [];
-                let matchCount = 0;
-                for (let ft of masterSelectedTags) { if (content === ft) matchCount++; }
-                for (let gt of masterSelectedGhostTags) { if (pending.includes(gt)) matchCount++; }
-                
-                if (filterMode === 'AND' && matchCount !== totalSelected) visible = false;
-                if (filterMode === 'OR' && matchCount === 0) visible = false;
-                if (filterMode === 'XOR' && matchCount !== 1) visible = false;
-                if (filterMode === 'NOT' && matchCount > 0) visible = false;
-            } else { visible = false; }
+            const pending = img.pendingAdd || [];
+            let matchCount = 0;
+            for (let ft of masterSelectedTags) { if (tags.includes(ft)) matchCount++; }
+            for (let gt of masterSelectedGhostTags) { if (pending.includes(gt)) matchCount++; }
+
+            if (filterMode === 'AND' && matchCount !== totalSelected) visible = false;
+            if (filterMode === 'OR' && matchCount === 0) visible = false;
+            if (filterMode === 'XOR' && matchCount !== 1) visible = false;
+            if (filterMode === 'NOT' && matchCount > 0) visible = false;
         }
         if(img.element) img.element.style.display = visible ? 'flex' : 'none';
     });
- 
-    // FIX: qualquer imagem que tenha acabado de sair de vista (por busca de
-    // nome, tag pinada 📌, lógica AND/OR/XOR/NOT ou filtro Tags/NL) precisa
-    // sair também de selectedIndices — senão a Active Image continua
-    // mostrando/editando tags de uma imagem que não aparece mais na lista.
+
+    // Imagens que saíram de vista também saem de selectedIndices.
     if (typeof window.pruneSelectionToVisible === 'function') window.pruneSelectionToVisible();
 }
- 
+
 window.updateSelectionActions = function() {
     const bar = document.getElementById('master-selection-actions');
     if(bar) bar.style.display = masterSelectedTags.size > 0 ? 'flex' : 'none';
 }
- 
+
 window.removeSelectedMasterTags = function() {
     if(masterSelectedTags.size === 0) return;
     if(confirm(`Remove ${masterSelectedTags.size} tags globally?`)) window.globalRemoveTags(Array.from(masterSelectedTags));
 }
- 
+
 window.addSelectedMasterTagsTo = function(target) {
     if(masterSelectedTags.size === 0) return;
     const pos = document.getElementById('master-add-pos') ? document.getElementById('master-add-pos').value : 'bottom';
     const tagsToAdd = Array.from(masterSelectedTags);
-    const globalExt = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
     let targets = [];
     if (target === 'selected') {
-        targets = Array.from(selectedIndices);
+        targets = window.TM.tags.selectedImages();
         if(targets.length === 0) { if(typeof window.showAlert === 'function') window.showAlert("No images selected.", "error"); return; }
     } else if (target === 'all') {
-        targets = imageFiles.map((_, i) => i).filter(i => !imageFiles[i].hidden);
+        targets = window.TM.tags.visibleImages();
     }
-    
-    targets.forEach(idx => {
-        if (!imageFiles[idx].hasFile) imageFiles[idx].type = 'tags';
-        if (imageFiles[idx].type === 'tags') {
-            let currentTags = imageFiles[idx].content ? imageFiles[idx].content.split(',').map(t=>t.trim()).filter(t=>t) : [];
-            tagsToAdd.forEach(tag => {
-                if (!currentTags.includes(tag)) {
-                    if (pos === 'top') currentTags.unshift(tag); else currentTags.push(tag);
-                }
-            });
-            imageFiles[idx].content = currentTags.join(', ');
-        } else if (imageFiles[idx].type === 'nl') {
-            let text = imageFiles[idx].content ? imageFiles[idx].content.trim() : "";
-            tagsToAdd.forEach(tag => {
-                if (text) {
-                    if (pos === 'top') text = tag + ", " + text;
-                    else text = text + ", " + tag;
-                } else {
-                    text = tag;
-                }
-            });
-            imageFiles[idx].content = text;
-        }
-        imageFiles[idx].hasFile = true;
-        if(!imageFiles[idx].ext) imageFiles[idx].ext = globalExt;
-    });
-    if(typeof window.markDirty === 'function') window.markDirty(targets.map(idx => imageFiles[idx]));
-    
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    window.renderMasterTagList();
-    if(typeof window.renderEditor === 'function') window.renderEditor();
-    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+    window.TM.tags.add(targets, tagsToAdd, pos);
+    window.TM.tags.refreshViews();
     if(typeof window.showAlert === 'function') window.showAlert(`Added ${tagsToAdd.length} tags to ${targets.length} image(s).`, "success");
 }
- 
+
 window.globalRemoveTags = function(tagsToRemove) {
     if(!tagsToRemove || tagsToRemove.length === 0) return;
-    let changed = 0; const affected = [];
-    
-    imageFiles.forEach(img => {
-        if (img.hidden) return;
-        if(img.type === 'tags') {
-            let currentTags = img.content.split(',').map(t => t.trim()).filter(t => t);
-            let originalLen = currentTags.length;
-            currentTags = currentTags.filter(t => !tagsToRemove.includes(t));
-            if(currentTags.length !== originalLen) { img.content = currentTags.join(', '); affected.push(img); changed++; }
-        } else if (img.type === 'nl') {
-            if (img.content && tagsToRemove.includes(img.content.trim())) {
-                img.content = ""; affected.push(img); changed++;
-            }
-        }
+    const affected = window.TM.tags.remove(window.TM.tags.visibleImages(), tagsToRemove);
+
+    tagsToRemove.forEach(t => {
+        if(typeof masterTagSet !== 'undefined') masterTagSet.delete(t);
+        if(typeof masterSelectedTags !== 'undefined') masterSelectedTags.delete(t);
     });
-    if(typeof window.markDirty === 'function') window.markDirty(affected);
-    
-    tagsToRemove.forEach(t => { 
-        if(typeof masterTagSet !== 'undefined') masterTagSet.delete(t); 
-        if(typeof masterSelectedTags !== 'undefined') masterSelectedTags.delete(t); 
-    });
-    
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if(typeof window.updateSelectionActions === 'function') window.updateSelectionActions(); 
-    window.renderMasterTagList();
-    if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-    
-    if(typeof window.showAlert === 'function') window.showAlert(`Removed tags from ${changed} image(s).`, 'success');
+
+    if(typeof window.updateSelectionActions === 'function') window.updateSelectionActions();
+    window.TM.tags.refreshViews();
+    if(typeof window.showAlert === 'function') window.showAlert(`Removed tags from ${affected.length} image(s).`, 'success');
 }
- 
-/* ---------------------------------------------------------------------
-   FIX: esta função ficava vazia (stub) — o ícone 💡 ("Convert to Ghost
-   globally") já era renderizado e clicável em cada linha de
-   "All Dataset Tags" (ghostIconHtmlMaster acima), mas clicar nele não
-   fazia absolutamente nada. Agora espelha o comportamento de
-   window.convertTagToGhost (tagmanager_active_editor.js), só que
-   aplicado a TODAS as imagens do dataset (não só a seleção atual):
-   remove a tag do conteúdo salvo e a transforma numa sugestão-fantasma
-   (💡 pendingAdd) em cada imagem que a tinha, permitindo revisar/aceitar
-   de novo depois — igual ao fluxo já usado pelo Review Mode do Batch
-   Tagger e pela versão da Active Image. */
+
+/* 💡 "Convert to Ghost globally": remove a tag do conteúdo salvo e a
+   transforma numa sugestão-fantasma (pendingAdd) em cada imagem do
+   dataset que a tinha. */
 window.globalConvertTagToGhost = async function(tagToConvert) {
-    const isCustomNL = window.checkIfNL(tagToConvert);
-    if (isCustomNL || !tagToConvert) return;
+    if (!tagToConvert || window.checkIfNL(tagToConvert)) return;
     if (typeof imageFiles === 'undefined') return;
 
     let affectedCount = 0; const modifiedFiles = [];
     imageFiles.forEach(img => {
-        if (img.hidden || img.type !== 'tags' || !img.content) return;
-        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+        if (img.hidden || !img.content) return;
+        let tags = _mlSplitTags(img.content);
         if (!tags.includes(tagToConvert)) return;
-        tags = tags.filter(t => t !== tagToConvert);
-        img.content = tags.join(', ');
+        img.content = tags.filter(t => t !== tagToConvert).join(', ');
 
         img.pendingAdd = img.pendingAdd || [];
         if (!img.pendingAdd.includes(tagToConvert)) img.pendingAdd.push(tagToConvert);
@@ -614,7 +486,7 @@ window.globalConvertTagToGhost = async function(tagToConvert) {
     if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
     if (typeof window.showAlert === 'function') window.showAlert(`Converted "${tagToConvert}" to ghost in ${affectedCount} image(s) (whole dataset).`, 'info');
 };
- 
+
 window.rejectGhostTagActive = function(tag) {
     let modifiedFiles = [];
     selectedIndices.forEach(idx => {
@@ -635,7 +507,7 @@ window.rejectGhostTagActive = function(tag) {
     if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
 };
- 
+
 window.rejectGhostTagGlobal = function(tag) {
     let count = 0; const affected = [];
     imageFiles.forEach(img => {
@@ -653,7 +525,7 @@ window.rejectGhostTagGlobal = function(tag) {
     if (typeof window.renderImageList === 'function') window.renderImageList();
     window.renderMasterTagList();
     if (selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
-    
+
     if (typeof window.savePendingTagsStore === 'function') {
         const handle = window.currentImagesHandle || window.rootHandle;
         window.savePendingTagsStore(handle);

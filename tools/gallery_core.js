@@ -11,9 +11,8 @@
    ================================================================ */
 
 function extractTextFromBytes(buf) {
-    const bytes = new Uint8Array(buf);
-    let raw = '';
-    for (let i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+    // latin1 = 1 byte -> 1 char (igual ao loop antigo, mas sem concatenar byte a byte).
+    const raw = new TextDecoder('latin1').decode(new Uint8Array(buf));
     const candidates = [];
     const jsonRe = /\{[\s\S]{10,}/g;
     let m;
@@ -52,15 +51,33 @@ function extractTextFromBytes(buf) {
     return candidates;
 }
 
+/* Each parser is optional and isolated: a missing script or a parser that
+   throws on an odd file never stops the next one from trying. */
+function _galleryTryParse(name, ...args) {
+    const fn = window[name];
+    if (typeof fn !== 'function') return null;
+    try { return fn(...args) || null; }
+    catch (e) { console.warn('[Gallery] ' + name + ' failed:', e); return null; }
+}
+
+const _isComfyGraph = j => !!(j && typeof j === 'object' && Object.values(j).some(n => n && n.class_type));
+
+function _galleryParseText(text, json) {
+    return _galleryTryParse('parseSwarmUI', text, json)
+        || _galleryTryParse('parseInvokeAI', text, json)
+        || _galleryTryParse('parseFooocus', text, json)
+        || _galleryTryParse('parseNovelAI', text, json)
+        || _galleryTryParse('parseStableDiffusion', text);
+}
+
 async function extractPNGMetadata(file) {
     const isPng = file.name.match(/\.png$/i);
     if (isPng) {
+        if (typeof window.lerChunksPNG !== 'function') return null;
         const chunks = await window.lerChunksPNG(file);
         if (chunks.has('prompt')) {
             const promptStr = chunks.get('prompt');
-            const nai = window.parseComfyNovelAI(promptStr);
-            if (nai) return nai;
-            const parsed = window.parseComfyJSON(promptStr);
+            const parsed = _galleryTryParse('parseComfyNovelAI', promptStr) || _galleryTryParse('parseComfyJSON', promptStr);
             if (parsed) return parsed;
         }
 
@@ -72,7 +89,8 @@ async function extractPNGMetadata(file) {
                     v.includes('"v4_prompt"')     ||
                     v.includes('invokeai_metadata') ||
                     v.includes('base_model')      ||
-                    v.includes('sui_image_params')
+                    v.includes('sui_image_params') ||
+                    (k === 'Comment' && v.includes('"uc"'))   // NovelAI V3 and older
                 ) {
                     textChunk = v;
                     break;
@@ -80,37 +98,21 @@ async function extractPNGMetadata(file) {
             }
         }
 
-        let textChunkJson = null;
         if (textChunk) {
+            let textChunkJson = null;
             try { textChunkJson = JSON.parse(textChunk); } catch {}
-        }
-
-        if (textChunk) {
-            const swarm = window.parseSwarmUI(textChunk, textChunkJson);
-            if (swarm) return swarm;
-
-            const invoke = window.parseInvokeAI(textChunk, textChunkJson);
-            if (invoke) return invoke;
-
-            const fooocus = window.parseFooocus(textChunk, textChunkJson);
-            if (fooocus) return fooocus;
-
-            const novelai = window.parseNovelAI(textChunk, textChunkJson);
-            if (novelai) return novelai;
-
-            const sd = window.parseStableDiffusion(textChunk);
-            if (sd) return sd;
+            const parsed = _galleryParseText(textChunk, textChunkJson);
+            if (parsed) return parsed;
         }
 
         for (const [k, v] of chunks.entries()) {
             if (k === 'prompt' || k === 'workflow') continue;
-            try {
-                const j = JSON.parse(v);
-                if (j && typeof j === 'object' && Object.values(j).some(n => n?.class_type)) {
-                    const parsed = window.parseComfyJSON(v);
-                    if (parsed) return parsed;
-                }
-            } catch {}
+            let j = null;
+            try { j = JSON.parse(v); } catch {}
+            if (_isComfyGraph(j)) {
+                const parsed = _galleryTryParse('parseComfyJSON', v);
+                if (parsed) return parsed;
+            }
         }
 
         return null;
@@ -121,30 +123,14 @@ async function extractPNGMetadata(file) {
             const buf = await file.arrayBuffer();
             const candidates = extractTextFromBytes(buf);
             for (const candidate of candidates) {
-                let j = null;
-                try { j = JSON.parse(candidate); } catch {}
-                if (j && typeof j === 'object' && Object.values(j).some(n => n?.class_type)) {
-                    const parsed = window.parseComfyJSON(candidate);
-                    if (parsed) return parsed;
-                }
-
                 let jsonObj = null;
                 try { jsonObj = JSON.parse(candidate); } catch {}
-
-                const swarm = window.parseSwarmUI(candidate, jsonObj);
-                if (swarm) return swarm;
-
-                const invoke = window.parseInvokeAI(candidate, jsonObj);
-                if (invoke) return invoke;
-
-                const fooocus = window.parseFooocus(candidate, jsonObj);
-                if (fooocus) return fooocus;
-
-                const novelai = window.parseNovelAI(candidate, jsonObj);
-                if (novelai) return novelai;
-
-                const sd = window.parseStableDiffusion(candidate);
-                if (sd) return sd;
+                if (_isComfyGraph(jsonObj)) {
+                    const parsed = _galleryTryParse('parseComfyNovelAI', jsonObj) || _galleryTryParse('parseComfyJSON', candidate);
+                    if (parsed) return parsed;
+                }
+                const parsed = _galleryParseText(candidate, jsonObj);
+                if (parsed) return parsed;
             }
         } catch (e) { console.warn('Non-PNG parser error:', e); }
     }
@@ -213,6 +199,71 @@ async function saveSidecarFile() {
             updateTagsDatalist();
         }
     } catch (e) { console.error(e); showAlert('❌ Error saving. Check directory permissions.', 'error'); }
+}
+
+/* Botão "Batch Update JSONs": o HTML chamava batchUpdateJSONs(), mas a função
+   não existia em nenhum arquivo (o clique dava erro no console).
+   Cria o JSON das imagens que não têm e, nas que têm, só PREENCHE campos
+   vazios com os metadados da imagem — nunca apaga tag, notas ou o que o
+   usuário editou. JSON inválido é deixado como está. */
+async function batchUpdateJSONs() {
+    if (!currentHandle) { showAlert('Load a folder first.', 'warn'); return; }
+    if (!currentFiles.length) { showAlert('❌ No images in this folder.', 'warn'); return; }
+    if (!confirm(`Create or update the JSON sidecar of ${currentFiles.length} image(s) in this folder?\n\nMissing JSONs are created from the image metadata. Existing JSONs only get their EMPTY fields filled — tags, notes and edited values are kept.`)) return;
+
+    const FIELD_MAP = { positive: 'pos', negative: 'neg', cfg: 'cfg', steps: 'steps', seed: 'seed', sampler: 'sampler', checkpoint: 'ckpt', loras: 'loras', size: 'size' };
+    let created = 0, updated = 0, unchanged = 0, invalid = 0, noMeta = 0;
+
+    for (let i = 0; i < currentFiles.length; i++) {
+        const fileItem = currentFiles[i];
+        if (i % 10 === 0) showAlert(`Processing batch... ${i + 1} / ${currentFiles.length}`, 'info');
+        const baseName = fileItem.name.substring(0, fileItem.name.lastIndexOf('.')) || fileItem.name;
+        const sidecarName = baseName + '.json';
+
+        const sc = (typeof readSidecarSafe === 'function') ? await readSidecarSafe(currentHandle, sidecarName) : { exists: false, ok: true, data: {} };
+        if (!sc.ok) { invalid++; continue; }
+
+        let meta = null;
+        try { meta = await extractPNGMetadata(fileItem.file); } catch (e) {}
+        if (meta && !meta.sampler && meta.scheduler) meta.sampler = meta.scheduler;
+        if (meta && !meta.ckpt && meta.checkpoint) meta.ckpt = meta.checkpoint;
+
+        const data = sc.data;
+        let changed = !sc.exists;
+        if (!sc.exists) {
+            Object.assign(data, { file_name: fileItem.name, positive: '', negative: '', tag: '', notes: [], cfg: '', steps: '', seed: '', sampler: '', checkpoint: '', loras: '', size: '' });
+        }
+        if (data.file_name !== fileItem.name) { data.file_name = fileItem.name; changed = true; }
+        if (meta) {
+            Object.entries(FIELD_MAP).forEach(([jsonKey, metaKey]) => {
+                const cur = data[jsonKey];
+                const val = meta[metaKey];
+                if ((cur === undefined || cur === null || String(cur).trim() === '') && val !== undefined && val !== null && String(val).trim() !== '') {
+                    data[jsonKey] = String(val); changed = true;
+                }
+            });
+            if ((!Array.isArray(data.notes) || data.notes.length === 0) && Array.isArray(meta.notes) && meta.notes.length) { data.notes = meta.notes; changed = true; }
+        } else if (!sc.exists) {
+            noMeta++;
+        }
+
+        if (!changed) { unchanged++; continue; }
+        try {
+            if (typeof writeSidecar === 'function') await writeSidecar(currentHandle, sidecarName, data);
+            else {
+                const fh = await currentHandle.getFileHandle(sidecarName, { create: true });
+                const w = await fh.createWritable(); await w.write(JSON.stringify(data, null, 2)); await w.close();
+                currentJsonFiles.add(sidecarName);
+            }
+            if (sc.exists) updated++; else created++;
+        } catch (e) { console.error('Batch JSON failed for', sidecarName, e); }
+    }
+
+    updateGridCounters();
+    const parts = [`${created} created`, `${updated} updated`, `${unchanged} already complete`];
+    if (noMeta) parts.push(`${noMeta} without image metadata (empty JSON created)`);
+    if (invalid) parts.push(`${invalid} invalid JSON(s) left untouched`);
+    showAlert(`✅ Batch JSON: ${parts.join(' · ')}.`, invalid ? 'warn' : 'success');
 }
 
 /* ================================================================
@@ -421,12 +472,43 @@ async function loadSelectedDirectory() {
     }
 }
 
+/* Opções de subpasta: nomes de pasta entram como texto (não HTML) e sem
+   innerHTML += em loop (que reconstruía o <select> inteiro a cada nome). */
+function _fillFolderOptions(sel, names) {
+    const frag = document.createDocumentFragment();
+    names.sort((a, b) => a.localeCompare(b)).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        frag.appendChild(opt);
+    });
+    sel.appendChild(frag);
+}
+function _setHeaderOption(sel, text) {
+    sel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = text;
+    sel.appendChild(opt);
+}
+
+/* As URLs de miniatura (createObjectURL) da pasta anterior nunca eram
+   liberadas — a cada troca de pasta a memória só crescia. */
+function _resetCurrentFiles() {
+    // Miniaturas leves (tools/thumb_loader.js) da pasta anterior também saem da RAM.
+    if (window.ThumbLoader) window.ThumbLoader.clear();
+    const main = document.getElementById('main-image');
+    if (main) main.removeAttribute('src');
+    currentFiles.forEach(f => { try { URL.revokeObjectURL(f.url); } catch (e) {} });
+    currentFiles = [];
+    const strip = document.getElementById('thumbnail-strip');
+    if (strip) strip.innerHTML = '';
+}
+
 // --- LOAD LEVEL 1 (ROOT) ---
 async function loadGallery(dirHandle) {
     currentPage = 1;
     rootHandle = dirHandle; 
     currentHandle = dirHandle; 
-    currentFiles = [];
+    _resetCurrentFiles();
     currentJsonFiles.clear();
     
     document.getElementById('btn-remove').style.display = 'inline-block';
@@ -465,16 +547,16 @@ async function loadGallery(dirHandle) {
     
     if (sub1Handles.size > 0) {
         sel1.style.display = 'inline-block';
-        sel1.innerHTML = '<option value="">-- Root --</option>';
-        for (let name of Array.from(sub1Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-            sel1.innerHTML += `<option value="${name}">${name}</option>`;
-        }
+        _setHeaderOption(sel1, '-- Root --');
+        _fillFolderOptions(sel1, Array.from(sub1Handles.keys()));
     }
 
-    if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
+    // Índices da pasta ANTES do auto-rename: assim o rename atualiza tags, grupos e
+    // contagens desta pasta (antes atualizava os da pasta anterior, ainda em memória).
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
     if (typeof loadMergeGroupsIndex === 'function') await loadMergeGroupsIndex(currentHandle);
     if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
+    if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
 }
@@ -493,25 +575,25 @@ window.loadSubDir1 = async function() {
     currentHandle = sub1Handles.get(val);
     sub2Handles.clear();
     sel2.style.display = 'none';
-    sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
+    _setHeaderOption(sel2, `-- [ ${val} ] --`);
 
     showAlert('Reading subfolders... please wait.', 'info');
-    currentFiles = [];
+    _resetCurrentFiles();
     currentJsonFiles.clear();
     
     await scanFlattened(currentHandle, "", true, 0);
 
     if (sub2Handles.size > 0) {
         sel2.style.display = 'inline-block';
-        for (let path of Array.from(sub2Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-            sel2.innerHTML += `<option value="${path}">${path}</option>`;
-        }
+        _fillFolderOptions(sel2, Array.from(sub2Handles.keys()));
     }
 
-    if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
+    // Índices da pasta ANTES do auto-rename: assim o rename atualiza tags, grupos e
+    // contagens desta pasta (antes atualizava os da pasta anterior, ainda em memória).
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
     if (typeof loadMergeGroupsIndex === 'function') await loadMergeGroupsIndex(currentHandle);
     if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
+    if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
     showAlert(null); 
@@ -524,13 +606,15 @@ window.loadSubDir2 = async function() {
 
     if (!val) {
         const val1 = document.getElementById('sub-dir-1').value;
+        if (!val1) { await loadGallery(rootHandle); return; }
         currentHandle = sub1Handles.get(val1);
     } else {
         currentHandle = sub2Handles.get(val);
     }
+    if (!currentHandle) { await loadGallery(rootHandle); return; }
 
     showAlert('Loading images...', 'info');
-    currentFiles = [];
+    _resetCurrentFiles();
     currentJsonFiles.clear();
     
     for await (const entry of currentHandle.values()) {
@@ -545,10 +629,12 @@ window.loadSubDir2 = async function() {
         }
     }
 
-    if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
+    // Índices da pasta ANTES do auto-rename: assim o rename atualiza tags, grupos e
+    // contagens desta pasta (antes atualizava os da pasta anterior, ainda em memória).
     if (typeof loadTagsIndex === 'function') await loadTagsIndex(currentHandle);
     if (typeof loadMergeGroupsIndex === 'function') await loadMergeGroupsIndex(currentHandle);
     if (typeof loadViewCountsIndex === 'function') await loadViewCountsIndex(currentHandle);
+    if (typeof autoRenameNewFiles === 'function') await autoRenameNewFiles(currentHandle);
     if (typeof updateViewCountButtonsVisibility === 'function') updateViewCountButtonsVisibility();
     renderGrid(); backToGrid();
     showAlert(null);
@@ -630,7 +716,10 @@ function renderGrid() {
         wrapper.className = 'grid-item-wrapper';
 
         const img = document.createElement('img');
-        img.src = fileItem.url; img.className = 'grid-item'; img.dataset.filename = fileItem.name; 
+        img.decoding = 'async';
+        img.className = 'grid-item'; img.dataset.filename = fileItem.name;
+        // Miniatura reduzida (não a imagem original decodificada) — tools/thumb_loader.js
+        if (window.ThumbLoader) window.ThumbLoader.attach(img, fileItem.url); else img.src = fileItem.url;
         
         const label = document.createElement('div');
         label.className = 'grid-item-label';
@@ -810,14 +899,16 @@ async function openDetailView(url, fileName) {
             if (term !== '' && !fileItem.name.toLowerCase().includes(term)) return;
             
             const img = document.createElement('img'); 
-            img.src = fileItem.url; img.className = 'thumb'; 
+            img.decoding = 'async';
+            img.className = 'thumb';
+            if (window.ThumbLoader) window.ThumbLoader.attach(img, fileItem.url, { root: strip }); else img.src = fileItem.url;
             if (fileItem.url === url) img.classList.add('active'); 
             img.onclick = () => openDetailView(fileItem.url, fileItem.name); 
             strip.appendChild(img);
         });
     } else {
         Array.from(strip.children).forEach(img => {
-            if (img.src === url) {
+            if ((img.dataset.full || img.src) === url) {
                 img.classList.add('active');
                 img.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
             } else {

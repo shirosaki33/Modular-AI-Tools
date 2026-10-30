@@ -134,6 +134,22 @@
         });
     }
 
+    /* Clique de seleção na Active Image não recria a lista (só troca a classe
+       .selected-active) — então as cores inline precisam ser refeitas aqui. */
+    function refreshActiveSelectionStyles() {
+        const c = document.getElementById('tag-list-vertical');
+        if (!c) return;
+        c.querySelectorAll('.tag-row').forEach(el => {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('border-left-color');
+            el.style.removeProperty('box-shadow');
+            const hl = window._tagHighlightMap && window._tagHighlightMap.get(el.getAttribute('data-tag-name'));
+            if (hl && el.querySelector('.tag-hl-icon')) { el.style.backgroundColor = hexToRgba(hl.color, 0.16); el.style.borderLeft = `3px solid ${hl.color}`; }
+        });
+        applyBuiltinHighlightOverrides(c);
+    }
+    if (window.TM && window.TM.on) window.TM.on('selection:active', refreshActiveSelectionStyles);
+
     window.RulesUI.wrapRenderersForHighlights = function() {
         const hasRegistry = typeof window.registerPostRenderEditor === 'function' && typeof window.registerPostRenderMasterTagList === 'function' && typeof window.registerPostRenderImageList === 'function';
         if (hasRegistry) {

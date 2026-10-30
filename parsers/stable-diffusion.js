@@ -143,7 +143,8 @@
 
     function detectCheckpoint(text) {
         const raw = String(text || '');
-        const v = grab(raw, /(?:Model|Checkpoint):\s*([^,\n]+)/i);
+        // Anchored to a field start so "VAE Model:", "Upscale Model:" etc. never win.
+        const v = grab(raw, /(?:^|[,\n])\s*(?:Model|Checkpoint):\s*([^,\n]+)/i);
         return cleanName(v);
     }
 
@@ -186,9 +187,10 @@
         const neg = cleanPrompt(grab(clean, /Negative prompt:\s*(.*?)(Steps:|Sampler:|CFG scale:|Seed:|Size:|$)/is));
 
         // --- Generation params ---
-        const steps     = grab(raw, /Steps:\s*([^,\n]+)/i);
+        // Anchored: "Hires steps:" must not be read as Steps.
+        const steps     = grab(raw, /(?:^|[,\n])\s*Steps:\s*([^,\n]+)/i);
         const cfg        = grab(raw, /CFG scale:\s*([^,\n]+)/i);
-        const seed       = grab(raw, /Seed:\s*([^,\n]+)/i);
+        const seed       = grab(raw, /(?:^|[,\n])\s*Seed:\s*([^,\n]+)/i);
         const sampler    = grab(raw, /Sampler:\s*([^,\n]+)/i);
         const scheduler  = (grab(raw, /Schedule type:\s*([^,\n]+)/i).trim() ||
                             grab(raw, /Scheduler:\s*([^,\n]+)/i).trim()     ||
@@ -208,7 +210,7 @@
         const upscalerFall   = grab(raw, /Upscaler:\s*([^,\n]+)/i);
         
         // ADDED: Extract VAE and Clip Skip
-        const vae            = grab(raw, /VAE:\s*([^,\n]+)/i);
+        const vae            = grab(raw, /(?:^|[,\n])\s*VAE:\s*([^,\n]+)/i);
         const clipSkip       = grab(raw, /Clip skip:\s*([^,\n]+)/i);
 
         // --- LoRAs ---

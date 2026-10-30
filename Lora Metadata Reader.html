@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en-US">
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -594,20 +594,9 @@ async function readHeader(file) {
 	return parsed.__metadata__ || {};
 }
 
-async function computeSHA256(file, onProgress) {
-	const reader = file.stream().getReader();
-	const chunks = []; let loaded = 0;
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		chunks.push(value); loaded += value.byteLength;
-		if (onProgress) onProgress(loaded / file.size);
-	}
-	const full = new Uint8Array(loaded); let pos = 0;
-	for (const c of chunks) { full.set(c, pos); pos += c.byteLength; }
-	const digest = await crypto.subtle.digest('SHA-256', full);
-	return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2,'0')).join('');
-}
+// SHA-256 (nativo ou em streaming para arquivos grandes) vive em
+// tools/lora_meta_reader.js — compartilhado com o Lora Evaluate.
+const computeSHA256 = (file, onProgress) => window.loraSha256(file, onProgress);
 
 const META_HASH_KEYS = ['sshs_model_hash', 'sha256_autov2', 'sha256_autov3', 'sha256', 'blake3', 'hash', 'model hash'];
 async function tryHashOnCivitai(hashValue) {
@@ -734,6 +723,17 @@ async function strictNameSearch(name) {
 	return null;
 }
 
+// models/{id} era buscado 2× por arquivo (aviso de versão nova + criador/descrição).
+const _modelFetchCache = new Map();
+function fetchModelOnce(modelId) {
+	if (!_modelFetchCache.has(modelId)) {
+		_modelFetchCache.set(modelId, fetch(API + 'models/' + modelId, { signal: AbortSignal.timeout(8000) })
+			.then(r => r.ok ? r.json() : null).catch(() => null)
+			.then(d => { if (!d) _modelFetchCache.delete(modelId); return d; }));
+	}
+	return _modelFetchCache.get(modelId);
+}
+
 async function applyVersion(ver, loadId = currentLoadId, matchedHash = null) {
 	if (isStaleLoad(loadId)) return;
 	const modelName = ver.model?.name || ver.name || currentLoraName;
@@ -745,15 +745,11 @@ async function applyVersion(ver, loadId = currentLoadId, matchedHash = null) {
 		try {
 			if (isStaleLoad(loadId)) return;
 			if (ver.modelId) {
-				const mr = await fetch(API + 'models/' + ver.modelId, { signal: AbortSignal.timeout(8000) });
-				if (isStaleLoad(loadId)) return;
-				if (mr.ok) {
-					const md = await mr.json();
-					if (isStaleLoad(loadId)) return;
-					const versions = md.modelVersions || [];
-					if (versions.length > 0 && versions[0].id !== ver.id) {
-						showOutdatedBanner();
-					}
+				const md = await fetchModelOnce(ver.modelId);
+				if (isStaleLoad(loadId) || !md) return;
+				const versions = md.modelVersions || [];
+				if (versions.length > 0 && versions[0].id !== ver.id) {
+					showOutdatedBanner();
 				}
 			}
 		} catch { }
@@ -770,10 +766,9 @@ async function applyVersion(ver, loadId = currentLoadId, matchedHash = null) {
 	
 	if (ver.modelId && (!creatorName || !ver._modelDescription)) {
 		try {
-			const mr = await fetch(API + 'models/' + ver.modelId, { signal: AbortSignal.timeout(8000) });
+			const md = await fetchModelOnce(ver.modelId);
 			if (isStaleLoad(loadId)) return;
-			if (mr.ok) {
-				const md = await mr.json();
+			if (md) {
 				if (!creatorName) {
 					creatorName = md.creator?.username || '';
 					creatorImg  = md.creator?.image    || '';

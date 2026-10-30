@@ -2,73 +2,21 @@
    REVIEW MODE — TAGS NÃO CONFIRMADAS PELO TAGGER (🚫 ghost tag vermelha)
    ---------------------------------------------------------------------
    Complementa o Review Mode do Batch Tagger.
-   CORREÇÃO (anterior):
-   - Previne duplicação visual limpando resíduos antes de injetar.
-   - Vincula o botão "Discard Suggestions" para limpar também esta lista.
 
-   ---------------------------------------------------------------------
-   FIX (dataset "não carregando" ao trocar de pasta — precisando de F5):
-   window.loadGallery / loadSubDir1 / loadSubDir2 / loadSubDir3 (em
-   tagmanager_ui_core.js) chamam:
-
-       await window.loadDatasetConfig(dirHandle);
-       await window.loadPendingTagsStore(dirHandle);
-
-   SEM nenhum try/catch ao redor. Se essa segunda chamada lançar uma
-   exceção não capturada, TODO o resto da função para ali — o reset de
-   imageFiles, a varredura da pasta e o window.finishLoading() nunca
-   rodam, e a lista da esquerda fica vazia até dar F5.
-
-   Este arquivo SUBSTITUI window.loadPendingTagsStore (pra também
-   carregar o "_pending_remove.json") e window.savePendingTagsStore. A
-   versão antiga já tinha try/catch na parte de ler/escrever o arquivo,
-   mas NÃO protegia a chamada ao loader/saver ORIGINAL (origLoad/
-   origSave) — se ele lançasse algo inesperado (por exemplo, por causa
-   de outro wrap futuro, um handle instável durante troca rápida de
-   pasta, ou uma permissão momentaneamente negada), a exceção escapava
-   do wrapper inteiro e derrubava o carregamento do dataset, de forma
-   intermitente.
-
-   Agora as duas funções NUNCA lançam exceção — tanto a chamada ao
-   original quanto a leitura/escrita do "_pending_remove.json" estão
-   protegidas. Trocar de dataset não deve mais travar por causa deste
-   módulo, mesmo em condições adversas.
-
-   Os wraps de fallback (usados só se tagmanager_render_hooks.js não
-   tiver carregado) também ganharam try/catch, pelo mesmo motivo: uma
-   falha aqui não pode derrubar renderImageList/renderEditor/
-   renderMasterTagList inteiros.
-
-   FIX (discardAllSuggestions não aguardado): o wrapper deste botão
-   sobrescrevia window.discardAllSuggestions (que é `async`) com uma
-   função SÍNCRONA que não dava `await` na chamada original — o array
-   pendingRemove podia ser zerado e a UI re-renderizada ANTES do
-   discard original (que salva em disco) realmente terminar. Agora o
-   wrapper também é `async` e aguarda corretamente.
-
-   ---------------------------------------------------------------------
-   NOVO (seleção das tags fantasmas vermelhas em "All Dataset Tags"):
-   Antes, o "🚫 Not Detected by Tagger" só tinha ✓ (aceitar/remover de
-   vez) e ✖ (dispensar o aviso). Não dava pra clicar numa dessas tags e
-   ver EM QUAIS imagens ela está pendente de remoção — diferente das
-   tags fantasmas verdes (💡 pendingAdd), que já suportavam isso via
-   masterSelectedGhostTags + AND/OR/XOR/NOT.
-
-   Agora cada linha vermelha em All Dataset Tags é clicável (shift/ctrl
-   funcionam igual ao resto do app) e entra em
-   window.masterSelectedPendingRemove. Com pelo menos 1 tag vermelha
-   selecionada, apertar AND/OR/XOR/NOT na barra de lógica filtra a
-   lista "Dataset" pra mostrar só as imagens que têm aquela(s) tag(s)
-   em img.pendingRemove — mesmo mecanismo já usado pelas tags verdes,
-   só que aplicado depois (via wrap de window.applyFilters), sem
-   precisar tocar em tagmanager_master_list.js.
+   - Substitui window.loadPendingTagsStore / savePendingTagsStore para
+     também ler/gravar "_pending_remove.json". As duas NUNCA lançam
+     exceção (senão loadGallery/loadSubDirN parariam no meio e a lista
+     ficaria vazia até F5).
+   - Linhas vermelhas em All Dataset Tags são selecionáveis
+     (window.masterSelectedPendingRemove); com AND/OR/XOR/NOT ativo, a
+     lista "Dataset" é filtrada por img.pendingRemove (wrap de applyFilters).
+   - O descarte de sugestões (💡 + 🚫) é feito direto em
+     discardAllSuggestions / discardActiveSuggestions (tagmanager_ui_core.js).
+   - Nomes de tag entram no HTML como texto puro (textContent).
 ========================================================================= */
 
 (function () {
     window.pendingRemoveStore = window.pendingRemoveStore || {};
-
-    // Seleção das tags fantasmas VERMELHAS (only All Dataset Tags — a Active
-    // Image já mostra só a imagem atual, não faz sentido "filtrar" ali).
     window.masterSelectedPendingRemove = window.masterSelectedPendingRemove || new Set();
     let _lastSelectedPendingRemoveIndex = 0;
 
@@ -87,7 +35,6 @@
             color: #ff8080 !important;
             font-style: italic;
         }
-        /* Linhas vermelhas selecionáveis (só All Dataset Tags) */
         .master-tag-item.tag-ghost-remove.ghost-remove-selectable { cursor: pointer; }
         .master-tag-item.tag-ghost-remove.selected-master {
             background: rgba(77, 184, 255, 0.18) !important;
@@ -104,14 +51,10 @@
         if (typeof window.loadPendingTagsStore === 'function' && !window.loadPendingTagsStore.__pendingRemoveWrapped) {
             const origLoad = window.loadPendingTagsStore;
             const wrappedLoad = async function (dirHandle) {
-                // Blindagem: mesmo que o loader original lance algo inesperado,
-                // isso NÃO pode derrubar window.loadGallery/loadSubDirN (que
-                // chamam esta função sem try/catch próprio) — senão o dataset
-                // fica com a lista vazia até dar F5.
                 try {
                     await origLoad(dirHandle);
                 } catch (e) {
-                    console.warn('[Review Mode] loadPendingTagsStore (original) falhou, seguindo em frente:', e);
+                    console.warn('[Review Mode] loadPendingTagsStore (original) failed, continuing:', e);
                 }
 
                 window.pendingRemoveStore = {};
@@ -121,9 +64,7 @@
                     const file = await h.getFile();
                     window.pendingRemoveStore = JSON.parse(await file.text());
                 } catch (e) {
-                    // Arquivo não existe, corrompido, ou handle sem permissão
-                    // momentânea — não é motivo pra travar o carregamento do
-                    // dataset. pendingRemoveStore já foi resetado para {} acima.
+                    // Arquivo não existe / corrompido / sem permissão — não trava o carregamento.
                 }
             };
             wrappedLoad.__pendingRemoveWrapped = true;
@@ -136,7 +77,7 @@
                 try {
                     await origSave(dirHandle);
                 } catch (e) {
-                    console.warn('[Review Mode] savePendingTagsStore (original) falhou, seguindo em frente:', e);
+                    console.warn('[Review Mode] savePendingTagsStore (original) failed, continuing:', e);
                 }
 
                 if (!dirHandle) return;
@@ -153,7 +94,7 @@
                     await writable.write(JSON.stringify(window.pendingRemoveStore, null, 2));
                     await writable.close();
                 } catch (e) {
-                    console.warn('[Review Mode] Falha ao salvar _pending_remove.json:', e);
+                    console.warn('[Review Mode] Could not save _pending_remove.json:', e);
                 }
             };
             wrappedSave.__pendingRemoveWrapped = true;
@@ -166,21 +107,14 @@
         if (typeof window.savePendingTagsStore === 'function' && handle) window.savePendingTagsStore(handle);
     }
 
-    // Zera a seleção vermelha sempre que o dataset muda (mesmo padrão usado
-    // em vários outros arquivos pra detectar troca via nova referência de
-    // window.imageFiles) — senão uma tag selecionada "sobrevive" pra um
-    // dataset novo onde ela nem existe mais.
-    let _lastImageFilesRefPendingRemoveSelect = null;
+    // Zera a seleção vermelha sempre que o dataset muda (evento do hub).
     function syncPendingRemoveSelectionOnDatasetChange() {
-        if (typeof imageFiles === 'undefined') return;
-        if (imageFiles === _lastImageFilesRefPendingRemoveSelect) return;
-        _lastImageFilesRefPendingRemoveSelect = imageFiles;
         if (window.masterSelectedPendingRemove.size > 0) window.masterSelectedPendingRemove.clear();
     }
+    if (window.TM && window.TM.on) window.TM.on('dataset:loaded', syncPendingRemoveSelectionOnDatasetChange);
 
     function attachPendingRemoveFlags() {
         if (typeof imageFiles === 'undefined') return;
-        syncPendingRemoveSelectionOnDatasetChange();
         imageFiles.forEach(img => {
             if (img.pendingRemove === undefined) {
                 img.pendingRemove = (window.pendingRemoveStore && window.pendingRemoveStore[img.baseName])
@@ -188,6 +122,10 @@
                     : [];
             }
         });
+    }
+
+    function splitTags(content) {
+        return content ? content.split(',').map(t => t.trim()).filter(Boolean) : [];
     }
 
     /* ---------- LIMPEZA DA MARCAÇÃO ---------- */
@@ -255,9 +193,7 @@
         const fusedTags = new Set();
         selectedIndices.forEach(idx => {
             const img = imageFiles[idx];
-            if (img && img.type === 'tags' && img.content) {
-                img.content.split(',').forEach(t => { const c = t.trim(); if (c) fusedTags.add(c); });
-            }
+            if (img) splitTags(img.content).forEach(c => fusedTags.add(c));
         });
         const fusedRemove = new Set();
         selectedIndices.forEach(idx => {
@@ -274,9 +210,7 @@
         const counts = new Map();
         imageFiles.forEach(img => {
             if (img.hidden || !img.pendingRemove || !img.pendingRemove.length) return;
-            const currentTags = (img.type === 'tags' && img.content)
-                ? new Set(img.content.split(',').map(t => t.trim()))
-                : new Set();
+            const currentTags = new Set(splitTags(img.content));
             img.pendingRemove.forEach(t => { if (currentTags.has(t)) counts.set(t, (counts.get(t) || 0) + 1); });
         });
         return counts;
@@ -297,8 +231,6 @@
 
     function acceptPendingRemoveGlobal(tag) {
         if (typeof window.globalRemoveTags === 'function') window.globalRemoveTags([tag]);
-        // A tag já sumiu de todo mundo — não faz mais sentido continuar
-        // "selecionada" pra filtro.
         window.masterSelectedPendingRemove.delete(tag);
         persistPendingRemove();
     }
@@ -311,10 +243,7 @@
         if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
     }
 
-    /* ---------- SELEÇÃO DAS TAGS VERMELHAS (só All Dataset Tags) ----------
-       Mesmo padrão de clique (shift = intervalo, ctrl/cmd = toggle avulso,
-       clique simples = seleciona só essa/desmarca se já era a única) usado
-       pelas tags verdes (masterSelectedGhostTags) e por todo o resto do app. */
+    /* ---------- SELEÇÃO DAS TAGS VERMELHAS (só All Dataset Tags) ---------- */
     function togglePendingRemoveSelection(tag, index, sortedTags, e) {
         if (e.shiftKey && window.masterSelectedPendingRemove.size > 0) {
             const start = Math.min(_lastSelectedPendingRemoveIndex, index), end = Math.max(_lastSelectedPendingRemoveIndex, index);
@@ -345,20 +274,17 @@
         const leftWrapClass = isMaster ? '' : 'tag-row-left';
 
         row.innerHTML = `<div class="${leftWrapClass}" style="display:flex; align-items:center; overflow:hidden; flex:1;">
-                ${countHtml}<span class="tag-name">${tag}</span>
+                ${countHtml}<span class="tag-name"></span>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span class="tag-ghost-accept" title="Remove this tag">✓</span>
                 <span class="tag-ghost-reject" title="Dismiss — keep the tag as is" style="color: #ff4444; cursor: pointer; font-size: 1.2em; font-weight: bold;">&times;</span>
             </div>`;
+        row.querySelector('.tag-name').textContent = tag;
 
         row.querySelector('.tag-ghost-accept').onclick = (e) => { e.stopPropagation(); onAccept(); };
         row.querySelector('.tag-ghost-reject').onclick = (e) => { e.stopPropagation(); onReject(); };
 
-        // Seleção — só em All Dataset Tags. Clicar mostra em quais imagens
-        // essa tag está pendente de remoção: use os botões AND/OR/XOR/NOT da
-        // barra de lógica (com pelo menos 1 tag vermelha selecionada) pra
-        // filtrar a lista "Dataset" por img.pendingRemove.
         if (isMaster) {
             row.classList.add('ghost-remove-selectable');
             row.classList.toggle('selected-master', window.masterSelectedPendingRemove.has(tag));
@@ -379,15 +305,13 @@
         const container = document.getElementById('tag-list-vertical');
         if (!container) return;
 
-        // PREVENÇÃO DE DUPLICATAS: Limpa qualquer seção fantasma vermelha remanescente
-        const existing = container.querySelectorAll('.ghost-section-remove-label, .tag-ghost-remove');
-        existing.forEach(el => el.remove());
+        container.querySelectorAll('.ghost-section-remove-label, .tag-ghost-remove').forEach(el => el.remove());
 
         const tags = computeFusedPendingRemoveActive();
         if (tags.length === 0) return;
 
         const label = document.createElement('div');
-        label.className = 'ghost-section-label ghost-section-remove-label'; // Adicionada classe única
+        label.className = 'ghost-section-label ghost-section-remove-label';
         label.style.color = '#ff6060';
         label.textContent = '🚫 Not Detected by Tagger';
         container.appendChild(label);
@@ -405,9 +329,7 @@
         const container = document.getElementById('master-tag-list');
         if (!container) return;
 
-        // PREVENÇÃO DE DUPLICATAS
-        const existing = container.querySelectorAll('.ghost-section-remove-label, .tag-ghost-remove');
-        existing.forEach(el => el.remove());
+        container.querySelectorAll('.ghost-section-remove-label, .tag-ghost-remove').forEach(el => el.remove());
 
         if (!window.showGhostTagsInList) return;
 
@@ -422,8 +344,6 @@
 
         const sortedTags = Array.from(counts.keys()).sort();
 
-        // Uma tag pode ter sido removida do dataset entre um render e outro —
-        // limpa da seleção pra não ficar "presa" filtrando por algo inexistente.
         Array.from(window.masterSelectedPendingRemove).forEach(t => {
             if (!sortedTags.includes(t)) window.masterSelectedPendingRemove.delete(t);
         });
@@ -437,12 +357,7 @@
         });
     }
 
-    /* ---------- FILTRO DA LISTA "DATASET" PELAS TAGS VERMELHAS SELECIONADAS ----------
-       Roda DEPOIS do window.applyFilters original (tagmanager_master_list.js),
-       só restringindo ainda mais quem já está visível. Segue o MESMO
-       comportamento das tags verdes: só filtra de fato quando um dos botões
-       AND/OR/XOR/NOT está ativo — sem isso, selecionar sozinho não esconde
-       nada (igual ao core já faz pra masterSelectedTags/masterSelectedGhostTags). */
+    /* ---------- FILTRO DA LISTA "DATASET" PELAS TAGS VERMELHAS SELECIONADAS ---------- */
     function applyPendingRemoveVisibilityFilter() {
         if (typeof imageFiles === 'undefined') return;
         const selected = window.masterSelectedPendingRemove;
@@ -453,7 +368,7 @@
 
         imageFiles.forEach(img => {
             if (!img.element) return;
-            if (img.element.style.display === 'none') return; // já escondida por outro filtro
+            if (img.element.style.display === 'none') return;
 
             const pending = img.pendingRemove || [];
             let matchCount = 0;
@@ -476,14 +391,14 @@
         const orig = window.applyFilters;
         const wrapped = function () {
             const result = orig.apply(this, arguments);
-            try { applyPendingRemoveVisibilityFilter(); } catch (e) { console.warn('[Review Mode] applyPendingRemoveVisibilityFilter falhou:', e); }
+            try { applyPendingRemoveVisibilityFilter(); } catch (e) { console.warn('[Review Mode] applyPendingRemoveVisibilityFilter failed:', e); }
             return result;
         };
         wrapped.__pendingRemoveFilterWrapped = true;
         window.applyFilters = wrapped;
     }
 
-    /* ---------- HOOKS E BOTÃO DE DISCARD ---------- */
+    /* ---------- HOOKS ---------- */
     function installSuggestVisibilityOverride() {
         if (typeof window.updateSuggestFilterVisibility !== 'function' || window.updateSuggestFilterVisibility.__pendingRemoveOverridden) return;
         window.updateSuggestFilterVisibility = function () {
@@ -504,17 +419,11 @@
                 }
                 btn.style.display = anyPending ? 'inline-flex' : 'none';
             }
-
-            // AGORA MOSTRA O BOTÃO DE DISCARD SE HOUVER *QUALQUER* PENDÊNCIA (verde ou vermelha)
+            // Botão de discard aparece com QUALQUER pendência (verde ou vermelha).
             if (discardBtn) discardBtn.style.display = anyPending ? 'inline-flex' : 'none';
         };
         window.updateSuggestFilterVisibility.__pendingRemoveOverridden = true;
     }
-
-    // O descarte de sugestões (verdes 💡 + vermelhas 🚫) agora é feito de uma vez só
-    // direto em window.discardAllSuggestions / discardActiveSuggestions (tagmanager_ui_core.js).
-    // Mantido como no-op para não quebrar a chamada abaixo.
-    function installDiscardSuggestionsWrap() {}
 
     function installRenderHooks() {
         if (typeof window.registerPostRenderImageList === 'function') {
@@ -523,7 +432,7 @@
             const orig = window.renderImageList;
             const wrapped = function () {
                 orig.apply(this, arguments);
-                try { attachPendingRemoveFlags(); } catch (e) { console.warn('[Review Mode] attachPendingRemoveFlags falhou:', e); }
+                try { attachPendingRemoveFlags(); } catch (e) { console.warn('[Review Mode] attachPendingRemoveFlags failed:', e); }
             };
             wrapped.__pendingRemoveWrapped = true;
             window.renderImageList = wrapped;
@@ -535,7 +444,7 @@
             const orig2 = window.renderEditor;
             const wrapped2 = function () {
                 orig2.apply(this, arguments);
-                try { injectActiveGhostRemoveSection(); } catch (e) { console.warn('[Review Mode] injectActiveGhostRemoveSection falhou:', e); }
+                try { injectActiveGhostRemoveSection(); } catch (e) { console.warn('[Review Mode] injectActiveGhostRemoveSection failed:', e); }
             };
             wrapped2.__pendingRemoveWrapped = true;
             window.renderEditor = wrapped2;
@@ -547,7 +456,7 @@
             const orig3 = window.renderMasterTagList;
             const wrapped3 = function () {
                 orig3.apply(this, arguments);
-                try { injectMasterGhostRemoveSection(); } catch (e) { console.warn('[Review Mode] injectMasterGhostRemoveSection falhou:', e); }
+                try { injectMasterGhostRemoveSection(); } catch (e) { console.warn('[Review Mode] injectMasterGhostRemoveSection failed:', e); }
             };
             wrapped3.__pendingRemoveWrapped = true;
             window.renderMasterTagList = wrapped3;
@@ -558,8 +467,7 @@
         installStoreWraps();
         installRemovalCleanupWraps();
         installSuggestVisibilityOverride();
-        installDiscardSuggestionsWrap(); // Hook do botão de lixeira adicionado
         installRenderHooks();
-        installPendingRemoveFilterWrap(); // NOVO: filtro por seleção das tags vermelhas
+        installPendingRemoveFilterWrap();
     });
 })();

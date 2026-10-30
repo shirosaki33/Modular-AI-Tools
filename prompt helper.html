@@ -1,25 +1,25 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Prompt Helper</title>
-    
+
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
-    
+
     <style>
         :root { --editor-font-size: 13px; }
 
         body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: Arial, Helvetica, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        
+
         #topbar { background: #1b1b1b; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #222; z-index: 20; flex-shrink: 0; }
         .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
         .topbar-section.left { justify-content: flex-start; }
         .topbar-section.center { justify-content: center; text-align: center; }
         .topbar-section.right { justify-content: flex-end; }
-        
+
         #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
-        
+
         button, select, input[type="text"], input[type="password"], input[type="number"], textarea {
             background: #333; color: #fff; border: 1px solid #444; padding: 8px 12px; border-radius: 6px;
             font-family: inherit; font-size: 12px; font-weight: bold; outline: none; transition: 0.15s;
@@ -27,12 +27,12 @@
         button { cursor: pointer; border: none; }
         button:hover { background: #00aa66; color: #000; }
         select:focus, input:focus, textarea:focus { border-color: #00aa66; }
-        
+
         #workspace { display: flex; flex: 1; overflow: hidden; position: relative; padding: 15px; gap: 14px; box-sizing: border-box; }
 
         .panel { background: #1b1b1b; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #222; flex: 1; min-width: 0; }
         .panel-header { background: #222; padding: 10px 15px; font-size: 13px; font-weight: bold; color: #aaa; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-        
+
         #col-left { flex: 0 0 42%; max-width: 520px; }
         #col-right { flex: 1; min-width: 320px; }
 
@@ -147,7 +147,7 @@
         .footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
         .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
 
-        
+
         .lang-row .lang-label { font-size: 11px; color: #888; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; }
         .btn-lang-translate { background: #00aa66; color: #000; padding: 8px 14px; }
         .btn-lang-translate:hover { background: #00ff99; }
@@ -157,6 +157,10 @@
         .btn-fix { background: #2f1a5c; color: #b890ff; border: 1px solid #4a2a8c; }
         .btn-fix:hover { background: #b890ff; color: #000; }
         .btn-fix:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Image → Prompt tab: label style for the .fl-row rows (the rest of its CSS lives in prompt_helper_florence.js) */
+        .fl-row .lang-label { font-size: 11px; color: #888; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; }
+        .fl-row input[type="text"] { min-width: 0; }
         </style>
 </head>
 <body>
@@ -215,6 +219,7 @@
         <div class="tabs">
             <button class="tab-btn active" data-tab="google">🌐 Google Translate</button>
             <button class="tab-btn" data-tab="ollama">🦙 Ollama Translate</button>
+            <button class="tab-btn" data-tab="florence">🖼️ Image → Prompt</button>
         </div>
 
         <div class="tab-pane active" id="tab-google">
@@ -319,6 +324,76 @@
             </div>
             <div class="status-line" id="oStatus">Ollama must be running locally. Models that follow instructions work best (llama3, qwen2.5, mistral, gemma2...).</div>
         </div>
+
+        <!-- Image → Prompt. Everything below is driven by prompt_helper_florence.js (core)
+             + engine files: _webgpu.js / _onnx.js (browser, any origin) / _pytorch.js (localhost only). -->
+        <div class="tab-pane" id="tab-florence">
+            <div class="fl-box">
+                <div class="fl-row">
+                    <span class="cache-badge" id="fStorageBadge">…</span>
+                    <span class="status-line" id="fStorageText" style="flex:1; min-width:180px;"></span>
+                </div>
+                <div class="status-line" id="fModelStatus"></div>
+            </div>
+            <div class="fl-row" id="fModeRow">
+                <span class="lang-label">Mode</span>
+                <select id="fMode" title="WebGPU / ONNX run in the browser. PyTorch runs in the local Python server (localhost only)."></select>
+            </div>
+            <div class="fl-row" id="fStorageRow">
+                <span class="lang-label" id="fStorageLabel">Storage</span>
+                <select id="fStorage" title="Where the model files are saved and searched">
+                    <option value="auto">Auto (models/ folder on localhost, else browser cache)</option>
+                </select>
+                <button class="btn-secondary" id="fPickFolder" style="display:none;" title="Add a folder with models (WebGPU: org/model/onnx/...; ONNX / PyTorch: any folder with models)">📁 Set model folder</button>
+            </div>
+            <div class="fl-row">
+                <span class="lang-label">Model</span>
+                <select id="fModel"></select>
+                <button class="btn-secondary" id="fUnload" style="white-space:nowrap;" title="Free the model from memory / VRAM (files stay on disk)">⏏ Unload from memory</button>
+                <button class="btn-secondary" id="fClearCache" style="white-space:nowrap;" title="Delete the downloaded files of the selected model">🧹 Delete downloaded model</button>
+                <span class="lang-label">Hardware</span>
+                <select id="fDevice"></select>
+                <span class="lang-label" id="fTaskLabel">Task</span>
+                <select id="fTask"></select>
+            </div>
+            <div class="fl-row" id="fTokensRow">
+                <span class="lang-label">Max tokens</span>
+                <input type="number" id="fMaxTokens" min="16" max="1024" step="16" value="256" style="width:80px;">
+                <span class="lang-label" id="fBeamsLabel">Beams</span>
+                <input type="number" id="fBeams" min="1" max="8" value="3" style="width:60px;">
+            </div>
+            <div class="fl-row" id="fTaggerRow" style="display:none;">
+                <span class="lang-label">Threshold</span>
+                <input type="number" id="fThreshold" min="0.01" max="0.99" step="0.01" value="0.35" style="width:70px;" title="Minimum confidence for a tag to be kept">
+            </div>
+            <div class="fl-row" id="fPromptRow" style="display:none;">
+                <span class="lang-label">Prompt</span>
+                <input type="text" id="fPrompt" style="flex:1;" placeholder="Describe this image in detail." title="Instruction sent to the model (SmolVLM and other chat-style models)">
+            </div>
+            <div class="fl-drop" id="fDrop">
+                <span id="fDropText">Click, drop or paste (Ctrl+V) an image here</span>
+                <img id="fPreview" alt="Preview">
+            </div>
+            <input type="file" id="fFile" accept="image/*" style="display:none;">
+            <div class="fl-progress" id="fProgressWrap"><div id="fProgressBar"></div></div>
+            <div class="status-line" id="fProgressText"></div>
+            <div class="action-row">
+                <button class="btn-translate" id="fGenerate">Generate prompt</button>
+                <button class="btn-secondary" id="fLoad" style="flex:0; white-space:nowrap;" title="Only download / load the model">Load model</button>
+                <button class="btn-secondary" id="fClearBtn" style="flex:0;">Clear</button>
+                <button id="fCancel" style="flex:0; white-space:nowrap;">⏹ Cancel</button>
+            </div>
+            <textarea id="fResult" placeholder="Result appears here..." readonly></textarea>
+            <div class="action-row">
+                <button class="btn-secondary" id="fCopy">📋 Copy</button>
+                <span class="lang-label" style="margin-left:8px;">Translate to</span>
+                <select id="fTransTo" style="flex:0;"><option value="pt">Portuguese</option><option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="it">Italian</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh-CN">Chinese (Simplified)</option><option value="ru">Russian</option></select>
+                <button class="btn-secondary" id="fTranslateBtn" style="white-space:nowrap;">🌐 Translate</button>
+                <button class="btn-secondary" id="fCopyTrans" style="white-space:nowrap;">📋 Copy translation</button>
+            </div>
+            <textarea id="fTranslation" placeholder="Translation appears here..." readonly></textarea>
+            <div class="status-line" id="fStatus"></div>
+        </div>
     </div>
 </div>
 
@@ -327,746 +402,27 @@
 </div>
 <div id="alertBar"></div>
 
-<!-- =====================================================================
-     MINIMAL SETTINGS + QUEUE LAYER  (replaces tagmanager_db.js)
-     Needed by the cores for getSetting / saveSetting / local write queue.
-     On localhost the cores prefer the real files under /local/ and the
-     /api/save_local_cache endpoint of the same server Tag Manager uses.
-===================================================================== -->
-<script>
-(function () {
-    const LS_PREFIX = 'ph_setting_';
-    window._settingsCache = window._settingsCache || {};
+<!-- ===================== SCRIPTS (order matters) ===================== -->
+<!-- 1) Minimal settings/alert/queue layer (replaces tagmanager_db.js) -->
+<script src="tools/prompt_helper_settings.js"></script>
 
-    window.getSetting = async function (key, defaultValue) {
-        if (window._settingsCache[key] !== undefined) return window._settingsCache[key];
-        try {
-            const raw = localStorage.getItem(LS_PREFIX + key);
-            if (raw !== null) {
-                const parsed = JSON.parse(raw);
-                window._settingsCache[key] = parsed;
-                return parsed;
-            }
-        } catch (e) {}
-        return defaultValue;
-    };
-
-    window.saveSetting = async function (key, value) {
-        window._settingsCache[key] = value;
-        try {
-            localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
-        } catch (e) {}
-    };
-
-    // Serialize local cache writes (same idea as tagmanager_db.js)
-    let _localWriteQueue = Promise.resolve();
-    window._queueLocalCacheWrite = function (fn) {
-        const run = () => Promise.resolve().then(fn).catch(e => console.warn('[local cache write]', e));
-        _localWriteQueue = _localWriteQueue.then(run, run);
-        return _localWriteQueue;
-    };
-
-    window.showAlert = function (msg, type = 'info') {
-        const bar = document.getElementById('alertBar');
-        if (!bar) return;
-        bar.className = type;
-        bar.textContent = msg;
-        bar.style.display = 'block';
-        clearTimeout(window._alertTimer);
-        window._alertTimer = setTimeout(() => { bar.style.display = 'none'; }, 3200);
-    };
-
-    // Defaults the cores expect
-    window.danbooruCache = window.danbooruCache || {};
-    window.e621Cache = window.e621Cache || {};
-    window.showE621 = true;
-    window.showE621Sfw = false;
-    window.aliasClickBehavior = 'replace';
-    window.e621AliasClickBehavior = 'replace';
-    window._danbooruCacheVersion = window._danbooruCacheVersion || 0;
-    window._e621CacheVersion = window._e621CacheVersion || 0;
-})();
-</script>
-
-<!-- Tag Manager cores: only used here as the shared cache layer (write-through).
-     Lookups themselves go straight to the sites so cached/"unknown" entries can never hide a real tag. -->
+<!-- 2) Tag Manager cores: shared cache layer (write-through only).
+     tagmanager_booru_core.js = implementação única usada pelos dois cores. -->
+<script src="tools/tagmanager_booru_core.js"></script>
 <script src="tools/tagmanager_danbooru_core.js"></script>
 <script src="tools/tagmanager_e621_core.js"></script>
 
-<script>
-/* =========================================================================
-   PROMPT HELPER UI — Danbooru + e621 are queried TOGETHER, API-first.
-   The shared cache is only updated AFTER a successful lookup, so a stale or
-   "unknown" cache entry can no longer hide a tag that really exists.
-========================================================================= */
-
-const SITES = {
-    danbooru: {
-        key: 'danbooru', name: 'Danbooru', icon: '🅱️', badge: 'db',
-        host: () => 'danbooru.donmai.us',
-        catColors: { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" },
-        catLabels: { 0: "General", 1: "Artist", 3: "Copyright", 4: "Character", 5: "Meta" }
-    },
-    e621: {
-        key: 'e621', name: 'e621', icon: '🦊', badge: 'e6',
-        host: () => (window.showE621Sfw ? 'e926.net' : 'e621.net'),
-        catColors: window.E621_CAT_COLORS || { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#4caf50", 6: "#888", 7: "#888", 8: "#ff8a65" },
-        catLabels: window.E621_CAT_LABELS || { 0: "General", 1: "Artist", 3: "Copyright", 4: "Character", 5: "Species", 6: "Invalid", 7: "Meta", 8: "Lore" }
-    }
-};
-
-const lastResults = { danbooru: null, e621: null };
-
-function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-/* ---------- DText -> HTML (same renderer as the Tag Manager's Tag Interrogator, host-aware) ---------- */
-function formatDText(text, host) {
-    if (!text) return "";
-    return text
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        .replace(/\[\s*\[\s*([^|\]]+?)\s*(?:\|\s*([^\]]+?))?\s*\]\s*\]/g, (m, tag, label) => {
-            const url = `https://${host}/wiki_pages/${encodeURIComponent(tag.replace(/ /g, '_'))}`;
-            return `<a href="${url}" target="_blank" style="color:#4db8ff; text-decoration:none; font-weight:bold;">${label || tag.replace(/_/g, ' ')}</a>`;
-        })
-        .replace(/(?:\[?\s*post\s*#|post:)\s*(\d+)\s*\]?/gi, `<a href="https://${host}/posts/$1" target="_blank" style="color:#00ff99; text-decoration:none; font-weight:bold; background:#0d2a18; padding:2px 6px; border-radius:4px; border:1px solid #00aa66; white-space:nowrap;">📸 IMG #$1</a>`)
-        .replace(/!?asset\s*#\d+/gi, '<span style="color:#888; font-style:italic; font-weight:bold;">[IMG]</span>')
-        .replace(/^h[1-6]\.\s+(.*)$/gm, '<b style="color:#eee; display:block; margin-top:12px; margin-bottom:4px; border-bottom:1px solid #333; padding-bottom:4px;">$1</b>')
-        .replace(/"([^"]+)":\s*(https?:\/\/[^\s]+)/g, '<a href="$2" target="_blank" style="color:#4db8ff; text-decoration:underline;">$1</a>')
-        .replace(/\[\s*(https?:\/\/[^\s\]]+)\s+([^\]]+)\s*\]/g, '<a href="$1" target="_blank" style="color:#4db8ff; text-decoration:underline;">$2</a>')
-        .replace(/\[\s*b\s*\](.*?)\[\s*\/\s*b\s*\]/gi, '<b>$1</b>')
-        .replace(/\[\s*i\s*\](.*?)\[\s*\/\s*i\s*\]/gi, '<i>$1</i>')
-        .replace(/\n/g, '<br>');
-}
-
-// ---------- Cache mode badge ----------
-function updateCacheBadge() {
-    const badge = document.getElementById('cacheModeBadge');
-    const isLocal = window.isDanbooruLocalMode || window.isLocalMode;
-    if (isLocal) {
-        badge.textContent = '📁 Local cache';
-        badge.className = 'cache-badge local';
-        badge.title = 'Running on localhost — results are also saved to local/danbooru_cache.json and local/e621_cache.json (same as Tag Manager)';
-    } else {
-        badge.textContent = '🌐 Online / memory';
-        badge.className = 'cache-badge online';
-        badge.title = 'Not on localhost — cache stays in memory + localStorage. Local JSON files only work with the Tag Manager local server.';
-    }
-}
-window.addEventListener('DOMContentLoaded', () => {
-    setTimeout(updateCacheBadge, 300);
-    setTimeout(updateCacheBadge, 1200);
-});
-
-/* ---------- Raw API helpers ---------- */
-async function apiGet(url) {
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
-}
-function listOf(data) {
-    if (!data) return [];
-    return Array.isArray(data) ? data : (data.tags || []);
-}
-const firstOf = (data) => listOf(data)[0] || null;
-
-async function fetchTagExact(site, name) {
-    return firstOf(await apiGet(`https://${site.host()}/tags.json?search[name]=${encodeURIComponent(name)}&limit=1`));
-}
-
-/* Exact tag -> alias redirect -> wiki. Always asks the site directly. */
-async function lookupSite(site, raw) {
-    const name = raw.trim().toLowerCase().replace(/\s+/g, '_');
-    const host = site.host();
-
-    let tag = await fetchTagExact(site, name);
-    let aliasTo = null;
-
-    if (!tag || !(Number(tag.post_count) > 0) || tag.is_deprecated) {
-        try {
-            const al = firstOf(await apiGet(`https://${host}/tag_aliases.json?search[antecedent_name]=${encodeURIComponent(name)}&search[status]=active&limit=1`));
-            if (al && al.consequent_name) {
-                aliasTo = al.consequent_name;
-                const target = await fetchTagExact(site, aliasTo);
-                if (target) tag = target;
-            }
-        } catch (e) { /* alias lookup is best-effort */ }
-    }
-
-    if (!tag) {
-        let suggestions = [];
-        try {
-            suggestions = listOf(await apiGet(`https://${host}/tags.json?search[name_matches]=*${encodeURIComponent(name)}*&search[order]=count&limit=6`));
-        } catch (e) {}
-        return { site, query: name, tag: null, aliasTo: null, body: null, suggestions };
-    }
-
-    let body = null;
-    try {
-        const w = await apiGet(`https://${host}/wiki_pages/${encodeURIComponent(tag.name)}.json`);
-        if (w && w.body && w.body.trim()) body = w.body;
-    } catch (e) {}
-
-    return { site, query: name, tag, aliasTo, body, suggestions: [] };
-}
-
-/* ---------- Write-through to the shared cache (only after a real hit) ---------- */
-function writeThrough(res) {
-    try {
-        if (!res || !res.tag) return;
-        const site = res.site;
-        const cache = site.key === 'danbooru' ? window.danbooruCache : window.e621Cache;
-        if (!cache) return;
-        const now = Date.now();
-        const t = res.tag;
-        const key = t.name.replace(/_/g, ' ').toLowerCase();
-        const clean = (res.body || '').replace(/\[.*?\]/g, '').trim();
-
-        cache[key] = {
-            ...(cache[key] || {}),
-            count: parseInt(t.post_count) || 0, category: t.category, wikiName: t.name,
-            isDeprecated: !!t.is_deprecated, ts: now,
-            wikiChecked: true, wikiTs: now, hasWikiInfo: !!clean,
-            description: clean.slice(0, 800) + (clean.length > 800 ? '...' : '')
-        };
-        const origKey = res.query.replace(/_/g, ' ').toLowerCase();
-        if (res.aliasTo && origKey !== key) {
-            cache[origKey] = { ...(cache[origKey] || {}), aliasTo: res.aliasTo.replace(/_/g, ' '), aliasChecked: true, aliasTs: now, isDeprecated: true, count: parseInt(t.post_count) || 0, category: t.category, ts: now };
-        }
-
-        // A real hit proves the tag exists: clear any stale "unknown" mark.
-        let unknownChanged = false;
-        [key, origKey].forEach(k => {
-            const u = window.unknownTagsCache && window.unknownTagsCache[k];
-            if (u && u[site.key]) { delete u[site.key]; unknownChanged = true; if (!Object.keys(u).some(x => x !== 'ts')) delete window.unknownTagsCache[k]; }
-        });
-        if (unknownChanged && typeof window.saveUnknownTags === 'function') window.saveUnknownTags();
-
-        if (site.key === 'danbooru') {
-            if (typeof bumpDanbooruCacheVersion === 'function') bumpDanbooruCacheVersion();
-            if (typeof scheduleDanbooruCachePersist === 'function') scheduleDanbooruCachePersist();
-        } else {
-            if (typeof bumpE621CacheVersion === 'function') bumpE621CacheVersion();
-            if (typeof scheduleE621CachePersist === 'function') scheduleE621CachePersist();
-        }
-    } catch (e) { console.warn('[write-through]', e); }
-}
-
-/* ---------- Card rendering ---------- */
-function setCardLoading(site) {
-    document.getElementById('body-' + site.key).innerHTML = '<div class="result-empty">Loading...</div>';
-    document.getElementById('status-' + site.key).textContent = '';
-}
-
-function renderCardError(site, err) {
-    document.getElementById('body-' + site.key).innerHTML = `<div class="result-empty" style="color:#ff8080; font-style:normal;">Could not reach ${esc(site.name)}: ${esc(err.message || err)}</div>`;
-    document.getElementById('status-' + site.key).textContent = 'error';
-}
-
-function renderCard(res) {
-    const site = res.site, host = site.host();
-    const bodyEl = document.getElementById('body-' + site.key);
-    const statusEl = document.getElementById('status-' + site.key);
-    lastResults[site.key] = res;
-
-    if (!res.tag) {
-        statusEl.textContent = 'not found';
-        let html = `<div class="result-empty">Tag "<b style="color:#ccc;">${esc(res.query.replace(/_/g, ' '))}</b>" not found on ${esc(site.name)}.</div>`;
-        if (res.suggestions.length) {
-            html += `<div style="font-size:11px; color:#888; text-align:center;">Did you mean:</div><div class="sugg-chips">` +
-                res.suggestions.map(s => `<span class="sugg-chip" data-tag="${esc(s.name.replace(/_/g, ' '))}">${esc(s.name.replace(/_/g, ' '))} <span style="color:#666;">${Number(s.post_count || 0).toLocaleString()}</span></span>`).join('') +
-                `</div>`;
-        }
-        bodyEl.innerHTML = html;
-        return;
-    }
-
-    const t = res.tag;
-    const displayName = t.name.replace(/_/g, ' ');
-    const color = site.catColors[t.category] || '#aaa';
-    const label = site.catLabels[t.category] || 'Unknown';
-    const deprecated = t.is_deprecated || !!res.aliasTo;
-    statusEl.textContent = Number(t.post_count || 0).toLocaleString() + ' posts';
-
-    let html = '';
-    if (res.aliasTo) {
-        html += `<div class="alias-box">
-            <span class="lbl">Original tag (deprecated)</span><b style="color:#ffcc66;">${esc(res.query.replace(/_/g, ' '))}</b>
-            <span class="lbl" style="margin-top:6px;">Redirects to</span><b style="color:#00ff99;">${esc(displayName)}</b>
-            <div style="font-size:11px; color:#777; margin-top:6px; line-height:1.4;">${esc(site.name)} merged the original tag into the one above. The count and wiki below belong to the new tag.</div>
-        </div>`;
-    }
-    html += `<div class="result-tag-title">${esc(displayName)}</div>`;
-    html += `<div class="result-tag-meta"><span style="color:${color}">● ${esc(label)}</span> · ${Number(t.post_count || 0).toLocaleString()} posts${deprecated ? ' <span style="color:#f48fb1;">· Deprecated / Alias</span>' : ''}</div>`;
-    html += `<div class="result-desc">${res.body ? formatDText(res.body, host) : `<span style="color:#666; font-style:italic;">No wiki description available on ${esc(site.name)}.</span>`}</div>`;
-    html += `<div class="result-actions">
-        ${res.body ? `<button class="btn-tr" data-site="${site.key}" title="Send description to the Google Translate tab">🌐 Translate desc</button>` : ''}
-        <a href="https://${host}/wiki_pages/${encodeURIComponent(t.name)}" target="_blank">Open on ${esc(host)} ↗</a>
-    </div>`;
-    bodyEl.innerHTML = html;
-}
-
-/* Delegated clicks inside the cards (suggestion chips + translate button) */
-document.getElementById('col-left').addEventListener('click', (e) => {
-    const chip = e.target.closest('.sugg-chip');
-    if (chip) { performSearch(chip.dataset.tag); return; }
-    const trBtn = e.target.closest('.btn-tr');
-    if (trBtn) {
-        const res = lastResults[trBtn.dataset.site];
-        const text = res && res.body ? res.body : '';
-        if (!text.trim()) { window.showAlert('No description to translate.', 'warn'); return; }
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-        document.querySelector('.tab-btn[data-tab="google"]').classList.add('active');
-        document.getElementById('tab-google').classList.add('active');
-        document.getElementById('gSource').value = text.slice(0, 4500);
-        document.getElementById('gFrom').value = 'en';
-        document.getElementById('gTo').value = 'pt';
-        document.getElementById('gFix').checked = false;
-        window.showAlert('Description sent to Google Translate tab.', 'info');
-    }
-});
-
-/* ---------- Search: fires both sites at the same time ---------- */
-const tagInput = document.getElementById('tagInput');
-const suggBox = document.getElementById('tagSuggBox');
-
-async function performSearch(rawTag) {
-    const q = (rawTag || tagInput.value || '').trim();
-    if (!q) return;
-    tagInput.value = q;
-    suggBox.style.display = 'none';
-    suggToken++;
-
-    await Promise.all(Object.values(SITES).map(async (site) => {
-        setCardLoading(site);
-        try {
-            const res = await lookupSite(site, q);
-            renderCard(res);
-            writeThrough(res);
-        } catch (err) {
-            console.error(site.name, err);
-            renderCardError(site, err);
-        }
-    }));
-}
-
-document.getElementById('tagSearchBtn').onclick = () => performSearch();
-tagInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); performSearch(); }
-});
-
-document.getElementById('sfwToggle').addEventListener('change', (e) => {
-    window.showE621Sfw = e.target.checked;
-    window.saveSetting('ph_e621_sfw', e.target.checked);
-    if (lastResults.e621 || tagInput.value.trim()) {
-        const q = tagInput.value.trim();
-        if (q) {
-            const site = SITES.e621;
-            setCardLoading(site);
-            lookupSite(site, q).then(r => { renderCard(r); writeThrough(r); }).catch(err => renderCardError(site, err));
-        }
-    }
-});
-window.getSetting('ph_e621_sfw', false).then(v => {
-    window.showE621Sfw = !!v;
-    document.getElementById('sfwToggle').checked = !!v;
-});
-
-/* ---------- Autocomplete (merged from both sites, API-first) ---------- */
-let suggTimeout = null;
-let suggToken = 0;
-
-async function suggestFromSite(site, nameQuery) {
-    const host = site.host();
-    const q = encodeURIComponent(nameQuery);
-    const [direct, aliases] = await Promise.all([
-        apiGet(`https://${host}/tags.json?search[name_matches]=*${q}*&search[order]=count&limit=8`).catch(() => null),
-        apiGet(`https://${host}/tag_aliases.json?search[antecedent_name_matches]=*${q}*&search[status]=active&limit=8`).catch(() => null)
-    ]);
-    const aliasMap = new Map();
-    listOf(aliases).forEach(a => { if (a.antecedent_name) aliasMap.set(a.antecedent_name, a.consequent_name); });
-
-    const out = [];
-    const seen = new Set();
-    listOf(direct).forEach(t => {
-        seen.add(t.name);
-        const to = aliasMap.get(t.name);
-        out.push({ name: t.name, count: Number(t.post_count) || 0, category: t.category, aliasTo: to || null, site: site.key });
-    });
-    aliasMap.forEach((to, from) => {
-        if (seen.has(from)) return;
-        out.push({ name: from, count: 0, category: 0, aliasTo: to, site: site.key });
-    });
-    return out;
-}
-
-function renderSuggestions(list) {
-    suggBox.innerHTML = '';
-    if (!list || list.length === 0) { suggBox.style.display = 'none'; return; }
-    list.forEach(t => {
-        const div = document.createElement('div');
-        div.className = 'db-sugg-item';
-        const first = SITES[t.sites[0]];
-        const color = first.catColors[t.category] || '#aaa';
-        const displayName = t.name.replace(/_/g, ' ');
-        const arrow = t.aliasTo ? ` <span class="db-alias-arrow">➜ ${esc(t.aliasTo.replace(/_/g, ' '))}</span>` : '';
-        const badges = t.sites.map(s => `<span class="src-badge ${SITES[s].badge}">${SITES[s].badge === 'db' ? 'DB' : 'e6'}</span>`).join('');
-        const count = t.count > 0 ? Number(t.count).toLocaleString() : (t.aliasTo ? 'alias' : '0');
-        div.innerHTML = `<span style="color:${color}; font-weight:bold;">${esc(displayName)}${arrow}${badges}</span><span style="color:#666;">${count}</span>`;
-        div.onclick = () => {
-            const finalName = t.aliasTo ? t.aliasTo.replace(/_/g, ' ') : displayName;
-            tagInput.value = finalName;
-            suggBox.style.display = 'none';
-            performSearch(finalName);
-        };
-        suggBox.appendChild(div);
-    });
-    suggBox.style.display = 'block';
-}
-
-tagInput.addEventListener('input', () => {
-    clearTimeout(suggTimeout);
-    const raw = tagInput.value.trim().toLowerCase();
-    if (raw.length < 2) { suggBox.style.display = 'none'; return; }
-    const q = raw.replace(/\s+/g, '_');
-    const myToken = ++suggToken;
-    suggTimeout = setTimeout(async () => {
-        try {
-            const results = await Promise.all(Object.values(SITES).map(s => suggestFromSite(s, q).catch(() => [])));
-            if (myToken !== suggToken) return; // stale response
-
-            const merged = new Map();
-            results.flat().forEach(item => {
-                const key = item.name.toLowerCase();
-                const ex = merged.get(key);
-                if (!ex) merged.set(key, { name: item.name, count: item.count, category: item.category, aliasTo: item.aliasTo, sites: [item.site] });
-                else {
-                    if (!ex.sites.includes(item.site)) ex.sites.push(item.site);
-                    ex.count = Math.max(ex.count, item.count);
-                    if (!ex.aliasTo && item.aliasTo) ex.aliasTo = item.aliasTo;
-                }
-            });
-            const list = Array.from(merged.values()).sort((a, b) => b.count - a.count).slice(0, 10);
-            renderSuggestions(list);
-        } catch (e) {
-            console.warn('[autocomplete]', e);
-        }
-    }, 320);
-});
-
-document.addEventListener('click', (e) => {
-    if (!document.getElementById('tagSearchWrap').contains(e.target)) {
-        suggBox.style.display = 'none';
-    }
-});
-
-// ---------- Tabs ----------
-document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.onclick = () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    };
-});
-
-// ---------- Persisted language choices ----------
-function bindPersist(id, key, fallback) {
-    const el = document.getElementById(id);
-    const saved = localStorage.getItem('ph_' + key);
-    if (saved && Array.from(el.options || []).some(o => o.value === saved)) el.value = saved;
-    else if (fallback) el.value = fallback;
-    el.addEventListener('change', () => localStorage.setItem('ph_' + key, el.value));
-}
-bindPersist('gFrom', 'g_from', 'pt');
-bindPersist('gTo', 'g_to', 'en');
-bindPersist('oFrom', 'o_from', 'Portuguese');
-bindPersist('oTo', 'o_to', 'English');
-['gFix', 'oFix', 'gLive', 'oLive'].forEach(id => {
-    const el = document.getElementById(id);
-    const saved = localStorage.getItem('ph_' + id);
-    if (saved !== null) el.checked = saved === '1';
-    el.addEventListener('change', () => localStorage.setItem('ph_' + id, el.checked ? '1' : '0'));
-});
-
-// ---------- Google Translate ----------
-// dt=qca asks Google for a spelling suggestion (response index 7) in the source language.
-async function googleCall(text, from, to) {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(from)}&tl=${encodeURIComponent(to)}&dt=t&dt=qca&q=${encodeURIComponent(text)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    let translation = '';
-    if (data && data[0]) data[0].forEach(part => { if (part[0]) translation += part[0]; });
-    let corrected = '';
-    if (data && Array.isArray(data[7]) && typeof data[7][1] === 'string') corrected = data[7][1].trim();
-    const detected = (data && typeof data[2] === 'string') ? data[2] : '';
-    return { translation, corrected, detected };
-}
-
-const LANG_NAMES = { en: 'English', pt: 'Portuguese', es: 'Spanish', ja: 'Japanese', 'zh-CN': 'Chinese', zh: 'Chinese', ko: 'Korean', fr: 'French', de: 'German', ru: 'Russian', it: 'Italian' };
-let gSeq = 0, gLastKey = '';
-
-// live=true: called while typing (silent, never touches the source box, skips unchanged input)
-async function runGoogle(fixOnly, live) {
-    const srcEl = document.getElementById('gSource');
-    const resEl = document.getElementById('gResult');
-    const status = document.getElementById('gStatus');
-    const text = srcEl.value.trim();
-    if (!text) {
-        if (live) { gSeq++; gLastKey = ''; resEl.value = ''; status.textContent = ''; }
-        else window.showAlert('Type something first.', 'warn');
-        return;
-    }
-    const from = document.getElementById('gFrom').value;
-    const to = document.getElementById('gTo').value;
-    const wantFix = fixOnly || document.getElementById('gFix').checked;
-    const key = [text, from, to, wantFix, fixOnly].join('\u0001');
-    if (live && key === gLastKey) return;
-    const seq = ++gSeq;
-    const btns = ['gTranslateBtn', 'gTranslateTop', 'gFixBtn'].map(id => document.getElementById(id));
-    if (!live) btns.forEach(b => b.disabled = true);
-    status.textContent = fixOnly ? 'Fixing...' : 'Translating...';
-    try {
-        let src = from, probe = null, working = text, note = '';
-        if (from === 'auto') {
-            probe = await googleCall(text, 'auto', to);
-            if (seq !== gSeq) return;
-            src = probe.detected || 'en';
-        }
-        if (wantFix) {
-            const fx = await googleCall(text, src, src);
-            if (seq !== gSeq) return;
-            if (fx.corrected && fx.corrected !== text) { working = fx.corrected; note = 'Vocabulary fixed. '; }
-            else note = 'No corrections suggested. ';
-        }
-        const detNote = from === 'auto' ? `Detected: ${LANG_NAMES[src] || src}. ` : '';
-        if (fixOnly || src === to) {
-            resEl.value = working;
-            status.textContent = detNote + note + (src === to && !fixOnly ? 'Already in the target language, nothing to translate.' : 'Done.');
-            gLastKey = key;
-            return;
-        }
-        let tr = (probe && working === text) ? probe : await googleCall(working, src, to);
-        if (seq !== gSeq) return;
-        resEl.value = tr.translation;
-        if (working !== text) {
-            if (live) note += `Corrected: "${working}". `;
-            else srcEl.value = working;
-        }
-        status.textContent = detNote + note + 'Done.';
-        gLastKey = key;
-    } catch (e) {
-        if (seq !== gSeq) return;
-        status.textContent = 'Error: ' + (e.message || e);
-        if (!live) window.showAlert('Google Translate failed.', 'error');
-    } finally {
-        btns.forEach(b => b.disabled = false);
-    }
-}
-
-document.getElementById('gTranslateBtn').onclick = () => runGoogle(false);
-document.getElementById('gTranslateTop').onclick = () => runGoogle(false);
-document.getElementById('gFixBtn').onclick = () => runGoogle(true);
-document.getElementById('gSource').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runGoogle(false); }
-});
-
-document.getElementById('gClearBtn').onclick = () => {
-    document.getElementById('gSource').value = '';
-    document.getElementById('gResult').value = '';
-    document.getElementById('gStatus').textContent = '';
-};
-
-document.getElementById('gSwap').onclick = () => {
-    const from = document.getElementById('gFrom');
-    const to = document.getElementById('gTo');
-    const tmp = from.value; from.value = to.value; to.value = tmp;
-    from.dispatchEvent(new Event('change')); to.dispatchEvent(new Event('change'));
-    const s = document.getElementById('gSource');
-    const r = document.getElementById('gResult');
-    const t = s.value; s.value = r.value; r.value = t;
-};
-
-// ---------- Ollama ----------
-async function refreshOllamaModels() {
-    const url = (document.getElementById('oUrl').value || 'http://127.0.0.1:11434').replace(/\/$/, '');
-    const sel = document.getElementById('oModel');
-    const status = document.getElementById('oStatus');
-    status.textContent = 'Fetching models...';
-    try {
-        const res = await fetch(url + '/api/tags');
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
-        const models = (data.models || []).map(m => m.name).sort();
-        sel.innerHTML = '';
-        if (models.length === 0) {
-            sel.innerHTML = '<option value="">No models found</option>';
-            status.textContent = 'No models installed. Use: ollama pull llama3.2';
-            return;
-        }
-        models.forEach(name => {
-            const opt = document.createElement('option');
-            opt.value = name;
-            opt.textContent = name;
-            sel.appendChild(opt);
-        });
-        status.textContent = models.length + ' model(s) found.';
-        const last = localStorage.getItem('ph_ollama_model');
-        if (last && models.includes(last)) sel.value = last;
-    } catch (e) {
-        sel.innerHTML = '<option value="">-- connection failed --</option>';
-        status.textContent = 'Could not reach Ollama. Is it running? (' + (e.message || e) + ')';
-    }
-}
-
-document.getElementById('oRefreshModels').onclick = refreshOllamaModels;
-document.getElementById('oModel').onchange = () => {
-    localStorage.setItem('ph_ollama_model', document.getElementById('oModel').value);
-};
-
-async function ollamaGenerate(base, body, signal) {
-    const res = await fetch(base + '/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal
-    });
-    if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        throw new Error('HTTP ' + res.status + (errText ? ': ' + errText.slice(0, 120) : ''));
-    }
-    const data = await res.json();
-    return (data.response || '').trim();
-}
-
-function parseJsonLoose(raw) {
-    try { return JSON.parse(raw); } catch (e) {}
-    const m = raw.match(/\{[\s\S]*\}/);
-    if (m) { try { return JSON.parse(m[0]); } catch (e) {} }
-    return null;
-}
-
-let oCtl = null, oLastKey = '';
-
-// live=true: called while typing (cancels the previous request, never touches the source box)
-async function runOllama(fixOnly, live) {
-    const srcEl = document.getElementById('oSource');
-    const resEl = document.getElementById('oResult');
-    const status = document.getElementById('oStatus');
-    const text = srcEl.value.trim();
-    if (!text) {
-        if (live) { if (oCtl) oCtl.abort(); oLastKey = ''; resEl.value = ''; }
-        else window.showAlert('Type something first.', 'warn');
-        return;
-    }
-    const model = document.getElementById('oModel').value;
-    if (!model) {
-        if (live) status.textContent = 'Select a model (click 🔄) to translate live.';
-        else window.showAlert('Select a model first (click 🔄).', 'warn');
-        return;
-    }
-    const base = (document.getElementById('oUrl').value || 'http://127.0.0.1:11434').replace(/\/$/, '');
-    const from = document.getElementById('oFrom').value;
-    const to = document.getElementById('oTo').value;
-    const fromDesc = from === 'auto' ? 'an unknown language (detect it yourself)' : from;
-    const wantFix = fixOnly || document.getElementById('oFix').checked;
-    const justFix = fixOnly || (from !== 'auto' && from === to);
-    const key = [text, model, from, to, wantFix, fixOnly].join('\u0001');
-    if (live && key === oLastKey) return;
-
-    if (oCtl) oCtl.abort();
-    oCtl = new AbortController();
-    const signal = oCtl.signal;
-    const btns = ['oTranslateBtn', 'oTranslateTop', 'oFixBtn'].map(id => document.getElementById(id));
-    if (!live) { btns.forEach(b => b.disabled = true); resEl.value = ''; }
-    status.textContent = 'Generating with ' + model + '...';
-
-    try {
-        if (justFix) {
-            const prompt = `You are a proofreader. The text below is written in ${fromDesc}. Fix spelling, typos, misused or wrong vocabulary and grammar. Keep the meaning, tone and the original language. Do NOT translate. Output ONLY the corrected text, nothing else.\n\n${text}`;
-            resEl.value = await ollamaGenerate(base, { model, prompt, stream: false, options: { temperature: 0.1 } }, signal);
-            status.textContent = 'Fixed in the original language. Done.';
-        } else if (wantFix) {
-            const prompt = `The text below is written in ${fromDesc} and may contain typos or wrong vocabulary.\n1) Correct it in its own language.\n2) Translate the corrected text into ${to}.\nReply ONLY with JSON in this exact shape: {"corrected":"<corrected text in the source language>","translation":"<${to} translation>"}\n\nText:\n${text}`;
-            const raw = await ollamaGenerate(base, { model, prompt, stream: false, format: 'json', options: { temperature: 0.1 } }, signal);
-            const obj = parseJsonLoose(raw);
-            if (obj && typeof obj.translation === 'string') {
-                resEl.value = obj.translation.trim();
-                const corrected = typeof obj.corrected === 'string' ? obj.corrected.trim() : '';
-                if (corrected && corrected !== text) {
-                    if (live) status.textContent = `Corrected: "${corrected}". Done.`;
-                    else { srcEl.value = corrected; status.textContent = 'Vocabulary fixed in source. Done.'; }
-                } else status.textContent = 'No corrections needed. Done.';
-            } else {
-                resEl.value = raw; // model ignored the JSON format: show whatever it returned
-                status.textContent = 'Model did not return JSON, showing raw output.';
-            }
-        } else {
-            const prompt = `Translate the following text from ${fromDesc} to ${to}. Output ONLY the translation, nothing else.\n\n${text}`;
-            resEl.value = await ollamaGenerate(base, { model, prompt, stream: false, options: { temperature: 0.2 } }, signal);
-            status.textContent = 'Done.';
-        }
-        oLastKey = key;
-    } catch (e) {
-        if (e.name === 'AbortError') return; // replaced by a newer request
-        status.textContent = 'Error: ' + (e.message || e);
-        if (!live) window.showAlert('Ollama request failed. Check URL / model / CORS.', 'error');
-    } finally {
-        btns.forEach(b => b.disabled = false);
-    }
-}
-
-document.getElementById('oTranslateBtn').onclick = () => runOllama(false);
-document.getElementById('oTranslateTop').onclick = () => runOllama(false);
-document.getElementById('oFixBtn').onclick = () => runOllama(true);
-document.getElementById('oSource').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runOllama(false); }
-});
-
-document.getElementById('oSwap').onclick = () => {
-    const from = document.getElementById('oFrom');
-    const to = document.getElementById('oTo');
-    const tmp = from.value; from.value = to.value; to.value = tmp;
-    from.dispatchEvent(new Event('change')); to.dispatchEvent(new Event('change'));
-    const s = document.getElementById('oSource');
-    const r = document.getElementById('oResult');
-    const t = s.value; s.value = r.value; r.value = t;
-};
-
-document.getElementById('oClearBtn').onclick = () => {
-    document.getElementById('oSource').value = '';
-    document.getElementById('oResult').value = '';
-};
-
-// ---------- Live translate (debounced while typing) ----------
-function debounce(fn, ms) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
-const gLiveRun = debounce(() => { if (document.getElementById('gLive').checked) runGoogle(false, true); }, 700);
-const oLiveRun = debounce(() => { if (document.getElementById('oLive').checked) runOllama(false, true); }, 1200);
-document.getElementById('gSource').addEventListener('input', gLiveRun);
-document.getElementById('oSource').addEventListener('input', oLiveRun);
-['gFrom', 'gTo', 'gFix', 'gLive'].forEach(id => document.getElementById(id).addEventListener('change', gLiveRun));
-['oFrom', 'oTo', 'oFix', 'oLive', 'oModel'].forEach(id => document.getElementById(id).addEventListener('change', oLiveRun));
-document.getElementById('gClearBtn').addEventListener('click', () => { gSeq++; gLastKey = ''; });
-document.getElementById('oClearBtn').addEventListener('click', () => { if (oCtl) oCtl.abort(); oLastKey = ''; });
-
-let ollamaModelsLoaded = false;
-document.querySelector('.tab-btn[data-tab="ollama"]').addEventListener('click', () => {
-    if (!ollamaModelsLoaded) {
-        ollamaModelsLoaded = true;
-        refreshOllamaModels();
-    }
-});
-
-const savedUrl = localStorage.getItem('ph_ollama_url');
-if (savedUrl) document.getElementById('oUrl').value = savedUrl;
-document.getElementById('oUrl').addEventListener('change', () => {
-    localStorage.setItem('ph_ollama_url', document.getElementById('oUrl').value);
-});
-</script>
+<!-- 3) Prompt Helper modules -->
+<script src="tools/prompt_helper_tags.js"></script>
+<script src="tools/prompt_helper_ui.js"></script>
+<script src="tools/prompt_helper_google.js"></script>
+<script src="tools/prompt_helper_ollama.js"></script>
+<!-- Image → Prompt: core first, then the engines (WebGPU + ONNX = any origin, PyTorch = localhost only) -->
+<script src="tools/prompt_helper_florence.js"></script>
+<script src="tools/prompt_helper_florence_webgpu.js"></script>
+<script src="tools/prompt_helper_florence_onnx.js"></script>
+<script src="tools/prompt_helper_florence_pytorch.js"></script>
+<script src="tools/prompt_helper_help.js"></script>
 
 <!-- Quick Links (+) — same balloon as the rest of the Modular AI Tools hub -->
 <script src="tools/quick_links.js"></script>

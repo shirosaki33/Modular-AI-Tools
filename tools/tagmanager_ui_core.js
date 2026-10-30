@@ -3,6 +3,15 @@
    Handles initialization, settings, resizers, file loading, modals.
 ========================================================================= */
 
+// Folders created by the app itself — never listed as dataset subfolders
+// and never scanned for images (batch tagger, recursive mode, etc.).
+window.MAT_SYSTEM_DIRS = window.MAT_SYSTEM_DIRS || new Set(['_trash', '_archive', '_rename_cache']);
+window.isSystemDirName = function(name) { return window.MAT_SYSTEM_DIRS.has(String(name || '')); };
+
+function _escOpt(text) {
+    return typeof window.escHTML === 'function' ? window.escHTML(text) : String(text);
+}
+
 window.initSystem = async function() {
     try {
         setupResizers();
@@ -49,7 +58,7 @@ window.loadSettings = async function() {
 
     const thumbSize = await window.getSetting('thumb-size', 70);
     const fontSize = await window.getSetting('font-size', 13);
-    
+
     const colListWidth = await window.getSetting('col-list-width', '350px');
     const colToolsWidth = await window.getSetting('col-tools-width', '350px');
     const colPresetsWidth = await window.getSetting('col-presets-width', '250px');
@@ -61,12 +70,14 @@ window.loadSettings = async function() {
     const autocompleteMaster = await window.getSetting('autocomplete-used-only-master', false);
     const autocompleteReplace = await window.getSetting('autocomplete-used-only-replace', false);
 
-// "Show Danbooru Counts" não é mais uma opção desligável (removida do
-// Settings) — sempre ON. Quando e621 também está habilitado, o contador
-// mostrado já é o maior entre as duas fontes (window.pickBestTagCount,
-// em tagmanager_e621_core.js), sem precisar de nenhum toggle extra.
-window.showDanbooruCounts = true;
+    // "Show Danbooru Counts" não é mais uma opção desligável — sempre ON.
+    // Quando e621 também está habilitado, o contador mostrado já é o maior
+    // entre as duas fontes (window.pickBestTagCount, tagmanager_e621_core.js).
+    window.showDanbooruCounts = true;
 
+    // e621 toggles now live only in the Danbooru panel popout
+    // (tagmanager_danbooru_panel.js); the values are still read here so the
+    // rest of the app knows the current state at startup.
     const e621Setting = await window.getSetting('toggle-e621', false);
     const e621SfwSetting = await window.getSetting('toggle-e621-sfw', false);
     window.showE621 = e621Setting;
@@ -170,15 +181,7 @@ window.updateNlWordThreshold = function(val, skipSave = false) {
     }
 };
 
-window.toggleE621 = function() {
-    const checkbox = document.getElementById('toggle-e621');
-    if (checkbox) { window.showE621 = checkbox.checked; window.saveSetting('toggle-e621', checkbox.checked); }
-};
-
-window.toggleE621Sfw = function() {
-    const checkbox = document.getElementById('toggle-e621-sfw');
-    if (checkbox) { window.showE621Sfw = checkbox.checked; window.saveSetting('toggle-e621-sfw', checkbox.checked); }
-};
+// NOTE: toggleE621 / toggleE621Sfw are defined only in tagmanager_danbooru_panel.js.
 
 window.manualDanbooruSync = function() {
     window.syncDanbooruTags(Array.from(masterTagSet), true);
@@ -187,13 +190,20 @@ window.manualDanbooruSync = function() {
 let _danbooruSyncActive = false;
 window.syncDanbooruTags = async function(tags, force = false) {
     if (!window.showDanbooruCounts || _danbooruSyncActive) return;
-    if (typeof window.dbFetchCountsBatch !== 'function') return; 
+    if (typeof window.dbFetchCountsBatch !== 'function') return;
     _danbooruSyncActive = true;
-    const result = await window.dbFetchCountsBatch(tags, force);
-    if (result.fetched === 0 && force) window.showAlert("All dataset tags are up to date in cache!", "info");
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    _danbooruSyncActive = false;
+    try {
+        const result = await window.dbFetchCountsBatch(tags, force);
+        if (result && result.fetched === 0 && force && typeof window.showAlert === 'function') window.showAlert("All dataset tags are up to date in cache!", "info");
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    } catch (e) {
+        console.error('syncDanbooruTags failed:', e);
+    } finally {
+        // Always release the lock — before, any exception here blocked every
+        // later sync (including the automatic one on folder load) until F5.
+        _danbooruSyncActive = false;
+    }
 };
 
 window.updateThumbSize = function(val, skipSave = false) {
@@ -201,6 +211,9 @@ window.updateThumbSize = function(val, skipSave = false) {
     window._thumbSizeRAF = requestAnimationFrame(() => {
         document.documentElement.style.setProperty('--thumb-size', val + 'px');
         window._thumbSizeRAF = null;
+        // Miniatura maior que a gerada: refaz só as visíveis (com atraso, o slider dispara muito).
+        clearTimeout(window._thumbRegenTimer);
+        window._thumbRegenTimer = setTimeout(() => { if (typeof window.refreshImageThumbsForSize === 'function') window.refreshImageThumbsForSize(); }, 300);
     });
     if (!skipSave) window.saveSetting('thumb-size', val);
 };
@@ -217,27 +230,27 @@ function setupResizers() {
     const resizerLeft = document.getElementById('resizer-left');
     const resizerRight = document.getElementById('resizer-right');
     const resizerPresets = document.getElementById('resizer-presets');
-    
+
     const colList = document.getElementById('col-list');
     const colTools = document.getElementById('col-tools');
     const colPresets = document.getElementById('col-presets');
 
     if(resizerLeft) {
-        resizerLeft.addEventListener('mousedown', (e) => { 
+        resizerLeft.addEventListener('mousedown', (e) => {
             isDraggingLeft = true; startX = e.clientX; startWidthList = colList.getBoundingClientRect().width;
-            document.body.classList.add('is-resizing'); 
+            document.body.classList.add('is-resizing');
         });
     }
     if(resizerRight) {
-        resizerRight.addEventListener('mousedown', (e) => { 
+        resizerRight.addEventListener('mousedown', (e) => {
             isDraggingRight = true; startX = e.clientX; startWidthTools = colTools.getBoundingClientRect().width;
-            document.body.classList.add('is-resizing'); 
+            document.body.classList.add('is-resizing');
         });
     }
     if(resizerPresets) {
-        resizerPresets.addEventListener('mousedown', (e) => { 
+        resizerPresets.addEventListener('mousedown', (e) => {
             isDraggingPresets = true; startX = e.clientX; startWidthPresets = colPresets.getBoundingClientRect().width;
-            document.body.classList.add('is-resizing'); 
+            document.body.classList.add('is-resizing');
         });
     }
 
@@ -338,7 +351,6 @@ window.saveImageToDisk = async function(img) {
         await writable.write(contentToSave);
         await writable.close();
 
-        if (typeof currentJsonFiles !== 'undefined' && formatToUse === 'json') currentJsonFiles.add(fileName);
         if (datasetConfig[img.baseName]) datasetConfig[img.baseName].type = 'tags';
         window.markClean(img);
         return true;
@@ -471,11 +483,14 @@ window.updateLastEditedUI = function() {
     if (display) display.textContent = datasetConfig.lastEdited ? `Last edited: ${datasetConfig.lastEdited}` : "Last edited: Never";
 };
 
-window.markDatasetEdited = async function() {
+// Gravação do _tagger_config.json com debounce (~1 s) — ver TM.scheduleDatasetConfigSave.
+window.markDatasetEdited = function() {
     datasetConfig.lastEdited = new Date().toLocaleString();
     window.updateLastEditedUI();
     const handle = window.currentImagesHandle || window.rootHandle;
-    if (handle) await window.saveDatasetConfig(handle);
+    if (!handle) return Promise.resolve();
+    if (window.TM && typeof window.TM.scheduleDatasetConfigSave === 'function') return window.TM.scheduleDatasetConfigSave(handle, datasetConfig);
+    return window.saveDatasetConfig(handle);
 };
 
 window.showHelp = () => document.getElementById('modal-help').classList.add('active');
@@ -568,61 +583,71 @@ window.updateBatchUI = function() {
 }
 
 window.updateSelect = async function() {
-    const list = document.getElementById('dir-list'); 
+    const list = document.getElementById('dir-list');
     if (!list) return;
     list.innerHTML = '<option value="">Saved directories...</option>';
-    const handles = await window.getHandles(); 
-    handles.forEach(h => { 
-        const opt = document.createElement('option'); opt.value = h.name; opt.textContent = h.name; list.appendChild(opt); 
+    const handles = await window.getHandles();
+    handles.forEach(h => {
+        const opt = document.createElement('option'); opt.value = h.name; opt.textContent = h.name; list.appendChild(opt);
     });
 }
 
-window.loadTemporaryFolder = async function() { 
-    try { 
-        const dh = await window.showDirectoryPicker({ mode: 'readwrite' }); 
+function _setSavedFolderButtons(isSaved) {
+    document.getElementById('btn-save-folder').style.display = isSaved ? 'none' : 'inline-block';
+    document.getElementById('btn-remove').style.display = isSaved ? 'inline-block' : 'none';
+}
+
+window.loadTemporaryFolder = async function() {
+    try {
+        const dh = await window.showDirectoryPicker({ mode: 'readwrite' });
         window.rootHandle = dh;
-        const handles = await window.getHandles();
-        const exists = handles.some(h => h.name === dh.name);
-        document.getElementById('dir-list').value = exists ? dh.name : "";
-        document.getElementById('btn-save-folder').style.display = exists ? 'none' : 'inline-block';
-        document.getElementById('btn-remove').style.display = exists ? 'inline-block' : 'none';
+        // Match by the folder itself (isSameEntry), not by its name — two
+        // different folders called "images" are two different entries.
+        const savedKey = typeof window.findSavedHandleKey === 'function' ? await window.findSavedHandleKey(dh) : null;
+        window.rootHandleKey = savedKey;
+        document.getElementById('dir-list').value = savedKey || "";
+        _setSavedFolderButtons(!!savedKey);
         document.getElementById('current-folder-display').textContent = `📂 ${dh.name}`;
-        window.loadGallery(dh); 
-    } catch (e) { if (e.name !== 'AbortError') window.showAlert('Permission error.', 'error'); } 
+        window.loadGallery(dh);
+    } catch (e) { if (e.name !== 'AbortError') window.showAlert('Permission error.', 'error'); }
 }
 
 window.saveFolderToList = async function() {
     if (!window.rootHandle) return;
-    await window.saveHandle(window.rootHandle.name, window.rootHandle);
+    let key = typeof window.findSavedHandleKey === 'function' ? await window.findSavedHandleKey(window.rootHandle) : null;
+    if (!key) key = typeof window.uniqueHandleKey === 'function' ? await window.uniqueHandleKey(window.rootHandle) : window.rootHandle.name;
+    await window.saveHandle(key, window.rootHandle);
+    window.rootHandleKey = key;
     await window.updateSelect();
-    document.getElementById('dir-list').value = window.rootHandle.name;
-    document.getElementById('btn-save-folder').style.display = 'none';
-    document.getElementById('btn-remove').style.display = 'inline-block';
-    window.showAlert('Folder added to saved list!', 'success');
+    document.getElementById('dir-list').value = key;
+    _setSavedFolderButtons(true);
+    window.showAlert(key === window.rootHandle.name ? 'Folder added to saved list!' : `Folder added to saved list as "${key}" (another saved folder has the same name).`, 'success');
 }
 
-window.removeDirectory = async function() { 
-    if (!window.rootHandle) return; 
-    await window.deleteHandle(window.rootHandle.name); 
+window.removeDirectory = async function() {
+    if (!window.rootHandle) return;
+    let key = window.rootHandleKey;
+    if (!key && typeof window.findSavedHandleKey === 'function') key = await window.findSavedHandleKey(window.rootHandle);
+    await window.deleteHandle(key || window.rootHandle.name);
+    window.rootHandleKey = null;
     await window.updateSelect();
     document.getElementById('dir-list').value = "";
-    document.getElementById('btn-save-folder').style.display = 'inline-block';
-    document.getElementById('btn-remove').style.display = 'none';
+    _setSavedFolderButtons(false);
     window.showAlert('Folder removed from saved list.', 'info');
 }
 
 window.loadSelectedDirectory = async function() {
-    const name = document.getElementById('dir-list').value; 
-    if (!name) return; 
+    const name = document.getElementById('dir-list').value;
+    if (!name) return;
     const handles = await window.getHandles();
     const h = handles.find(x => x.name === name)?.handle;
-    if (h) { 
-        if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') await h.requestPermission({ mode: 'readwrite' }); 
+    if (h) {
+        if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') await h.requestPermission({ mode: 'readwrite' });
         window.rootHandle = h;
-        document.getElementById('btn-save-folder').style.display = 'none';
-        document.getElementById('btn-remove').style.display = 'inline-block';
+        window.rootHandleKey = name;
+        _setSavedFolderButtons(true);
         document.getElementById('current-folder-display').textContent = `📂 ${h.name}`;
-        window.loadGallery(h); 
+        window.loadGallery(h);
     }
 }
 
@@ -635,8 +660,8 @@ window.refreshDataset = async function() {
 
     try {
         if (val3 && document.getElementById('sub-dir-3').style.display !== 'none') { await window.loadSubDir3(); }
-        else if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { await window.loadSubDir2(); } 
-        else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { await window.loadSubDir1(); } 
+        else if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { await window.loadSubDir2(); }
+        else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { await window.loadSubDir1(); }
         else if (window.rootHandle) { await window.loadGallery(window.rootHandle); }
     } catch (e) {
         console.error('refreshDataset failed:', e);
@@ -652,25 +677,25 @@ window.refreshDataset = async function() {
     window.showAlert(`Refreshed! ${imageFiles.length} images loaded.`);
 };
 
+/* Solta TUDO do dataset que está saindo: miniaturas, elementos da lista, o
+   zoom aberto e as URLs das imagens. Sem isso a aba mantinha na RAM as imagens
+   decodificadas do dataset anterior até fechar. */
 function revokeImageFileUrls(files) {
     if (!files) return;
+    const list = document.getElementById('image-list');
+    if (list) list.textContent = '';
+    const pop = document.getElementById('image-popout');
+    if (pop) pop.removeAttribute('src');
+    if (typeof window.releaseImageThumbs === 'function') window.releaseImageThumbs(files);
     files.forEach(img => { if (img && img.url) { try { URL.revokeObjectURL(img.url); } catch (e) {} } });
 }
 
 /* ---------------------------------------------------------------------
    PROCESSAMENTO EM LOTE PARALELO (otimização de performance)
-   ---------------------------------------------------------------------
-   Antes, cada pasta carregada rodava um `for await` chamando
-   window.processSingleImage em SÉRIE, uma imagem de cada vez — com
-   getFileHandle('.txt') e, se falhar, getFileHandle('.json') (falha de
-   handle é exception, cara) por imagem. Com 300+ imagens isso é 300+
-   idas ao disco uma atrás da outra.
-
    window.processSingleImage não depende de ordem (imageFiles é
-   reordenado por window.finishLoading logo depois), então é seguro
-   rodar em paralelo. Aqui rodamos em lotes (chunks) de tamanho
-   controlado — paralelo dentro do lote, lotes em sequência — pra não
-   abrir centenas de handles simultâneos de uma vez só. */
+   reordenado por window.finishLoading logo depois), então roda em
+   lotes paralelos de tamanho controlado.
+--------------------------------------------------------------------- */
 window.processImageEntriesBatched = async function(fileEntries, dirHandle, concurrency = 20) {
     let anyConfigNeedsSave = false;
     for (let i = 0; i < fileEntries.length; i += concurrency) {
@@ -681,59 +706,81 @@ window.processImageEntriesBatched = async function(fileEntries, dirHandle, concu
     return anyConfigNeedsSave;
 };
 
-window.loadGallery = async function(dirHandle) {
-    // FIX: antes, qualquer exceção lançada em QUALQUER ponto abaixo (permissão
-    // negada num instante, handle inválido, uma extensão de terceiro que
-    // quebre algo no meio do await) interrompia a função ali mesmo — o reset
-    // de imageFiles, a varredura da pasta e window.finishLoading() nunca
-    // rodavam, deixando a lista "Dataset" vazia até o usuário dar F5. Agora
-    // o corpo inteiro é protegido: em caso de erro, avisamos o usuário e
-    // ainda chamamos finishLoading() (mesmo padrão já usado em
-    // window.refreshDataset) para a UI nunca ficar num estado travado/mudo.
+function _fillSubDirSelect(sel, names, headerHtml) {
+    if (headerHtml !== undefined) sel.innerHTML = headerHtml;
+    const frag = document.createDocumentFragment();
+    names.sort((a, b) => a.localeCompare(b)).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        frag.appendChild(opt);
+    });
+    sel.appendChild(frag);
+}
+
+/* ---------- CARREGAR PASTA (raiz ou subpasta nível 1–3) ----------
+   Antes eram 4 cópias quase iguais (loadGallery / loadSubDir1/2/3). */
+async function _loadFolderLevel(targetHandle, level, onSubdirs) {
+    // Corpo protegido: em caso de erro, avisa e ainda chama finishLoading()
+    // para a UI nunca ficar num estado travado/mudo.
     try {
         if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-        window.rootHandle = dirHandle;
-        window.currentImagesHandle = dirHandle;
-        window.sub1Handles.clear();
-        if(window.sub2Handles) window.sub2Handles.clear();
-        if(window.sub3Handles) window.sub3Handles.clear();
+        if (window.TM && typeof window.TM.flushDatasetConfig === 'function') await window.TM.flushDatasetConfig();
+        window.currentImagesHandle = targetHandle;
 
-        document.getElementById('btn-refresh').style.display = 'inline-block';
-        const sel1 = document.getElementById('sub-dir-1');
-        const sel2 = document.getElementById('sub-dir-2');
-        const sel3 = document.getElementById('sub-dir-3');
-        sel1.style.display = 'none'; sel2.style.display = 'none'; if(sel3) sel3.style.display = 'none';
-
-        await window.loadDatasetConfig(dirHandle);
-        await window.loadPendingTagsStore(dirHandle);
+        await window.loadDatasetConfig(targetHandle);
+        await window.loadPendingTagsStore(targetHandle);
 
         revokeImageFileUrls(imageFiles);
         imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
 
-        const fileEntriesRoot = [];
-        for await (const entry of dirHandle.values()) {
+        const fileEntries = [];
+        const subdirs = new Map();
+        for await (const entry of targetHandle.values()) {
             if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-                fileEntriesRoot.push(entry);
-            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
-                window.sub1Handles.set(entry.name, entry);
+                fileEntries.push(entry);
+            } else if (entry.kind === 'directory' && level < 3 && !window.isSystemDirName(entry.name)) {
+                subdirs.set(entry.name, entry);
             }
         }
-        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesRoot, dirHandle);
-
-        if (configNeedsSave) await window.saveDatasetConfig(dirHandle);
-
-        if (window.sub1Handles.size > 0) {
-            sel1.style.display = 'inline-block';
-            sel1.innerHTML = '<option value="">-- Root --</option>';
-            for (let name of Array.from(window.sub1Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-                sel1.innerHTML += `<option value="${name}">${name}</option>`;
-            }
-        }
+        const configNeedsSave = await window.processImageEntriesBatched(fileEntries, targetHandle);
+        if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
+        if (onSubdirs) onSubdirs(subdirs);
     } catch (e) {
-        console.error('loadGallery failed:', e);
-        if (window.showAlert) window.showAlert('Error loading folder: ' + (e.message || e), 'error');
+        console.error(`Loading folder (level ${level}) failed:`, e);
+        if (window.showAlert) window.showAlert((level === 0 ? 'Error loading folder: ' : 'Error loading subfolder: ') + (e.message || e), 'error');
     }
     window.finishLoading();
+}
+
+function _showSubdirSelect(sel, handlesMap, subdirs, headerHtml) {
+    handlesMap.clear();
+    subdirs.forEach((h, name) => handlesMap.set(name, h));
+    if (!sel) return;
+    if (handlesMap.size > 0) {
+        sel.style.display = 'inline-block';
+        _fillSubDirSelect(sel, Array.from(handlesMap.keys()), headerHtml);
+    }
+}
+
+window.loadGallery = async function(dirHandle) {
+    // Salva o dataset anterior ANTES de trocar rootHandle (que alguns saves usam).
+    try {
+        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
+        if (window.TM && typeof window.TM.flushDatasetConfig === 'function') await window.TM.flushDatasetConfig();
+    } catch (e) { console.warn('Saving before folder change failed:', e); }
+    window.rootHandle = dirHandle;
+    window.sub1Handles.clear();
+    if (window.sub2Handles) window.sub2Handles.clear();
+    if (window.sub3Handles) window.sub3Handles.clear();
+
+    document.getElementById('btn-refresh').style.display = 'inline-block';
+    const sel1 = document.getElementById('sub-dir-1');
+    const sel2 = document.getElementById('sub-dir-2');
+    const sel3 = document.getElementById('sub-dir-3');
+    sel1.style.display = 'none'; sel2.style.display = 'none'; if (sel3) sel3.style.display = 'none';
+
+    await _loadFolderLevel(dirHandle, 0, subdirs =>
+        _showSubdirSelect(sel1, window.sub1Handles, subdirs, '<option value="">-- Root --</option>'));
 };
 
 window.loadSubDir1 = async function() {
@@ -742,46 +789,14 @@ window.loadSubDir1 = async function() {
     const sel3 = document.getElementById('sub-dir-3');
     if (!val) { await window.loadGallery(window.rootHandle); return; }
 
-    // FIX: mesmo motivo de window.loadGallery — sem isto, qualquer erro no
-    // meio do processo deixava a lista vazia até dar F5.
-    try {
-        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-        window.currentImagesHandle = window.sub1Handles.get(val);
-        window.sub2Handles.clear();
-        if(window.sub3Handles) window.sub3Handles.clear();
-        sel2.style.display = 'none';
-        if(sel3) sel3.style.display = 'none';
-        sel2.innerHTML = `<option value="">-- [ ${val} ] --</option>`;
+    window.sub2Handles.clear();
+    if (window.sub3Handles) window.sub3Handles.clear();
+    sel2.style.display = 'none';
+    if (sel3) sel3.style.display = 'none';
+    sel2.innerHTML = `<option value="">-- [ ${_escOpt(val)} ] --</option>`;
 
-        await window.loadDatasetConfig(window.currentImagesHandle);
-        await window.loadPendingTagsStore(window.currentImagesHandle);
-
-        revokeImageFileUrls(imageFiles);
-        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
-
-        const fileEntriesSub1 = [];
-        for await (const entry of window.currentImagesHandle.values()) {
-            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-                fileEntriesSub1.push(entry);
-            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
-                window.sub2Handles.set(entry.name, entry);
-            }
-        }
-        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub1, window.currentImagesHandle);
-
-        if (configNeedsSave) await window.saveDatasetConfig(window.currentImagesHandle);
-
-        if (window.sub2Handles.size > 0) {
-            sel2.style.display = 'inline-block';
-            for (let path of Array.from(window.sub2Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-                sel2.innerHTML += `<option value="${path}">${path}</option>`;
-            }
-        }
-    } catch (e) {
-        console.error('loadSubDir1 failed:', e);
-        if (window.showAlert) window.showAlert('Error loading subfolder: ' + (e.message || e), 'error');
-    }
-    window.finishLoading();
+    await _loadFolderLevel(window.sub1Handles.get(val), 1, subdirs =>
+        _showSubdirSelect(sel2, window.sub2Handles, subdirs));
 };
 
 window.loadSubDir2 = async function() {
@@ -789,77 +804,18 @@ window.loadSubDir2 = async function() {
     const sel3 = document.getElementById('sub-dir-3');
     if (!val) { await window.loadSubDir1(); return; }
 
-    // FIX: mesmo motivo de window.loadGallery — sem isto, qualquer erro no
-    // meio do processo deixava a lista vazia até dar F5.
-    try {
-        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-        const targetHandle = window.sub2Handles.get(val);
-        window.currentImagesHandle = targetHandle;
-        if(window.sub3Handles) window.sub3Handles.clear();
-        if(sel3) { sel3.style.display = 'none'; sel3.innerHTML = `<option value="">-- [ ${val} ] --</option>`; }
+    if (window.sub3Handles) window.sub3Handles.clear();
+    if (sel3) { sel3.style.display = 'none'; sel3.innerHTML = `<option value="">-- [ ${_escOpt(val)} ] --</option>`; }
 
-        await window.loadDatasetConfig(targetHandle);
-        await window.loadPendingTagsStore(targetHandle);
-
-        revokeImageFileUrls(imageFiles);
-        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
-
-        const fileEntriesSub2 = [];
-        for await (const entry of targetHandle.values()) {
-            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-                fileEntriesSub2.push(entry);
-            } else if (entry.kind === 'directory' && entry.name !== '_trash' && entry.name !== '_archive' && entry.name !== '_rename_cache') {
-                if(window.sub3Handles) window.sub3Handles.set(entry.name, entry);
-            }
-        }
-        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub2, targetHandle);
-
-        if (window.sub3Handles && window.sub3Handles.size > 0 && sel3) {
-            sel3.style.display = 'inline-block';
-            for (let path of Array.from(window.sub3Handles.keys()).sort((a,b) => a.localeCompare(b))) {
-                sel3.innerHTML += `<option value="${path}">${path}</option>`;
-            }
-        }
-
-        if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
-    } catch (e) {
-        console.error('loadSubDir2 failed:', e);
-        if (window.showAlert) window.showAlert('Error loading subfolder: ' + (e.message || e), 'error');
-    }
-    window.finishLoading();
+    await _loadFolderLevel(window.sub2Handles.get(val), 2, subdirs => {
+        if (window.sub3Handles) _showSubdirSelect(sel3, window.sub3Handles, subdirs);
+    });
 };
 
 window.loadSubDir3 = async function() {
     const val = document.getElementById('sub-dir-3').value;
     if (!val) { await window.loadSubDir2(); return; }
-
-    // FIX: mesmo motivo de window.loadGallery — sem isto, qualquer erro no
-    // meio do processo deixava a lista vazia até dar F5.
-    try {
-        if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
-        const targetHandle = window.sub3Handles.get(val);
-        window.currentImagesHandle = targetHandle;
-
-        await window.loadDatasetConfig(targetHandle);
-        await window.loadPendingTagsStore(targetHandle);
-
-        revokeImageFileUrls(imageFiles);
-        imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
-
-        const fileEntriesSub3 = [];
-        for await (const entry of targetHandle.values()) {
-            if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
-                fileEntriesSub3.push(entry);
-            }
-        }
-        const configNeedsSave = await window.processImageEntriesBatched(fileEntriesSub3, targetHandle);
-
-        if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
-    } catch (e) {
-        console.error('loadSubDir3 failed:', e);
-        if (window.showAlert) window.showAlert('Error loading subfolder: ' + (e.message || e), 'error');
-    }
-    window.finishLoading();
+    await _loadFolderLevel(window.sub3Handles.get(val), 3, null);
 };
 
 window.detectFormat = function(text) {
@@ -873,13 +829,13 @@ window.detectFormat = function(text) {
 window.processSingleImage = async function(entry, parentHandle, configNeedsSave) {
     const file = await entry.getFile();
     const baseName = entry.name.substring(0, entry.name.lastIndexOf('.'));
-    let content = ""; let hasFile = false; let ext = "txt"; 
-    
+    let content = ""; let hasFile = false; let ext = "txt";
+
     try {
         const txtHandle = await parentHandle.getFileHandle(baseName + '.txt');
         content = await (await txtHandle.getFile()).text(); hasFile = true; ext = "txt";
     } catch(e) {}
-    
+
     if(!hasFile) {
         try {
             const jsonHandle = await parentHandle.getFileHandle(baseName + '.json');
@@ -928,21 +884,21 @@ window.finishLoading = function() {
     });
 
     document.getElementById('list-count').textContent = imageFiles.length;
-    
+
     window.updateLastEditedUI();
     window.updateTagsDatalist();
     if(typeof window.updateUnhideButton === 'function') window.updateUnhideButton();
-    if(typeof window.renderImageList === 'function') window.renderImageList(); 
+    if(typeof window.renderImageList === 'function') window.renderImageList();
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.checkBatchReadyState === "function") window.checkBatchReadyState();
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
-    
-    if (imageFiles.length > 0) { 
+
+    if (imageFiles.length > 0) {
         document.getElementById('btn-save-all').style.display = 'inline-block';
         document.getElementById('btn-save-active').style.display = 'inline-block';
         const activeFilter = document.getElementById('btn-active-tag-filter');
         if (activeFilter) activeFilter.style.display = 'inline-block';
-        if(typeof window.handleListClick === 'function') window.handleListClick(0, false, false); 
+        if(typeof window.handleListClick === 'function') window.handleListClick(0, false, false);
     } else {
         document.getElementById('btn-save-all').style.display = 'none';
         document.getElementById('btn-save-active').style.display = 'none';
@@ -1029,7 +985,7 @@ window.updateTagsDatalist = function() {
     const frag = document.createDocumentFragment();
     Array.from(masterTagSet).sort().forEach(tag => {
         const opt = document.createElement('option');
-        opt.value = tag; 
+        opt.value = tag;
         frag.appendChild(opt);
     });
     datalist.appendChild(frag);
@@ -1065,17 +1021,17 @@ window.confirmReplaceTag = async function() {
     const oldTagsSet = new Set(oldTags);
     let replacedCount = 0;
     let indicesToProcess = replaceScope === 'active' ? Array.from(selectedIndices) : imageFiles.map((_, i) => i);
-    let modifiedFiles = []; 
+    let modifiedFiles = [];
 
     for (const idx of indicesToProcess) {
         const img = imageFiles[idx];
-        if (img.hidden) continue; 
-        if (img.type === 'tags' && img.content) {
+        if (img.hidden) continue;
+        if (img.content) {
             let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
             const hasAny = tags.some(t => oldTagsSet.has(t));
             if (hasAny) {
                 tags = tags.map(t => oldTagsSet.has(t) ? newTag : t);
-                tags = [...new Set(tags)]; 
+                tags = [...new Set(tags)];
                 img.content = tags.join(', ');
                 img.hasFile = true;
                 modifiedFiles.push(img);
@@ -1101,8 +1057,7 @@ window.confirmReplaceTag = async function() {
     window.markDirty(modifiedFiles);
     masterTagSet.clear();
     imageFiles.forEach(img => {
-        if(img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if(t.trim()) masterTagSet.add(t.trim()); });
-        else if (img.type === 'nl' && img.content) masterTagSet.add(img.content.trim());
+        if (img.content) img.content.split(',').forEach(t => { if(t.trim()) masterTagSet.add(t.trim()); });
     });
     window.updateTagsDatalist();
 
@@ -1240,7 +1195,7 @@ window.discardAllSuggestions = async function() {
 };
 
 window.reorderModeActive = false;
-let _reorderDragImgs = null; 
+let _reorderDragImgs = null;
 window.toggleReorderMode = function() {
     window.reorderModeActive = !window.reorderModeActive;
     const btn = document.getElementById('btn-reorder-mode');
@@ -1256,7 +1211,7 @@ window.toggleReorderMode = function() {
 window.reorderImagesInList = function(movedImgs, targetImg, insertAfter) {
     if (!movedImgs || movedImgs.length === 0 || !targetImg) return;
     const movedSet = new Set(movedImgs);
-    if (movedSet.has(targetImg)) return; 
+    if (movedSet.has(targetImg)) return;
     const selectedBaseNamesBefore = Array.from(selectedIndices).map(i => imageFiles[i] ? imageFiles[i].baseName : null).filter(Boolean);
     const movedInOrder = imageFiles.filter(f => movedSet.has(f));
 
@@ -1272,7 +1227,7 @@ window.reorderImagesInList = function(movedImgs, targetImg, insertAfter) {
     });
     if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
     selectedIndices.clear();
-    
+
     if (typeof window.renderImageList === 'function') window.renderImageList();
     imageFiles.forEach((f, i) => { if (selectedBaseNamesBefore.includes(f.baseName)) selectedIndices.add(i); });
     if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
@@ -1340,21 +1295,10 @@ reorderStyle.innerHTML = `
 document.head.appendChild(reorderStyle);
 
 /* ---------------------------------------------------------------------
-   GUARDA DE VISIBILIDADE DA SELEÇÃO (FIX)
-   ---------------------------------------------------------------------
-   Antes, nenhuma das ações de filtro (busca por nome, tag pinada 📌,
-   lógica AND/OR/XOR/NOT, filtro Tags/NL, ou Hide 👁️) removia uma imagem
-   de selectedIndices quando ela deixava de estar visível na lista da
-   esquerda. Resultado: a Active Image continuava mostrando/editando
-   tags de uma imagem que já não aparecia mais na lista, dando a
-   impressão de que a tag "persistia" mesmo depois de removida/alterada
-   sob um filtro ativo.
-
-   window.pruneSelectionToVisible() varre a seleção atual e tira dela
-   qualquer imagem hidden ou com display:none no DOM. Ela é chamada no
-   final de window.applyFilters() (a função por onde TODOS os filtros
-   acima já passam), então não é preciso duplicar a chamada em cada
-   botão de filtro separadamente.
+   GUARDA DE VISIBILIDADE DA SELEÇÃO
+   window.pruneSelectionToVisible() tira da seleção qualquer imagem hidden
+   ou com display:none no DOM. É chamada no final de window.applyFilters(),
+   por onde todos os filtros passam.
 --------------------------------------------------------------------- */
 window.pruneSelectionToVisible = function() {
     if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return false;

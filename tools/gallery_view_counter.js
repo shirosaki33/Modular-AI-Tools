@@ -242,6 +242,27 @@ async function registerImageView(fileName) {
     updateViewCountBadge(fileName);
 }
 
+/* Rename (manual, batch ou auto-rename): as contagens acompanham o arquivo.
+   Antes ficavam presas no nome antigo e a imagem renomeada voltava a 0. */
+function renameViewCountEntry(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+    let moved = false;
+    ['weekCounts', 'monthCounts'].forEach(k => {
+        const map = viewCountsData[k];
+        if (map && map[oldName]) { map[newName] = (map[newName] || 0) + map[oldName]; delete map[oldName]; moved = true; }
+    });
+    if (moved) persistViewCounts();
+}
+
+/* Mudou a regra de reset nas Settings: só troca a chave do período atual,
+   SEM zerar (antes, trocar o dia de reset apagava as contagens da semana/mês). */
+function rekeyViewCountsAfterSettingsChange() {
+    viewCountsData.weekKey  = getCurrentWeekKey();
+    viewCountsData.monthKey = getCurrentMonthKey();
+    persistViewCounts();
+    if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges();
+}
+
 function getImageViewCounts(fileName) {
     return {
         week:  (viewCountsData.weekCounts  && viewCountsData.weekCounts[fileName])  || 0,
@@ -381,9 +402,7 @@ function onViewCountWeeklyDayChange() {
     if (!sel) return;
     viewCountWeeklyResetDay = parseInt(sel.value, 10) || 0;
     saveSettingsToDB();
-    if (typeof currentHandle !== 'undefined' && currentHandle && typeof loadViewCountsIndex === 'function') {
-        loadViewCountsIndex(currentHandle).then(() => { if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges(); });
-    }
+    if (typeof currentHandle !== 'undefined' && currentHandle) rekeyViewCountsAfterSettingsChange();
 }
 
 // Called when the "Monthly reset rule" <select> changes
@@ -393,9 +412,7 @@ function onViewCountMonthlyModeChange() {
     viewCountMonthlyMode = sel.value;
     updateViewCountSettingsUI();
     saveSettingsToDB();
-    if (typeof currentHandle !== 'undefined' && currentHandle && typeof loadViewCountsIndex === 'function') {
-        loadViewCountsIndex(currentHandle).then(() => { if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges(); });
-    }
+    if (typeof currentHandle !== 'undefined' && currentHandle) rekeyViewCountsAfterSettingsChange();
 }
 
 // Called when the custom "reset day of month" number input changes
@@ -408,7 +425,5 @@ function onViewCountMonthlyCustomDayChange() {
     input.value = val;
     viewCountMonthlyCustomDay = val;
     saveSettingsToDB();
-    if (typeof currentHandle !== 'undefined' && currentHandle && typeof loadViewCountsIndex === 'function') {
-        loadViewCountsIndex(currentHandle).then(() => { if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges(); });
-    }
+    if (typeof currentHandle !== 'undefined' && currentHandle) rekeyViewCountsAfterSettingsChange();
 }

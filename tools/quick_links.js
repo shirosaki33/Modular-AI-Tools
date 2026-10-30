@@ -6,8 +6,9 @@
  * Versão LOCAL: se o .html de outro app não estiver instalado, mostra
  * "not installed" no lugar do botão Local (o link Online continua).
  * Detecção: 1) tools/installed_tools.js (gerado pelos .bat de instalação)
- *           2) em http(s)/localhost, teste HEAD em cada arquivo
- *           3) em file:// sem manifesto, assume que existe (comportamento antigo)
+ *           2) localhost com server_max.py: GET /api/installed_tools (1 requisição)
+ *           3) outro servidor http: teste HEAD em cada arquivo
+ *           4) em file:// sem manifesto, assume que existe (comportamento antigo)
  * Se estiver na versão Online (GitHub Pages), o botão Local fica desabilitado.
  */
 (function() {
@@ -55,10 +56,10 @@
         .ql-link-online { background: #0f1e3a; color: #4db8ff; border: 1px solid #1e3a6a; }
         .ql-link-online:hover { background: #142a55; color: #9ecfff; border-color: #4db8ff; }
 
-        /* Versão Web: Local indisponível */
+        /* Web version: Local unavailable */
         .ql-link-disabled { background: #111; color: #555; border: 1px solid #222; cursor: not-allowed; text-decoration: line-through; }
 
-        /* Versão local: HTML não encontrado */
+        /* Local version: HTML file not found */
         .ql-link-missing { background: #241a08; color: #e8c22e; border: 1px solid #5a4510; cursor: help; }
 
         .ql-no-url { font-size: 10px; color: #333; padding: 3px 6px; }
@@ -74,14 +75,18 @@
         { key: 'png_reader',       icon: '🕵️', label: 'PNG Metadata Reader',    localFile: 'png metadata reader.html',   onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/png%20metadata%20reader.html' },
         { key: 'lora_reader',      icon: '📋',  label: 'LoRA Metadata Reader',   localFile: 'Lora Metadata Reader.html',  onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Metadata%20Reader.html' },
         { key: 'gallery',          icon: '🖼️', label: 'Gallery Holder',         localFile: 'gallery holder.html',        onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/gallery%20holder.html' },
-        { key: 'tag_manager',      icon: '🏷️', label: 'Tag Manager',            localFile: 'tag manager.html',           onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/tag%20manager.html' },        
+        { key: 'tag_manager',      icon: '🏷️', label: 'Tag Manager',            localFile: 'tag manager.html',           onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/tag%20manager.html' },
         { key: 'lora_calc',        icon: '🧮',  label: 'LoRA Calculator',        localFile: 'lora calculator.html',       onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/lora%20calculator.html' },
         { key: 'lora_evaluate',    icon: '📚',  label: 'Lora Evaluate',          localFile: 'Lora Evaluate.html',         onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Evaluate.html' },
         { key: 'prompt_helper',    icon: '✨',  label: 'Prompt Helper',          localFile: 'prompt helper.html',         onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/prompt%20helper.html' }
     ];
 
-    // Verifica se não é ambiente local (file://) nem um servidor de desenvolvimento (localhost)
-    const isRunningOnline = window.location.protocol !== 'file:' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', '::1'];
+    const isLocalServer = /^https?:$/.test(window.location.protocol) && LOCAL_HOSTS.includes(window.location.hostname);
+    // Não é file:// nem um servidor local
+    const isRunningOnline = window.location.protocol !== 'file:' && !LOCAL_HOSTS.includes(window.location.hostname);
+
+    const esc = (v) => String(v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
     // Pasta onde este script vive (tools/) — de onde sai o installed_tools.js
     const BASE = (function() {
@@ -114,7 +119,21 @@
             return;
         }
 
-        // 2) localhost: pergunta ao servidor se cada arquivo existe
+        // 2) server_max.py: uma requisição lista todos os .html da pasta
+        if (isLocalServer) {
+            try {
+                const r = await fetch('/api/installed_tools', { cache: 'no-store' });
+                if (r.ok) {
+                    const names = await r.json();
+                    if (Array.isArray(names)) {
+                        installedList = names.map(n => String(n).toLowerCase());
+                        return;
+                    }
+                }
+            } catch (e) { /* servidor sem o endpoint: cai no teste HEAD */ }
+        }
+
+        // 3) outro servidor http: pergunta se cada arquivo existe
         if (/^https?:$/.test(window.location.protocol)) {
             const found = [];
             await Promise.all(APPS.map(async app => {
@@ -125,27 +144,26 @@
             }));
             installedList = found;
         }
-        // 3) file:// sem manifesto: mantém null (assume instalado)
+        // 4) file:// sem manifesto: mantém null (assume instalado)
     }
 
-    // Sistema de detecção de app robusto
+    // Detecção da página atual
     function detectCurrentApp() {
         const title = document.title || '';
         const uiTitle = document.getElementById('app-title') ? document.getElementById('app-title').textContent : '';
         const filename = decodeURIComponent(window.location.pathname.split('/').pop() || '');
 
-        // Verificações Específicas primeiro para evitar conflitos
+        // Verificações específicas primeiro para evitar conflitos
         if (/^index\.html$/i.test(filename) || /modular ai tools/i.test(title)) return 'hub';
         if (/lora[ _-]?gallery/i.test(filename) || /lora gallery/i.test(title) || /lora gallery/i.test(uiTitle)) return 'lora_gallery';
         if (/interrogator/i.test(filename) || /interrogator/i.test(title) || /interrogator/i.test(uiTitle)) return 'tag_interrogator';
         if (/evaluate/i.test(uiTitle) || /evaluate/i.test(title) || /evaluate/i.test(filename)) return 'lora_evaluate';
         if (/calculator/i.test(uiTitle) || /calculator/i.test(title) || /calculator/i.test(filename)) return 'lora_calc';
 
-        // Busca específica por 'lora' e 'png', sem a palavra genérica 'reader'
+        // 'lora' e 'png', sem a palavra genérica 'reader'
         if (/lora/i.test(uiTitle) || /lora/i.test(title)) return 'lora_reader';
         if (/png/i.test(uiTitle) || /png/i.test(title)) return 'png_reader';
 
-        // Verificações Padrão
         if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
         if (/prompt helper/i.test(uiTitle) || /prompt helper/i.test(title) || /prompt.?helper/i.test(filename)) return 'prompt_helper';
         if (/tag/i.test(uiTitle) || /tag/i.test(title)) return 'tag_manager';
@@ -213,7 +231,7 @@
                 if (isCurrent) {
                     row.innerHTML = `
                         <span class="ql-icon">${app.icon}</span>
-                        <span class="ql-label" style="color:#556;">${app.label}</span>
+                        <span class="ql-label" style="color:#556;">${esc(app.label)}</span>
                         <span class="ql-current-badge">current</span>
                     `;
                     balloon.appendChild(row);
@@ -222,19 +240,19 @@
 
                 let localBtnHtml;
                 if (isRunningOnline) {
-                    localBtnHtml = `<span class="ql-link ql-link-disabled" title="Indisponível na versão Web">Local ↗</span>`;
+                    localBtnHtml = `<span class="ql-link ql-link-disabled" title="Not available in the web version">Local ↗</span>`;
                 } else if (!isInstalled(app)) {
-                    localBtnHtml = `<span class="ql-link ql-link-missing" title="${app.localFile} não encontrado — rode install_tools.bat para instalar">not installed</span>`;
+                    localBtnHtml = `<span class="ql-link ql-link-missing" title="${esc(app.localFile)} not found — run install_tools.bat to install it">not installed</span>`;
                 } else {
                     localBtnHtml = `<a class="ql-link ql-link-local" href="${encodeURI(app.localFile)}" target="_blank" rel="noopener">Local ↗</a>`;
                 }
 
                 row.innerHTML = `
                     <span class="ql-icon">${app.icon}</span>
-                    <span class="ql-label">${app.label}</span>
+                    <span class="ql-label">${esc(app.label)}</span>
                     ${localBtnHtml}
                     ${app.onlineUrl
-                        ? `<a class="ql-link ql-link-online" href="${app.onlineUrl}" target="_blank">Online ↗</a>`
+                        ? `<a class="ql-link ql-link-online" href="${app.onlineUrl}" target="_blank" rel="noopener">Online ↗</a>`
                         : `<span class="ql-no-url">—</span>`
                     }
                 `;
@@ -246,7 +264,6 @@
         detectInstalled();
     }
 
-    // Execução à prova de falhas
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initQuickLinks);
     } else {

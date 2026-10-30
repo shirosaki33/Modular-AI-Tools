@@ -1,23 +1,28 @@
 /* =========================================================================
-   DANBOORU / E621 AUTOCOMPLETE (extraído de tagmanager_caption_tag.js)
+   DANBOORU / E621 AUTOCOMPLETE
    ---------------------------------------------------------------------
-   Cuida só da caixinha de sugestões que aparece ao digitar num input de
-   tag (active/master/preset/replace). Depende de window.dbSearchTagMatches
-   (tagmanager_danbooru_core.js) e window.openDanbooruTagInfoPopout
-   (tagmanager_danbooru_panel.js), ambos já carregados antes deste arquivo.
+   Caixinha de sugestões que aparece ao digitar num input de tag
+   (active/master/preset/replace). As duas fontes são consultadas pelas
+   funções dos cores (window.dbSearchTagMatches / window.e621SearchTagMatches),
+   que já usam o cache compartilhado e resolvem aliases.
 
-   NOVO (cor por origem da sugestão): o nome de cada sugestão agora muda de
-   cor conforme de onde a tag veio — ver getSuggestionStyle() no final.
-   - Danbooru: cor da categoria (como sempre foi)
-   - e621 / e926: rosa dos alias (#f48fb1), um pouco mais fraco
-   - nenhuma das duas: cor da categoria, em tom mais escuro
+   CORES: só 3, uma por origem (window.TAG_SOURCE_COLORS, booru_core):
+   - Danbooru (azul)  — também quando a tag existe nos dois sites
+   - e621 / e926 (rosa)
+   - desconhecida (cinza) — não existe em nenhum dos dois (ex.: tag só do dataset)
+
+   Chave mestra: com "Enable Tag Interrogator" desligado
+   (window.danbooruInfoEnabled === false) NENHUMA consulta à API é feita.
+   Todo texto vindo da API/tags entra no HTML via esc().
 ========================================================================= */
+
+const _acEsc = (v) => (typeof window.escHTML === 'function' ? window.escHTML(v) : String(v));
 
 window.addEventListener('DOMContentLoaded', () => {
     setupDanbooruAutocomplete('active-add-input'); setupDanbooruAutocomplete('master-add-input');
     setupDanbooruAutocomplete('preset-add-input'); setupDanbooruAutocomplete('replace-new-tag', 'down');
 });
- 
+
 window.autocompleteUsedOnly = { active: false, master: false, replace: false };
 const AUTOCOMPLETE_SCOPE_BY_INPUT = { 'active-add-input': 'active', 'master-add-input': 'master', 'replace-new-tag': 'replace' };
 
@@ -29,21 +34,39 @@ window.applyAutocompleteButtonState = function(scope) {
         btn.title = 'Autocomplete: showing only tags already used in this dataset';
     } else {
         btn.textContent = '🌐'; btn.classList.remove('active');
-        btn.title = 'Autocomplete: showing full Danbooru list';
+        btn.title = 'Autocomplete: showing Danbooru / e621 suggestions';
     }
 };
- 
+
 window.toggleAutocompleteMode = function(scope) {
     window.autocompleteUsedOnly[scope] = !window.autocompleteUsedOnly[scope];
     window.applyAutocompleteButtonState(scope);
     if (typeof window.saveSetting === 'function') window.saveSetting('autocomplete-used-only-' + scope, window.autocompleteUsedOnly[scope]);
 };
- 
+
+/* ---------- ORIGEM DE UMA TAG (só olha os caches, sem rede) ---------- */
+const _acKnown = (e) => !!(e && (e.count > 0 || e.aliasTo || e.wikiName));
+
+window.getTagSource = function (tag) {
+    const key = String(tag || '').trim().replace(/_/g, ' ').toLowerCase();
+    if (!key) return 'unknown';
+    const dbUnknown = typeof window.isTagUnknownDb === 'function' && window.isTagUnknownDb(key);
+    const e6Unknown = typeof window.isTagUnknownE621 === 'function' && window.isTagUnknownE621(key);
+    if (!dbUnknown && _acKnown(window.danbooruCache && window.danbooruCache[key])) return 'danbooru';
+    if (window.showE621 && !e6Unknown && _acKnown(window.e621Cache && window.e621Cache[key])) return 'e621';
+    return 'unknown';
+};
+
+function _acColor(source) {
+    const c = window.TAG_SOURCE_COLORS || { danbooru: '#4db8ff', e621: '#f48fb1', unknown: '#8a8a8a' };
+    return c[source] || c.unknown;
+}
+
 function getUsedTagSuggestions(query) {
     const counts = new Map();
     const files = (typeof imageFiles !== 'undefined') ? imageFiles : [];
     files.forEach(img => {
-        if (img.hidden || img.type !== 'tags' || !img.content) return;
+        if (img.hidden || !img.content) return;
         img.content.split(',').forEach(t => {
             const cleanTag = t.trim();
             if (!cleanTag) return;
@@ -52,8 +75,38 @@ function getUsedTagSuggestions(query) {
     });
     return Array.from(counts.entries()).filter(([tag]) => tag.toLowerCase().includes(query)).sort((a, b) => b[1] - a[1]).slice(0, 8);
 }
- 
+
+/* Junta Danbooru + e621 numa lista só (nome normalizado com espaço). */
+async function fetchCombinedSuggestions(val, limit) {
+    const jobs = [
+        typeof window.dbSearchTagMatches === 'function' ? window.dbSearchTagMatches(val, limit).catch(() => []) : Promise.resolve([]),
+        (window.showE621 && typeof window.e621SearchTagMatches === 'function') ? window.e621SearchTagMatches(val, limit).catch(() => []) : Promise.resolve([])
+    ];
+    const [dbList, e6List] = await Promise.all(jobs);
+    const merged = new Map();
+    const add = (list, source) => (list || []).forEach(t => {
+        const name = String(t.name || '').replace(/_/g, ' ');
+        const key = name.toLowerCase();
+        const ex = merged.get(key);
+        // e621 alias segue a "Main alias source" (padrão: Danbooru manda).
+        const dbMain = source === 'e621' && window.isDanbooruMainTag ? window.isDanbooruMainTag(key) : false;
+        const useAlias = !!t.isAlias && (source !== 'e621' || !window.allowE621Alias || window.allowE621Alias(dbMain || (ex && ex.sources.includes('danbooru') && !ex.isAlias)));
+        if (!ex) {
+            merged.set(key, { name, post_count: t.post_count || 0, isAlias: useAlias, aliasTo: useAlias ? (t.aliasTo || null) : null, aliasSource: useAlias ? source : null, isDeprecated: useAlias && !!t.isDeprecated, sources: [source] });
+        } else {
+            if (!ex.sources.includes(source)) ex.sources.push(source);
+            ex.post_count = Math.max(ex.post_count, t.post_count || 0);
+            const e6First = source === 'e621' && window.getAliasPrimarySource && window.getAliasPrimarySource() === 'e621';
+            if (useAlias && (!ex.isAlias || e6First)) { ex.isAlias = true; ex.aliasTo = t.aliasTo; ex.aliasSource = source; ex.isDeprecated = true; }
+        }
+    });
+    add(dbList, 'danbooru');
+    add(e6List, 'e621');
+    return Array.from(merged.values()).sort((a, b) => b.post_count - a.post_count).slice(0, 10);
+}
+
 function setupDanbooruAutocomplete(inputId, direction = 'up') {
+    const esc = _acEsc;
     const input = document.getElementById(inputId);
     if(!input) return;
     const wrapper = document.createElement('div');
@@ -62,138 +115,77 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
     const suggBox = document.createElement('div');
     suggBox.className = direction === 'down' ? 'db-autocomplete direction-down' : 'db-autocomplete';
     suggBox.style.display = 'none'; wrapper.appendChild(suggBox);
- 
+
     function renderUsedOnlySuggestions(query) {
         const matches = getUsedTagSuggestions(query);
         suggBox.innerHTML = '';
         if (matches.length === 0) { suggBox.style.display = 'none'; return; }
         matches.forEach(([tag, count]) => {
             const div = document.createElement('div'); div.className = 'db-sugg-item';
-            div.innerHTML = `<span style="color:#00ff99; font-weight:bold;">${tag}</span><span style="color:#666;">${count}</span>`;
+            const color = _acColor(window.getTagSource(tag));
+            div.innerHTML = `<span style="color:${color}; font-weight:bold;">${esc(tag)}</span><span style="color:#666;">${count}</span>`;
             div.onclick = () => { input.value = tag; suggBox.style.display = 'none'; input.focus(); };
             suggBox.appendChild(div);
         });
         suggBox.style.display = 'block';
     }
- 
+
     let timeout = null;
+    let token = 0;
     input.addEventListener('input', (e) => {
         clearTimeout(timeout);
         const rawVal = e.target.value.trim().toLowerCase();
         if(rawVal.length < 2) { suggBox.style.display = 'none'; return; }
         const scope = AUTOCOMPLETE_SCOPE_BY_INPUT[inputId];
-        if (scope && window.autocompleteUsedOnly[scope]) { renderUsedOnlySuggestions(rawVal); return; }
-        
+        if (window.danbooruInfoEnabled === false || (scope && window.autocompleteUsedOnly[scope])) { renderUsedOnlySuggestions(rawVal); return; }
+
         const val = rawVal.replace(/ /g, '_');
+        const myToken = ++token;
         timeout = setTimeout(async () => {
             try {
-                let combinedTags = [];
-                const dbResults = typeof window.dbSearchTagMatches === 'function' ? await window.dbSearchTagMatches(val, 6) : [];
- 
-                // dbSearchTagMatches já devolve tudo resolvido: tags reais e tags-alias
-                // (ex: "anime screencap" -> "anime screenshot") já com a contagem REAL
-                // da tag de destino (consequente) e a informação pra mostrar a seta ➜.
-                dbResults.forEach(t => { combinedTags.push({ name: t.name, post_count: t.post_count, category: t.category, isAlias: t.isAlias, aliasTo: t.aliasTo, isDeprecated: t.isDeprecated }); });
- 
-                if (window.showE621) {
-                    const host = window.showE621Sfw ? 'e926.net' : 'e621.net';
-                    try {
-                        const res = await fetch(`https://${host}/tags.json?search[name_matches]=*${val}*&limit=6&search[order]=count`);
-                        if (res.ok) {
-                            const data = await res.json();
-                            const tagsArr = Array.isArray(data) ? data : (data.tags || []);
-                            tagsArr.forEach(t => {
-                                const standardizedName = t.name.replace(/_/g, ' ');
-                                if (!combinedTags.some(ct => ct.name.replace(/_/g, ' ') === standardizedName)) {
-                                    // source:'e621' -> usado por getSuggestionStyle() pra pintar de rosa
-                                    combinedTags.push({ name: t.name, post_count: parseInt(t.post_count) || 0, category: t.category, isAlias: false, source: 'e621' });
-                                }
-                            });
-                        }
-                    } catch(err) {}
-                }
- 
-                if (combinedTags.length === 0) {
-                    const cachedMatches = [];
-                    if (window.danbooruCache) {
-                        Object.keys(window.danbooruCache).forEach(k => {
-                            if (k.toLowerCase().includes(rawVal)) {
-                                const cachedEntry = window.danbooruCache[k];
-                                if (cachedEntry.aliasTo) {
-                                    const consequentKey = cachedEntry.aliasTo.toLowerCase();
-                                    const consequentInfo = window.danbooruCache[consequentKey];
-                                    cachedMatches.push({ name: k, post_count: (consequentInfo && consequentInfo.count) || 0, category: 0, isAlias: true, aliasTo: cachedEntry.aliasTo, isDeprecated: true });
-                                } else {
-                                    cachedMatches.push({ name: k, post_count: cachedEntry.count, category: 0, isAlias: false, isDeprecated: !!cachedEntry.isDeprecated });
-                                }
-                            }
-                        });
-                    }
-                    combinedTags = cachedMatches.sort((a,b) => b.post_count - a.post_count).slice(0, 6);
-                } else { combinedTags.sort((a,b) => b.post_count - a.post_count); }
- 
+                const list = await fetchCombinedSuggestions(val, 6);
+                if (myToken !== token) return; // resposta velha (o usuário continuou digitando)
+
+                // O usuário pode ter desligado a chave mestra enquanto a busca rodava.
+                if (window.danbooruInfoEnabled === false) { suggBox.style.display = 'none'; return; }
+
                 suggBox.innerHTML = '';
-                if(combinedTags.length === 0) { suggBox.style.display = 'none'; return; }
-                
-                combinedTags.forEach(t => {
+                if (list.length === 0) { renderUsedOnlySuggestions(rawVal); return; }
+
+                list.forEach(t => {
                     const div = document.createElement('div'); div.className = 'db-sugg-item';
-                    const sty = getSuggestionStyle(t);
-                    const color = sty.color;
-                    const displayName = t.name.replace(/_/g, ' ');
-                    const aliasToSpaced = t.isAlias ? t.aliasTo.replace(/_/g, ' ') : '';
-                    
-                    const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${aliasToSpaced}</span>` : '';
-                    const infoHtml = t.isAlias ? `<span class="tag-alias-info-icon" title="View info about the original tag">❓</span>` : '';
+                    const source = t.sources.includes('danbooru') ? 'danbooru' : 'e621';
+                    const color = _acColor(source);
+                    const displayName = t.name;
+                    const aliasToSpaced = t.isAlias && t.aliasTo ? t.aliasTo.replace(/_/g, ' ') : '';
+
+                    // Seta ➜ do alias sempre dourada (classe .db-alias-arrow) = "tem substituição para a tag principal".
+                    const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${esc(aliasToSpaced)}</span>` : '';
+                    const infoHtml = (t.isAlias && t.aliasSource === 'danbooru') ? `<span class="tag-alias-info-icon" title="View info about the original tag">❓</span>` : '';
                     const countHtml = (t.post_count > 0)
                         ? Number(t.post_count).toLocaleString()
-                        : (t.isDeprecated ? 'Deprecated' : Number(t.post_count).toLocaleString());
-                    
-                    div.innerHTML = `<span style="color:${color}; opacity:${sty.opacity}; font-weight:bold;">${displayName}${arrowHtml}</span>
+                        : (t.isDeprecated ? 'Deprecated' : '0');
+                    const bothTitle = t.sources.length > 1 ? ' title="Found on Danbooru and e621"' : '';
+
+                    div.innerHTML = `<span style="color:${color}; font-weight:bold;"${bothTitle}>${esc(displayName)}${arrowHtml}</span>
                         <div style="display:flex; align-items:center; gap:5px;">${infoHtml}<span style="color:#666;">${countHtml}</span></div>`;
-                    
+
+                    const keepAlias = (t.aliasSource === 'e621' ? window.e621AliasClickBehavior : window.aliasClickBehavior) === 'keep';
                     div.onclick = () => {
-                        input.value = (t.isAlias && window.aliasClickBehavior !== 'keep') ? t.aliasTo.replace(/_/g, ' ') : displayName;
+                        input.value = (t.isAlias && aliasToSpaced && !keepAlias) ? aliasToSpaced : displayName;
                         suggBox.style.display = 'none'; input.focus();
                     };
-                    if (t.isAlias) {
-                        const infoIcon = div.querySelector('.tag-alias-info-icon');
-                        if (infoIcon) infoIcon.onclick = (e) => { 
-                            e.stopPropagation(); 
-                            if(typeof window.openDanbooruTagInfoPopout === 'function') {
-                                window.openDanbooruTagInfoPopout(aliasToSpaced, displayName); 
-                            }
-                        };
-                    }
+                    const infoIcon = div.querySelector('.tag-alias-info-icon');
+                    if (infoIcon) infoIcon.onclick = (ev) => {
+                        ev.stopPropagation();
+                        if (typeof window.openDanbooruTagInfoPopout === 'function') window.openDanbooruTagInfoPopout(aliasToSpaced, displayName);
+                    };
                     suggBox.appendChild(div);
                 });
                 suggBox.style.display = 'block';
             } catch(err) {}
         }, 400);
     });
- 
+
     document.addEventListener('click', (e) => { if(!wrapper.contains(e.target)) suggBox.style.display = 'none'; });
 }
-
-/* Define a cor/opacidade do nome na sugestão conforme a ORIGEM da tag:
-   - Danbooru: cor da categoria (normal)
-   - e621/e926: rosa dos alias (#f48fb1), um pouco mais fraco
-   - nenhuma das duas: cor da categoria, mais escura */
-function getSuggestionStyle(t) {
-    const key = t.name.replace(/_/g, ' ').toLowerCase();
-    let source = (t.source === 'e621') ? 'e621' : null;
-
-    if (!source) {
-        const db = window.danbooruCache && window.danbooruCache[key];
-        const e6 = window.e621Cache && window.e621Cache[key];
-        if (t.post_count > 0 || t.isAlias || (db && (db.count > 0 || db.aliasTo))) source = 'danbooru';
-        else if (e6 && (e6.count > 0 || e6.aliasTo)) source = 'e621';
-        else source = 'none';
-    }
-
-    const baseColor = CAT_COLORS[t.category] || "#aaa";
-    if (source === 'e621') return { color: '#f48fb1', opacity: 0.75 };
-    if (source === 'none') return { color: baseColor, opacity: 0.55 };
-    return { color: baseColor, opacity: 1 };
-}
- 
-const CAT_COLORS = { 0: "#aaa", 1: "#f9a825", 3: "#ae80ff", 4: "#5bc0de", 5: "#888" };

@@ -23,6 +23,12 @@
      Desmarcar apaga o histórico guardado em disco (com confirmação).
    Trocar de dataset sempre reinicia a comparação. Limite: 500 entradas.
 
+   AUTO-DO: toda tag que o Auto-Do remove entra no histórico marcada com
+   "⚡ Auto-Do" (campo `by` da entrada) — MESMO que ela ainda exista em outras
+   imagens (nesse caso a linha avisa que ela continua no dataset). Isso é feito
+   por window.recordRemovedTags(Map<tag, [baseName]>, 'Auto-Do'), chamado pelo
+   próprio Auto-Do antes de renderizar.
+
    UI: botão 🕘 na barra AND/OR/XOR/NOT (ao lado de ☆ e 💡) abre um popout
    com busca, e por entrada: ↩️ Restore (devolve a tag às imagens de onde
    saiu), ➕ Selected (adiciona às imagens selecionadas) e ✖ (esquecer).
@@ -38,6 +44,8 @@
         #removed-history-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; background:#111; border:1px solid #333; border-radius:6px; padding:6px; }
         .rh-row { display:flex; align-items:center; gap:8px; background:#151515; border:1px solid #2a2a2a; border-radius:6px; padding:6px 8px; }
         .rh-row.rh-back { opacity: 0.55; }
+        .rh-row.rh-auto { border-left: 3px solid #00ff99; }
+        .rh-by { color:#00ff99; font-weight:bold; }
         .rh-info { flex:1; min-width:0; }
         .rh-tag { font-size:12px; color:#ff9a9a; font-weight:bold; word-break:break-word; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
         .rh-tag.rh-nl { color:#b890ff; }
@@ -156,6 +164,29 @@
         persist(history.slice(0, MAX_ENTRIES));
     }
 
+    /* Registra remoções com ORIGEM conhecida (ex: Auto-Do). Funciona também para tags que
+       continuam existindo em outras imagens. Se a detecção por snapshot já criou/vai criar
+       a entrada da mesma tag, as duas se juntam (mesma tag = mesma entrada). */
+    window.recordRemovedTags = function (entries, source) {
+        if (!entries || typeof entries.forEach !== 'function' || entries.size === 0) return;
+        const history = getHistory().slice();
+        const ts = Date.now();
+        entries.forEach((images, tag) => {
+            const i = history.findIndex(e => e.tag === tag);
+            let e;
+            if (i > -1) {
+                e = history.splice(i, 1)[0];
+                e.images = [...new Set([...(e.images || []), ...images])];
+                e.ts = ts;
+            } else {
+                e = { tag, ts, images: [...new Set(images)] };
+            }
+            if (source) e.by = source;
+            history.unshift(e);
+        });
+        persist(history.slice(0, MAX_ENTRIES));
+    };
+
     /* ---------- AÇÕES ---------- */
     function refreshAfterAdd() {
         if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
@@ -219,7 +250,7 @@
                     <span>🕘 Removed Tags History</span>
                     <button onclick="window.closeModal('modal-removed-history')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
-                <div style="font-size:11px; color:#888; line-height:1.5;">Tags that disappeared completely from this dataset. This is only a safety check: each entry disappears automatically once its images are saved, and nothing is kept afterwards.</div>
+                <div style="font-size:11px; color:#888; line-height:1.5;">Tags that disappeared completely from this dataset. This is only a safety check: each entry disappears automatically once its images are saved, and nothing is kept afterwards. Tags removed by <b style=\"color:#00ff99;\">⚡ Auto-Do</b> are always listed (even if they still exist in other images).</div>
                 <label style="font-size:12px; color:#ffcc66; display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;" title="Checked: the history is kept in this dataset's _tagger_config.json and survives saving. Unchecked: entries vanish as soon as their images are saved.">
                     <input type="checkbox" id="removed-history-keep" style="margin:0;"> 💾 Keep history after saving (permanent for this dataset)
                 </label>
@@ -249,7 +280,7 @@
         const liveSet = new Set();
         if (typeof imageFiles !== 'undefined') imageFiles.forEach(img => tagsOf(img.content).forEach(t => liveSet.add(t)));
 
-        const entries = getHistory().filter(e => !q || e.tag.toLowerCase().includes(q));
+        const entries = getHistory().filter(e => !q || e.tag.toLowerCase().includes(q) || (e.by && e.by.toLowerCase().includes(q)));
         list.innerHTML = '';
         if (entries.length === 0) {
             list.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">No removed tags recorded for this dataset.</div>';
@@ -259,12 +290,14 @@
             const isNL = typeof window.checkIfNL === 'function' && window.checkIfNL(entry.tag);
             const back = liveSet.has(entry.tag);
             const row = document.createElement('div');
-            row.className = 'rh-row' + (back ? ' rh-back' : '');
+            row.className = 'rh-row' + (back ? ' rh-back' : '') + (entry.by ? ' rh-auto' : '');
             const n = (entry.images || []).length;
+            const byHtml = entry.by ? `<span class="rh-by" title="Removed automatically by ${esc(entry.by)}">⚡ ${esc(entry.by)}</span> · ` : '';
+            const backText = back ? (entry.by ? ' · still in other images' : ' · already back in dataset') : '';
             row.innerHTML = `
                 <div class="rh-info">
                     <div class="rh-tag${isNL ? ' rh-nl' : ''}" title="${esc(entry.tag)}">${esc(entry.tag)}</div>
-                    <div class="rh-meta">${esc(new Date(entry.ts).toLocaleString())} · from ${n} image(s)${back ? ' · already back in dataset' : ''}</div>
+                    <div class="rh-meta">${byHtml}${esc(new Date(entry.ts).toLocaleString())} · from ${n} image(s)${backText}</div>
                 </div>
                 <button class="rh-btn restore" title="Put the tag back on the images it was removed from">↩️ Restore</button>
                 <button class="rh-btn add" title="Add the tag to the currently selected image(s)">➕ Selected</button>

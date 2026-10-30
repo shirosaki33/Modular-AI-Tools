@@ -103,14 +103,24 @@
         return wrap;
     }
 
+    // Cada imagem carregada ganha um número novo; respostas atrasadas de uma
+    // imagem anterior (fetch de até 10 s) são descartadas em vez de escrever
+    // o nome errado na imagem atual.
+    let runToken = 0;
+    const hashCache = new Map();
+
     async function fetchByHash(hash) {
+        const key = String(hash || '').toLowerCase();
+        if (hashCache.has(key)) return hashCache.get(key);
         try {
             const r = await fetch(
                 CIVITAI_API + 'model-versions/by-hash/' + encodeURIComponent(hash),
                 { signal: AbortSignal.timeout(10000) }
             );
-            if (!r.ok) return null;
-            return await r.json();
+            if (!r.ok) { if (r.status === 404) hashCache.set(key, null); return null; }
+            const data = await r.json();
+            hashCache.set(key, data);
+            return data;
         } catch (e) {
             return null;
         }
@@ -196,11 +206,12 @@
     // LoRA enrichment
     // ------------------------------------------------------------------
 
-    async function enrichLoras() {
+    async function enrichLoras(token) {
         const items = document.querySelectorAll('#loraList .lora-item');
         if (!items.length) return;
 
-        for (const div of items) {
+        // Todas as LoRAs em paralelo (antes: uma de cada vez, até 10 s cada).
+        await Promise.all(Array.from(items).map(async (div) => {
             const hash       = div.dataset.loraHash   || '';
             const baseName   = div.dataset.loraName   || '';
             const weightStr  = div.dataset.loraWeight || '';
@@ -209,13 +220,14 @@
             const fullStr    = div.dataset.loraFull   || baseName + weightStr;
             const textSpan   = div.querySelector('span');
 
-            if (!textSpan) continue;
+            if (!textSpan) return;
 
             if (hash) {
                 textSpan.style.color = '#888';
                 textSpan.textContent = baseName + ' (looking up…)' + weightStr;
 
                 const data = await fetchByHash(hash);
+                if (token !== runToken) return;
 
                 if (data && data.modelId) {
                     const realName = (data.model && data.model.name) || data.name || baseName;
@@ -241,14 +253,14 @@
                 ));
                 showLocalNameAlert();
             }
-        }
+        }));
     }
 
     // ------------------------------------------------------------------
     // Checkpoint & Extras enrichment
     // ------------------------------------------------------------------
 
-    async function enrichCheckpoint(meta, raw) {
+    async function enrichCheckpoint(meta, raw, token) {
         const el = document.getElementById('val-ckpt');
         if (!el || el.querySelector('a')) return;
 
@@ -265,6 +277,7 @@
             el.textContent = name + ' (looking up…)';
 
             const data = await fetchByHash(hash);
+            if (token !== runToken) return;
 
             if (data && data.modelId) {
                 const realName = (data.model && data.model.name) || data.name || name;
@@ -319,7 +332,7 @@
         return null;
     }
 
-    async function enrichExtraRow(labelText, modelName, hash, civitaiType) {
+    async function enrichExtraRow(labelText, modelName, hash, civitaiType, token) {
         const row = findExtraRow(labelText);
         if (!row || row.querySelector('a')) return;
         const span = getValueSpan(row);
@@ -335,6 +348,7 @@
             span.textContent = modelName + ' (looking up…)';
 
             const data = await fetchByHash(hash);
+            if (token !== runToken) return;
 
             if (data && data.modelId) {
                 const realName = (data.model && data.model.name) || data.name || modelName;
@@ -366,10 +380,10 @@
         }
     }
 
-    async function enrichVae(meta, raw) {
+    async function enrichVae(meta, raw, token) {
         const vae = meta._extras && meta._extras.vae;
         if (!vae) return;
-        await enrichExtraRow('VAE', vae, extractVaeHash(raw), 'VAE');
+        await enrichExtraRow('VAE', vae, extractVaeHash(raw), 'VAE', token);
     }
 
     function enrichTextEncoders(meta) {
@@ -416,10 +430,11 @@
 
         fixContainerLayouts();
 
+        const token = ++runToken;
         setTimeout(async () => {
-            await enrichLoras();
-            await enrichCheckpoint(meta, raw);
-            await enrichVae(meta, raw);
+            if (token !== runToken) return;
+            await Promise.all([enrichLoras(token), enrichCheckpoint(meta, raw, token), enrichVae(meta, raw, token)]);
+            if (token !== runToken) return;
             enrichTextEncoders(meta);
         }, 60);
     }

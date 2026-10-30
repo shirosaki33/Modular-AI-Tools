@@ -387,7 +387,7 @@
                 addPrompt(negCandidates, node, inp.negative ?? inp.negative_prompt ?? vn);
             }
 
-            if (/negative|uc|uncond/.test(all))                                                           addPrompt(negCandidates, node, v || vn);
+            if (/negative|\buc\b|uncond/.test(all))                                                       addPrompt(negCandidates, node, v || vn);
             else if (/positive|prompt|caption|text encode|cliptextencode|wildcard|stringmultiline|textinput|showanything|previewany/.test(all)) addPrompt(candidates, node, v);
             if (vn) addPrompt(negCandidates, node, vn);
         }
@@ -396,7 +396,7 @@
             const all = (c.type + ' ' + c.title).toLowerCase();
             let s = 0;
             if (/positive/.test(all))              s += 50;
-            if (/negative|uc|uncond/.test(all))    s -= 80;
+            if (/negative|\buc\b|uncond/.test(all)) s -= 80;
             if (/prompt|caption/.test(all))        s += 20;
             if (/cliptextencode|text encode/.test(all)) s += 10;
             if (/preview|showanything/.test(all))  s -= 10;
@@ -451,7 +451,10 @@
 
             if (/LoraLoader|LoRALoader|Load LoRA|Apply LoRA|LoRA Loader|Lora Loader/i.test(all)) {
                 const name   = inp.lora_name || inp.lora || inp.name || inp.model_name || wv[0];
-                const weight = inp.strength_model ?? inp.model_weight ?? inp.strength ?? wv[1];
+                let weight = inp.strength_model ?? inp.model_weight ?? inp.strength ?? wv[1];
+                // Strength wired from another node (a link like ["20", 0]): read that node's value.
+                if (Array.isArray(weight)) weight = resolveInputValue(json, weight, ['value', 'float', 'number', 'strength', 'Xf', 'Xi']);
+                if (Array.isArray(weight) || typeof weight === 'object') weight = '';
                 if (isRealModelName(String(name || ''))) {
                     const entry = cleanName(name) + (weight !== undefined && weight !== null && weight !== '' ? ' | Weight: ' + weight : '');
                     addUnique(out.loras, entry, true);
@@ -519,6 +522,29 @@
         };
     }
 
+    /* Python's json writes NaN / Infinity / -Infinity, which JSON.parse rejects.
+       Replaces them with null, but only outside of string values. */
+    function sanitizeJsonConstants(s) {
+        if (!/NaN|Infinity/.test(s)) return s;
+        let out = '', inStr = false, esc = false;
+        for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (inStr) {
+                out += ch;
+                if (esc) esc = false;
+                else if (ch === '\\') esc = true;
+                else if (ch === '"') inStr = false;
+                continue;
+            }
+            if (ch === '"') { inStr = true; out += ch; continue; }
+            if (s.startsWith('-Infinity', i)) { out += 'null'; i += 8; continue; }
+            if (s.startsWith('Infinity', i))  { out += 'null'; i += 7; continue; }
+            if (s.startsWith('NaN', i))       { out += 'null'; i += 2; continue; }
+            out += ch;
+        }
+        return out;
+    }
+
     /* ================================================================
        MAIN PARSER
        ================================================================ */
@@ -532,13 +558,8 @@
         try { 
             // Sanitiza o JSON antes do parse para lidar com arrays que contém [NaN] ou [Infinity],
             // que são exportados pelo Python mas quebram o padrão estrito do JSON no JavaScript.
-            let safeStr = String(jsonStr || '')
-                .replace(/:\s*NaN/g, ': null')
-                .replace(/\[\s*NaN\s*\]/g, '[null]')
-                .replace(/:\s*Infinity/g, ': null')
-                .replace(/:\s*-Infinity/g, ': null');
-            
-            json = JSON.parse(safeStr); 
+            // Only outside strings, so a prompt that contains the word "NaN" is untouched.
+            json = JSON.parse(sanitizeJsonConstants(String(jsonStr || ''))); 
         } catch { 
             return null; 
         }
@@ -586,11 +607,15 @@
 
         // --- LoRAs ---
         const loraSet = [...models.loras];
-        const loraRe  = /"lora_name"\s*:\s*"([^"]+)".*?"strength_model"\s*:\s*([0-9.]+)/gis;
+        const loraRe  = /"lora_name"\s*:\s*"([^"]+)"[^{}]*?"strength_model"\s*:\s*(-?[0-9.]+)/gi;
         let lm;
+        // Text fallback for loaders the node scan does not know. The regex can pair a
+        // name with the next node's strength, so it never adds a LoRA already found.
+        const knownLora = n => loraSet.some(x => String(x).split(' | ')[0].toLowerCase() === n.toLowerCase());
         while ((lm = loraRe.exec(jsonStr)) !== null) {
-            const entry = cleanName(lm[1]) + ' | Weight: ' + lm[2];
-            addUnique(loraSet, entry, true);
+            const name = cleanName(lm[1]);
+            if (!name || knownLora(name)) continue;
+            addUnique(loraSet, name + ' | Weight: ' + lm[2], true);
         }
 
         // --- Normalised return object ---

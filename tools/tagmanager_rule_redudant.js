@@ -328,46 +328,12 @@
         window.ignoredRedundantPairs = new Set(saved);
     }
 
+    // Roda logo depois de window.loadDatasetConfig (evento do hub TM),
+    // antes de qualquer render/contador pro dataset recém-carregado.
     function installDatasetChangeHook() {
-        // Caminho principal: envelopa window.loadDatasetConfig, que roda bem
-        // antes de qualquer render/contador pro dataset recém-carregado.
-        if (typeof window.loadDatasetConfig === 'function' && !window.loadDatasetConfig.__redundantIgnoreSyncWrapped) {
-            const original = window.loadDatasetConfig;
-            const wrapped = async function (dirHandle) {
-                const result = await original.apply(this, arguments);
-                syncIgnoredPairsForDataset();
-                return result;
-            };
-            wrapped.__redundantIgnoreSyncWrapped = true;
-            window.loadDatasetConfig = wrapped;
-            return true;
-        }
-        // Fallback de segurança (não deveria ser necessário — loadDatasetConfig
-        // já existe bem antes deste arquivo carregar): sincroniza depois do
-        // render como rede de segurança, caso window.loadDatasetConfig não
-        // esteja disponível por algum motivo (ordem dos <script> alterada).
-        if (typeof window.registerPostRenderImageList === 'function') {
-            if (!window._redundantDatasetHookRegistered) {
-                window.registerPostRenderImageList(() => {
-                    syncIgnoredPairsForDataset();
-                    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-                });
-                window._redundantDatasetHookRegistered = true;
-            }
-            return true;
-        }
-        if (typeof window.renderImageList === 'function' && !window.renderImageList.__redundantDatasetWrapped) {
-            const orig = window.renderImageList;
-            const wrapped = function () {
-                orig.apply(this, arguments);
-                syncIgnoredPairsForDataset();
-                if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-            };
-            wrapped.__redundantDatasetWrapped = true;
-            window.renderImageList = wrapped;
-            return true;
-        }
-        return false;
+        if (!window.TM || typeof window.TM.on !== 'function') return false;
+        window.TM.on('config:loaded', syncIgnoredPairsForDataset);
+        return true;
     }
 
     window.ignoreRedundantPair = async function (a, b) {
@@ -398,15 +364,10 @@
         imageFiles.forEach(img => {
             if (img.hidden) return;
             if (!img.hasFile || !img.content) return;
-            if (img.type === 'tags') {
-                img.content.split(',').forEach(t => {
-                    const clean = t.trim();
-                    if (clean) set.add(clean.toLowerCase());
-                });
-            } else if (img.type === 'nl') {
-                const clean = img.content.trim();
+            img.content.split(',').forEach(t => {
+                const clean = t.trim();
                 if (clean) set.add(clean.toLowerCase());
-            }
+            });
         });
         return set;
     }

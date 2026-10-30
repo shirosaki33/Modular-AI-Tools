@@ -10,62 +10,107 @@ const settingsStoreName = 'settings';
 const presetDbName = 'PresetTagsDB';
 const presetStoreName = 'presets';
 
-const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// Single source of truth (tagmanager_globals.js). Fallback keeps this file usable on its own.
+const isLocalhost = (typeof window.MAT_IS_LOCAL === 'boolean')
+    ? window.MAT_IS_LOCAL
+    : ['localhost', '127.0.0.1', '[::1]', '::1'].includes(window.location.hostname);
+
+// keepalive requests are limited to 64 KB by the browser — bigger bodies fail silently.
+const KEEPALIVE_MAX_BYTES = 60 * 1024;
+
+/* Sends a local-cache write while the page is closing. Small payloads use
+   keepalive (survives the unload); big ones fall back to a normal fetch,
+   which still completes most of the time on localhost. The main save path
+   is the visibilitychange:hidden flush, which runs before pagehide. */
+window._postLocalCacheOnUnload = function(body) {
+    const small = (typeof body === 'string' ? body.length : 0) < KEEPALIVE_MAX_BYTES;
+    try {
+        fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: small });
+    } catch (e) {}
+};
 
 // 1. DIRETÓRIOS DB (Mantido no IndexedDB)
-window.initDB = function() { 
-    return new Promise((res, rej) => { 
+window.initDB = function() {
+    return new Promise((res, rej) => {
         try {
-            const req = indexedDB.open(dbName, 1); 
-            req.onupgradeneeded = e => e.target.result.createObjectStore(storeName); 
-            req.onsuccess = e => res(e.target.result); 
-            req.onerror = e => rej(e.target.error); 
+            const req = indexedDB.open(dbName, 1);
+            req.onupgradeneeded = e => e.target.result.createObjectStore(storeName);
+            req.onsuccess = e => res(e.target.result);
+            req.onerror = e => rej(e.target.error);
         } catch (err) { rej(err); }
-    }); 
+    });
 }
 
-window.saveHandle = async function(n, h) { 
+window.saveHandle = async function(n, h) {
     try {
-        const db = await window.initDB(); 
-        return new Promise(r => { 
-            const tx = db.transaction(storeName, 'readwrite'); 
-            tx.objectStore(storeName).put(h, n); 
-            tx.oncomplete = r; 
-        }); 
+        const db = await window.initDB();
+        return new Promise(r => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).put(h, n);
+            tx.oncomplete = r;
+        });
     } catch (e) {}
 }
 
-window.getHandles = async function() { 
+window.getHandles = async function() {
     try {
-        const db = await window.initDB(); 
-        return new Promise(r => { 
-            const tx = db.transaction(storeName, 'readonly'); 
-            const store = tx.objectStore(storeName); 
-            const keysReq = store.getAllKeys(); 
-            const valsReq = store.getAll(); 
-            tx.oncomplete = () => { 
-                const result = []; 
-                for (let i = 0; i < keysReq.result.length; i++) { 
-                    const name = keysReq.result[i]; 
-                    if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] }); 
-                } 
-                r(result); 
-            }; 
-        }); 
+        const db = await window.initDB();
+        return new Promise(r => {
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const keysReq = store.getAllKeys();
+            const valsReq = store.getAll();
+            tx.oncomplete = () => {
+                const result = [];
+                for (let i = 0; i < keysReq.result.length; i++) {
+                    const name = keysReq.result[i];
+                    if (!String(name).startsWith('path_')) result.push({ name, handle: valsReq.result[i] });
+                }
+                r(result);
+            };
+        });
     } catch (e) { return []; }
 }
 
-window.deleteHandle = async function(n) { 
+window.deleteHandle = async function(n) {
     try {
-        const db = await window.initDB(); 
-        return new Promise(r => { 
-            const tx = db.transaction(storeName, 'readwrite'); 
-            tx.objectStore(storeName).delete(n); 
-            tx.objectStore(storeName).delete('path_' + n); 
-            tx.oncomplete = r; 
-        }); 
+        const db = await window.initDB();
+        return new Promise(r => {
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).delete(n);
+            tx.objectStore(storeName).delete('path_' + n);
+            tx.oncomplete = r;
+        });
     } catch (e) {}
 }
+
+/* Saved folders used to be keyed only by folder name, so two different
+   folders called "images" overwrote each other. These helpers find the key
+   of an already-saved folder (same entry on disk) and build a unique key
+   ("images (2)") for a new one with a repeated name. */
+async function _sameEntry(a, b) {
+    if (!a || !b) return false;
+    try { return await a.isSameEntry(b); } catch (e) { return false; }
+}
+
+window.findSavedHandleKey = async function(handle) {
+    if (!handle) return null;
+    const handles = await window.getHandles();
+    for (const h of handles) {
+        if (h.handle && h.handle.kind === handle.kind && await _sameEntry(h.handle, handle)) return h.name;
+    }
+    return null;
+};
+
+window.uniqueHandleKey = async function(handle) {
+    const handles = await window.getHandles();
+    const used = new Set(handles.map(h => String(h.name)));
+    const base = handle.name;
+    if (!used.has(base)) return base;
+    let i = 2;
+    while (used.has(`${base} (${i})`)) i++;
+    return `${base} (${i})`;
+};
 
 /* =========================================================================
    FILA COMPARTILHADA PARA ESCRITAS NO ENDPOINT LOCAL
@@ -139,10 +184,10 @@ function loadSettingsToCache() {
                 } else if (res.status === 404) {
                     window._settingsLoadedSuccessfully = true; // Arquivo vazio/novo, seguro iniciar
                 } else {
-                    console.error("Erro do servidor ao ler user_config.json:", res.status);
+                    console.error("Server error while reading user_config.json:", res.status);
                 }
             } catch (e) {
-                console.error("Falha de rede ao ler user_config.json", e);
+                console.error("Network error while reading user_config.json", e);
             }
         } else {
             try {
@@ -169,10 +214,7 @@ window._persistSettingsCache = async function(isUnload = false) {
     if (isLocalhost) {
         const body = JSON.stringify({ file: 'local/user_config.json', data: window._settingsCache });
         if (isUnload) {
-            // Keepalive substitui o sendBeacon para prevenir perdas ao fechar a aba
-            try {
-                fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
-            } catch (e) {}
+            window._postLocalCacheOnUnload(body);
             return;
         }
         await window._queueLocalCacheWrite(async () => {
@@ -199,11 +241,9 @@ window._persistSettingsCache = async function(isUnload = false) {
 window.saveSetting = async function(id, value) {
     await loadSettingsToCache();
     if (!window._settingsLoadedSuccessfully) {
-        // Antes só bloqueava no modo local. Mas o mesmo risco existe no modo
-        // online: se o IndexedDB falhar ao abrir/ler no boot (ex: modo
-        // privado do navegador bloqueando IndexedDB), nada impedia salvar em
-        // cima de um cache vazio, sobrescrevendo tudo que já existia lá.
-        console.error("Bloqueado: configurações não carregaram corretamente. Salvamento abortado para não sobrescrever com cache incompleto.");
+        // Mesmo risco nos dois modos: se o load falhou no boot, salvar em cima
+        // de um cache vazio sobrescreveria tudo que já existia.
+        console.error("Blocked: settings did not load correctly. Save aborted so the incomplete cache does not overwrite your data.");
         return;
     }
     window._settingsCache[id] = value;
@@ -265,9 +305,7 @@ window._persistPresetsCache = async function(isUnload = false) {
     if (isLocalhost) {
         const body = JSON.stringify({ file: 'local/user_presets.json', data: window._presetsCache });
         if (isUnload) {
-            try {
-                fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
-            } catch (e) {}
+            window._postLocalCacheOnUnload(body);
             return;
         }
         await window._queueLocalCacheWrite(async () => {
@@ -401,7 +439,7 @@ window.importOnlineDataToLocal = async function() {
                     mergedSettings++;
                 }
             });
-            store.clear(); 
+            store.clear();
         }
 
         const dbPresets = await new Promise((res) => { const req = indexedDB.open(presetDbName, 1); req.onsuccess = e => res(e.target.result); req.onerror = () => res(null); });
@@ -415,7 +453,7 @@ window.importOnlineDataToLocal = async function() {
                     mergedPresets++;
                 }
             });
-            store.clear(); 
+            store.clear();
         }
 
         if (mergedSettings > 0) {
@@ -446,7 +484,7 @@ window.importOnlineDataToLocal = async function() {
 };
 
 window.addEventListener('DOMContentLoaded', () => {
-    if (!isLocalhost) return; 
+    if (!isLocalhost) return;
     setTimeout(async () => {
         let hasDataToRescue = false;
         try {
@@ -468,7 +506,7 @@ window.addEventListener('DOMContentLoaded', () => {
             importBtn.id = 'btn-import-web-local';
             importBtn.className = exportBtn.className;
             importBtn.style.cssText = exportBtn.style.cssText;
-            
+
             if (hasDataToRescue) {
                 importBtn.style.background = '#0a2a4c';
                 importBtn.style.color = '#4db8ff';
@@ -483,7 +521,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 importBtn.title = 'No web data found to import. Your local files are up to date.';
                 importBtn.disabled = true;
             }
-            
+
             importBtn.innerHTML = '📥 Import Web Data to Local';
             importBtn.onclick = window.importOnlineDataToLocal;
             exportBtn.parentNode.insertBefore(importBtn, exportBtn.nextSibling);

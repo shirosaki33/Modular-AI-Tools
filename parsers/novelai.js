@@ -214,6 +214,9 @@
 
         if (!isNovelAI(raw, json)) return null;
 
+        // A1111/Forge text that merely mentions "NovelAI" in the prompt is not NovelAI metadata.
+        if (!json && !/"v4_prompt"\s*:/i.test(raw) && /(?:^|[,\n])\s*Steps:\s*\d/i.test(raw)) return null;
+
         let pos = '', neg = '', steps = '', cfg = '', seed = '',
             size = '', sampler = '', scheduler = '', ckpt = '';
 

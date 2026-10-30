@@ -3,9 +3,11 @@
    ---------------------------------------------------------------------
    window.renderEditor (a função que desenha a coluna central "Active
    Image") e todas as ações de tag que giram em torno dela: aceitar/
-   rejeitar ghost tags, adicionar, remover, reordenar, filtro Tags/NL,
-   modo Tag/NL da imagem, etc.
+   rejeitar ghost tags, adicionar, remover, reordenar, filtro Tags/NL.
+   Todo texto vindo de tags entra no HTML via esc() (window.escHTML).
 ========================================================================= */
+
+const _aeEsc = (v) => (typeof window.escHTML === 'function' ? window.escHTML(v) : String(v));
 
 window.showOnlyActiveGhosts = false;
 window.toggleActiveGhostFilter = function() {
@@ -18,7 +20,7 @@ window.toggleActiveGhostFilter = function() {
     }
     if (typeof window.renderEditor === 'function') window.renderEditor();
 }
- 
+
 window.activeTagFilterMode = 'ALL';
 window.cycleActiveTagFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
@@ -29,102 +31,19 @@ window.cycleActiveTagFilter = function() {
     if (btn) btn.textContent = labels[window.activeTagFilterMode];
     if (typeof window.renderEditor === 'function') window.renderEditor();
 };
- 
-window.toggleImageMode = function() { /* removido: modo único Tag */ };
- 
-window.renderEditor = function() {
-    const topbarSelectFormat = document.getElementById('topbar-save-format');
-    const colTools = document.getElementById('col-tools');
-    const colPresets = document.getElementById('col-presets');
-    const presetsVisible = colPresets && colPresets.style.display !== 'none';
-    const btnMode = document.getElementById('btn-toggle-image-mode');
-    
-    if (btnMode) btnMode.style.display = 'none'; // modo único: Tag
- 
-    if (selectedIndices.size === 0) {
-        window.sortedActiveTags = []; 
-        if(topbarSelectFormat) topbarSelectFormat.style.display = 'none';
-        if(colTools) colTools.style.display = 'flex';
-        if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
-        if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
-        const activeTagCountBadgeEmpty = document.getElementById('active-tag-count');
-        if (activeTagCountBadgeEmpty) activeTagCountBadgeEmpty.textContent = '0';
- 
-        const tagListVerticalEmpty = document.getElementById('tag-list-vertical');
-        if (tagListVerticalEmpty) tagListVerticalEmpty.innerHTML = '';
-        const activeAddContainerEmpty = document.getElementById('active-add-container');
-        if (activeAddContainerEmpty) activeAddContainerEmpty.style.display = 'none';
-        const activeActionsEmpty = document.getElementById('active-selection-actions');
-        if (activeActionsEmpty) activeActionsEmpty.style.display = 'none';
-        activeSelectedTags.clear();
-        return;
-    }
- 
-    const imgObj = imageFiles[Array.from(selectedIndices)[0]];
-    if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
-    if(topbarSelectFormat) topbarSelectFormat.value = imgObj.ext || 'txt';
-    let isAnyEmpty = false;
-    selectedIndices.forEach(idx => { if (!imageFiles[idx].hasFile) isAnyEmpty = true; });
-    if(topbarSelectFormat) topbarSelectFormat.style.display = isAnyEmpty ? 'inline-block' : 'none';
-    if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
- 
-    const tagsContainer = document.getElementById('tags-editor-container');
-    const activeAddContainer = document.getElementById('active-add-container');
+
+function _aeSplitTags(content) {
+    return content ? content.split(',').map(t => t.trim()).filter(t => t) : [];
+}
+
+/* Tudo que depende só da SELEÇÃO de tags (não do conteúdo): barra de ações,
+   botões Force NL/Tag, Edit e Replace, e a classe .selected-active das linhas.
+   Clicar numa tag chama só isto — antes recriava a lista inteira e rodava
+   todos os hooks de render a cada clique. */
+function _aeSyncSelectionControls() {
     const activeActions = document.getElementById('active-selection-actions');
- 
-    if(tagsContainer) tagsContainer.style.display = 'flex'; 
-    if(colTools) colTools.style.display = 'flex'; 
-    
-    const tagListVertical = document.getElementById('tag-list-vertical');
-    if(!tagListVertical) return;
-    tagListVertical.innerHTML = '';
- 
-    // REGULAR HYBRID TAG MODE RENDERING
-    let datasetTagCounts = new Map();
-    if (typeof imageFiles !== 'undefined') {
-        imageFiles.forEach(img => {
-            if (img.hidden) return;
-            if (img.hasFile && img.content) {
-                if (img.type === 'tags') {
-                    img.content.split(',').forEach(t => {
-                        const cleanTag = t.trim();
-                        if (cleanTag) datasetTagCounts.set(cleanTag, (datasetTagCounts.get(cleanTag) || 0) + 1);
-                    });
-                } else if (img.type === 'nl') {
-                    const cleanTag = img.content.trim();
-                    if (cleanTag) datasetTagCounts.set(cleanTag, (datasetTagCounts.get(cleanTag) || 0) + 1);
-                }
-            }
-        });
-    }
-    
-    let fusedTags = new Set();
-    selectedIndices.forEach(idx => {
-        if (imageFiles[idx].type === 'tags' && imageFiles[idx].content) {
-            imageFiles[idx].content.split(',').forEach(t => {
-                const cleanTag = t.trim();
-                if (cleanTag) fusedTags.add(cleanTag);
-            });
-        }
-    });
-    
-    window.sortedActiveTags = Array.from(fusedTags); 
-    const activeTagCountBadge = document.getElementById('active-tag-count');
-    if (activeTagCountBadge) activeTagCountBadge.textContent = window.sortedActiveTags.length;
- 
-    // Temporary Edit Box for Hybrid NL tags
-    if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
-        if(activeAddContainer) activeAddContainer.style.display = 'none';
-        if(activeActions) activeActions.style.display = 'none';
-        const box = buildNLEditBox(window.nlEditTarget.tag, 'active');
-        box.classList.add('tag-nl-edit-fullscreen');
-        tagListVertical.appendChild(box);
-        return;
-    }
- 
-    if(activeAddContainer) activeAddContainer.style.display = 'flex'; 
     if(activeActions) activeActions.style.display = activeSelectedTags.size > 0 ? 'flex' : 'none';
- 
+
     // ATUALIZAÇÃO DO BOTÃO "CONVERT TO NL/TAG" NA BARRA DE AÇÕES ATIVA
     const convertBtn = document.querySelector('#active-selection-actions .btn-nl-edit');
     if (convertBtn) {
@@ -140,7 +59,7 @@ window.renderEditor = function() {
             convertBtn.onclick = window.convertToCustomNL;
         }
     }
-    
+
     // Botão "✏️ Edit" ao lado do Force Tag: só com UMA tag NL selecionada
     const editNlBtn = document.querySelector('#active-selection-actions .btn-edit-nl');
     if (editNlBtn) {
@@ -148,19 +67,111 @@ window.renderEditor = function() {
         editNlBtn.style.display = (selArr.length === 1 && window.checkIfNL(selArr[0])) ? 'block' : 'none';
     }
 
+    const replaceBtn = document.querySelector('#active-selection-actions .btn-replace');
+    if (replaceBtn) {
+        const hasCustom = Array.from(activeSelectedTags).some(t => window.checkIfNL(t));
+        replaceBtn.style.display = hasCustom ? 'none' : 'block';
+    }
+}
+
+function _aeUpdateActiveSelectionUI() {
+    const list = document.getElementById('tag-list-vertical');
+    if (list) list.querySelectorAll('.tag-row:not(.ghost)').forEach(row => {
+        if (row._tmTag !== undefined) row.classList.toggle('selected-active', activeSelectedTags.has(row._tmTag));
+    });
+    _aeSyncSelectionControls();
+    if (window.TM) window.TM.emit('selection:active', activeSelectedTags);
+}
+
+window.renderEditor = function() {
+    const esc = _aeEsc;
+    const topbarSelectFormat = document.getElementById('topbar-save-format');
+    const colTools = document.getElementById('col-tools');
+    const colPresets = document.getElementById('col-presets');
+    const presetsVisible = colPresets && colPresets.style.display !== 'none';
+
+    if (selectedIndices.size === 0) {
+        window.sortedActiveTags = [];
+        if(topbarSelectFormat) topbarSelectFormat.style.display = 'none';
+        if(colTools) colTools.style.display = 'flex';
+        if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
+        if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
+        const activeTagCountBadgeEmpty = document.getElementById('active-tag-count');
+        if (activeTagCountBadgeEmpty) activeTagCountBadgeEmpty.textContent = '0';
+
+        const tagListVerticalEmpty = document.getElementById('tag-list-vertical');
+        if (tagListVerticalEmpty) tagListVerticalEmpty.innerHTML = '';
+        const activeAddContainerEmpty = document.getElementById('active-add-container');
+        if (activeAddContainerEmpty) activeAddContainerEmpty.style.display = 'none';
+        const activeActionsEmpty = document.getElementById('active-selection-actions');
+        if (activeActionsEmpty) activeActionsEmpty.style.display = 'none';
+        activeSelectedTags.clear();
+        return;
+    }
+
+    const imgObj = imageFiles[Array.from(selectedIndices)[0]];
+    if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
+    if(topbarSelectFormat) topbarSelectFormat.value = imgObj.ext || 'txt';
+    let isAnyEmpty = false;
+    selectedIndices.forEach(idx => { if (!imageFiles[idx].hasFile) isAnyEmpty = true; });
+    if(topbarSelectFormat) topbarSelectFormat.style.display = isAnyEmpty ? 'inline-block' : 'none';
+    if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
+
+    const tagsContainer = document.getElementById('tags-editor-container');
+    const activeAddContainer = document.getElementById('active-add-container');
+    const activeActions = document.getElementById('active-selection-actions');
+
+    if(tagsContainer) tagsContainer.style.display = 'flex';
+    if(colTools) colTools.style.display = 'flex';
+
+    const tagListVertical = document.getElementById('tag-list-vertical');
+    if(!tagListVertical) return;
+    tagListVertical.innerHTML = '';
+
+    let datasetTagCounts = new Map();
+    if (typeof imageFiles !== 'undefined') {
+        imageFiles.forEach(img => {
+            if (img.hidden || !img.hasFile || !img.content) return;
+            _aeSplitTags(img.content).forEach(cleanTag => {
+                datasetTagCounts.set(cleanTag, (datasetTagCounts.get(cleanTag) || 0) + 1);
+            });
+        });
+    }
+
+    let fusedTags = new Set();
+    selectedIndices.forEach(idx => {
+        _aeSplitTags(imageFiles[idx].content).forEach(t => fusedTags.add(t));
+    });
+
+    window.sortedActiveTags = Array.from(fusedTags);
+    const activeTagCountBadge = document.getElementById('active-tag-count');
+    if (activeTagCountBadge) activeTagCountBadge.textContent = window.sortedActiveTags.length;
+
+    // Temporary Edit Box for Hybrid NL tags
+    if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
+        if(activeAddContainer) activeAddContainer.style.display = 'none';
+        if(activeActions) activeActions.style.display = 'none';
+        const box = buildNLEditBox(window.nlEditTarget.tag, 'active');
+        box.classList.add('tag-nl-edit-fullscreen');
+        tagListVertical.appendChild(box);
+        return;
+    }
+
+    if(activeAddContainer) activeAddContainer.style.display = 'flex';
+
+    _aeSyncSelectionControls();
+
     let favTags = new Set(datasetConfig.favoriteTags || []);
-    const isMultiSelected = activeSelectedTags.size > 1; 
-    const isMultiImageSelection = selectedIndices.size > 1;
-    
+
     if (!window.showOnlyActiveGhosts) {
         window.sortedActiveTags.forEach((tag, i) => {
             const isFav = favTags.has(tag);
-            const isCustomNL = window.checkIfNL(tag); 
+            const isCustomNL = window.checkIfNL(tag);
             const tagLower = tag.toLowerCase();
- 
+
             if (window.activeTagFilterMode === 'TAGS' && isCustomNL) return;
             if (window.activeTagFilterMode === 'NL' && !isCustomNL) return;
- 
+
             let conflictsForThisTag = [];
             let similarsForThisTag = [];
             if (window.enableConflictWarnings) {
@@ -183,46 +194,51 @@ window.renderEditor = function() {
             }
             conflictsForThisTag = [...new Set(conflictsForThisTag)];
             similarsForThisTag = [...new Set(similarsForThisTag)];
- 
+
             const isPinFilterMatch = (window.pinnedMasterTag === tag);
             const isButtonFilterMatch = (typeof filterMode !== 'undefined' && filterMode !== 'NONE' && typeof masterSelectedTags !== 'undefined' && masterSelectedTags.has(tag));
             const isFilterMatch = (isPinFilterMatch || isButtonFilterMatch) && window.enableFilterHighlight !== false;
             const isAlreadyPreset = !isCustomNL && window._presetTagsSet && window._presetTagsSet.has(tag);
- 
-            const row = document.createElement('div'); 
-            row.className = 'tag-row'; row.setAttribute('data-tag-name', tagLower); 
-            
+
+            const row = document.createElement('div');
+            row.className = 'tag-row'; row.setAttribute('data-tag-name', tagLower);
+            row._tmTag = tag;
+
             if (activeSelectedTags.has(tag)) row.classList.add('selected-active');
             if (isFav && window.enableFavHighlight !== false) row.classList.add('glow-favorite');
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
             if (isFilterMatch) row.classList.add('filter-match');
             if (isAlreadyPreset && (presetsVisible || window.presetHighlightsAlwaysVisible) && window.enablePresetHighlight !== false) row.classList.add('is-preset');
-            
+
             let statusHtml = '';
-            if (conflictsForThisTag.length > 0) statusHtml += `<span class="conflict-warning" title="Conflict with: ${conflictsForThisTag.join(', ')}">⚠️ Conflict: ${conflictsForThisTag.join(', ')}</span>`;
-            if (similarsForThisTag.length > 0) statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${similarsForThisTag.join(', ')}">🟨 Similar: ${similarsForThisTag.join(', ')}</span>`;
-            
-            const displayTag = tag;
-            const textColor = isCustomNL ? '#b890ff' : '#ddd'; 
- 
+            if (conflictsForThisTag.length > 0) {
+                const list = esc(conflictsForThisTag.join(', '));
+                statusHtml += `<span class="conflict-warning" title="Conflict with: ${list}">⚠️ Conflict: ${list}</span>`;
+            }
+            if (similarsForThisTag.length > 0) {
+                const list = esc(similarsForThisTag.join(', '));
+                statusHtml += `<span class="similar-warning" title="Similar/Redundant to: ${list}">🟨 Similar: ${list}</span>`;
+            }
+
+            const textColor = isCustomNL ? '#b890ff' : '#ddd';
+
             const pencilIcon = isCustomNL ? `<span class="tag-edit-nl" style="margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Edit Tag Text">✏️</span>` : '';
             const starIcon = !isCustomNL ? `<span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>` : '';
             const presetIcon = (!isCustomNL && !isAlreadyPreset) ? `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>` : '';
- 
-            const dbCached = window.danbooruCache ? (window.danbooruCache[tagLower] || window.danbooruCache[tag]) : null; 
 
-            // FEATURE 1: tag-alias (tem seta ➜) fica clicável no nome pra converter globalmente
-            const isConvertibleAlias = !!(window.showDanbooruCounts && window.enableAliasConvertClick !== false && dbCached && dbCached.aliasTo && !isCustomNL);
-
-            const dbAliasArrowHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL) ? `<span class="tag-alias-arrow${isConvertibleAlias ? ' tag-name-convertible' : ''}" title="${isConvertibleAlias ? `Click to convert this alias tag globally to '${dbCached.aliasTo}'` : `Danbooru redirects this tag to '${dbCached.aliasTo}'`}">➜ ${dbCached.aliasTo}</span>` : '';
-            
-            // O ícone ❓ original com a classe de estilo idêntica ao do painel!
-            const dbAliasInfoHtml = (window.showDanbooruCounts && dbCached && dbCached.aliasTo && !isCustomNL) ? `<span class="tag-alias-info-icon tag-db-info" title="View Alias Tag Info">❓</span>` : '';
+            const dbCached = window.danbooruCache ? (window.danbooruCache[tagLower] || window.danbooruCache[tag]) : null;
+            // Alias (Danbooru, ou e621 se o Danbooru não tiver): seta ➜, ícone de info
+            // e nome clicável pra converter globalmente — tagmanager_alias_bridge.js.
+            const aliasInfo = (!isCustomNL && typeof window.getTagAliasInfo === 'function') ? window.getTagAliasInfo(tag) : null;
+            const aliasParts = typeof window.renderTagAliasParts === 'function' ? window.renderTagAliasParts(aliasInfo) : { arrow: '', icon: '', nameAttrs: '', nameClass: '' };
+            const isConvertibleAlias = !!(aliasInfo && aliasInfo.convertible);
+            const dbAliasArrowHtml = aliasParts.arrow;
+            const dbAliasInfoHtml = aliasParts.icon;
 
             // FEATURE 2: tag "real" (não-alias) mostra os aliases unificados (Danbooru + e621)
             const reverseAliasHtmlActive = (!isCustomNL && !isConvertibleAlias && typeof window.renderCombinedAliasPreviewHTML === 'function')
                 ? window.renderCombinedAliasPreviewHTML(tagLower) : '';
-            
+
             const e621CachedForCount = window.showE621 && window.e621Cache ? (window.e621Cache[tagLower] || window.e621Cache[tag]) : null;
             const bestCountInfo = (window.showDanbooruCounts && !isCustomNL && typeof window.pickBestTagCount === 'function')
                 ? window.pickBestTagCount(dbCached, e621CachedForCount) : null;
@@ -234,24 +250,24 @@ window.renderEditor = function() {
             const countInDataset = datasetTagCounts.get(tag) || 0;
             const dsCountHtml = `<span style="color:#555; font-size:10px; font-weight:bold; min-width:20px; text-align:left; margin-right:8px; user-select:none;" title="Times used in current dataset">${countInDataset}</span>`;
             const ghostIconHtml = (window.enableGhostConvertIcon !== false && !isCustomNL) ? `<span class="tag-to-ghost" title="Convert to Ghost/Suggestion Tag">💡</span>` : '';
- 
+
             row.innerHTML = `<div class="tag-row-left">
                 ${starIcon}
                 ${dsCountHtml}
                 ${presetIcon}
                 ${pencilIcon}
-                <span class="tag-name${isConvertibleAlias ? ' tag-name-convertible' : ''}" style="color: ${textColor};"${isConvertibleAlias ? ` title="Click to convert this alias tag globally to &quot;${dbCached.aliasTo}&quot;"` : ''}>${displayTag}</span>
+                <span class="tag-name${aliasParts.nameClass}" style="color: ${textColor};"${aliasParts.nameAttrs}>${esc(tag)}</span>
                 ${dbAliasArrowHtml}
                 ${reverseAliasHtmlActive}
                 ${statusHtml}
             </div>
             <div style="display: flex; align-items: center;">
                 ${dbCountHtml}
-				${ghostIconHtml}
+                ${ghostIconHtml}
                 ${dbAliasInfoHtml}
                 <span class="tag-remove" title="Remove Tag">&times;</span>
             </div>`;
-            
+
             if (isCustomNL) {
                 const pencilEl = row.querySelector('.tag-edit-nl');
                 if (pencilEl) {
@@ -262,7 +278,7 @@ window.renderEditor = function() {
                     };
                 }
             }
-            
+
             if (!isCustomNL) {
                 const starEl = row.querySelector('.tag-star');
                 starEl.onclick = async (e) => {
@@ -279,7 +295,7 @@ window.renderEditor = function() {
                     }
                     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
                 };
- 
+
                 const presetBtn = row.querySelector('.tag-save-preset');
                 if (presetBtn) {
                     presetBtn.onclick = (e) => {
@@ -290,71 +306,45 @@ window.renderEditor = function() {
                         }
                     };
                 }
- 
-                const aliasInfoIcon = row.querySelector('.tag-alias-info-icon');
-                if (aliasInfoIcon && dbCached && dbCached.aliasTo) {
-                    aliasInfoIcon.onclick = (e) => { 
-                        e.stopPropagation(); 
-                        if(typeof window.openDanbooruTagInfoPopout === 'function') {
-                            window.openDanbooruTagInfoPopout(dbCached.aliasTo, tag);
-                        }
-                    };
-                }
 
-                if (isConvertibleAlias) {
-                    const convertibleEls = row.querySelectorAll('.tag-name-convertible');
-                    convertibleEls.forEach(el => {
-                        el.onclick = (e) => {
-                            e.stopPropagation();
-                            window.convertAliasTagGlobally(tag, dbCached.aliasTo);
-                        };
-                    });
-                }
+                if (aliasInfo && typeof window.bindTagAliasRow === 'function') window.bindTagAliasRow(row, tag, aliasInfo);
             }
-            
-            // Drag-to-reorder agora funciona SEMPRE, mesmo com múltiplas tags
-            // selecionadas (isMultiSelected) ou múltiplas imagens selecionadas
-            // (isMultiImageSelection). Antes isso era bloqueado porque, com
-            // várias imagens, a lista mostrada é uma FUSÃO das tags de todas
-            // elas — e reorderTags() aplica fromIndex/toIndex (posições dessa
-            // lista fundida) diretamente no array de tags de CADA imagem, que
-            // pode ter tags diferentes/em posições diferentes. Isso pode
-            // reordenar a tag "errada" dentro de alguma imagem específica do
-            // grupo. Mantido assim de propósito (a pedido do usuário): o
-            // objetivo aqui é só subir/descer a ordem para uma visão geral
-            // melhor, aceitando que o resultado por imagem pode não ficar
-            // 100% coerente quando as imagens têm tags diferentes entre si.
+
+            // Drag-to-reorder funciona sempre, mesmo com várias tags/imagens
+            // selecionadas (a lista é a FUSÃO das tags; com imagens diferentes
+            // o resultado por imagem pode não ficar 100% coerente — mantido de
+            // propósito, a pedido do usuário).
             row.draggable = true;
-            row.ondragstart = (e) => { 
+            row.ondragstart = (e) => {
                 if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon')) return false;
-                e.dataTransfer.setData('text/plain', i); draggedTagIndex = i; row.classList.add('dragging'); 
+                e.dataTransfer.setData('text/plain', i); draggedTagIndex = i; row.classList.add('dragging');
             };
             row.ondragend = () => { row.classList.remove('dragging'); draggedTagIndex = null; };
             row.ondragover = (e) => e.preventDefault();
             row.ondrop = (e) => { e.preventDefault(); if (draggedTagIndex !== null && draggedTagIndex !== i && typeof window.reorderTags === 'function') window.reorderTags(draggedTagIndex, i); };
- 
+
             row.onclick = (e) => {
-                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon') || e.target.classList.contains('tag-name-convertible')) { 
+                if(e.target.classList.contains('tag-remove') || e.target.classList.contains('tag-star') || e.target.classList.contains('tag-save-preset') || e.target.classList.contains('tag-edit-nl') || e.target.classList.contains('tag-to-ghost') || e.target.classList.contains('tag-alias-info-icon') || e.target.classList.contains('tag-name-convertible')) {
                     if(e.target.classList.contains('tag-remove')) { e.stopPropagation(); window.removeTagFromSelected(tag); }
-					if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.convertTagToGhost(tag); }
-                    return; 
+                    if(e.target.classList.contains('tag-to-ghost')) { e.stopPropagation(); window.convertTagToGhost(tag); }
+                    return;
                 }
-                if (e.shiftKey && activeSelectedTags.size > 0) {
+                if (e.shiftKey && activeSelectedTags.size > 0 && lastSelectedActiveTagIndex !== null) {
                     const start = Math.min(lastSelectedActiveTagIndex, i), end = Math.max(lastSelectedActiveTagIndex, i);
                     activeSelectedTags.clear(); for (let j = start; j <= end; j++) activeSelectedTags.add(window.sortedActiveTags[j]);
                 } else if (e.ctrlKey || e.metaKey) {
                     if (activeSelectedTags.has(tag)) activeSelectedTags.delete(tag); else activeSelectedTags.add(tag);
                     lastSelectedActiveTagIndex = i;
                 } else {
-                    if (activeSelectedTags.has(tag) && activeSelectedTags.size === 1) { activeSelectedTags.clear(); } 
+                    if (activeSelectedTags.has(tag) && activeSelectedTags.size === 1) { activeSelectedTags.clear(); }
                     else { activeSelectedTags.clear(); activeSelectedTags.add(tag); lastSelectedActiveTagIndex = i; }
                 }
-                window.renderEditor();
+                _aeUpdateActiveSelectionUI();
             };
             tagListVertical.appendChild(row);
         });
     }
- 
+
     let fusedPending = new Set();
     selectedIndices.forEach(idx => {
         const img = imageFiles[idx];
@@ -362,15 +352,14 @@ window.renderEditor = function() {
             img.pendingAdd.forEach(t => { if (!fusedTags.has(t)) fusedPending.add(t); });
         }
     });
- 
+
     if (fusedPending.size > 0) {
         const label = document.createElement('div'); label.className = 'ghost-section-label'; label.textContent = '💡 Pending Suggestions';
         tagListVertical.appendChild(label);
         Array.from(fusedPending).sort().forEach(tag => {
             const isCustomNL = window.checkIfNL(tag);
-            const displayTag = tag;
             const row = document.createElement('div'); row.className = 'tag-row ghost';
-            row.innerHTML = `<div class="tag-row-left"><span class="tag-name"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${displayTag}</span></div>
+            row.innerHTML = `<div class="tag-row-left"><span class="tag-name"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${esc(tag)}</span></div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span class="tag-ghost-accept" title="Accept suggestion">✓</span>
                 <span class="tag-ghost-reject" title="Reject suggestion" style="color: #ff4444; cursor: pointer; font-size: 1.2em; font-weight: bold;">&times;</span>
@@ -380,22 +369,14 @@ window.renderEditor = function() {
             tagListVertical.appendChild(row);
         });
     }
- 
-    const replaceBtn = document.querySelector('#active-selection-actions .btn-replace');
-    if (replaceBtn) {
-        const hasCustom = Array.from(activeSelectedTags).some(t => window.checkIfNL(t));
-        replaceBtn.style.display = hasCustom ? 'none' : 'block';
-    }
- 
-    // Reaplica o filtro de busca da Active Image depois de qualquer re-render
-    // da lista (mesmo padrão já usado em renderMasterTagList) — sem isto, o
-    // filtro digitado "sumia" (mostrava tudo de novo) toda vez que qualquer
-    // ação (adicionar/remover tag, etc.) disparasse renderEditor() de novo.
+
+
+    // Reaplica o filtro de busca da Active Image depois de qualquer re-render.
     if (window.activeSearchMode && typeof window.filterActiveTagsByName === 'function') {
         window.filterActiveTagsByName(document.getElementById('active-add-input') ? document.getElementById('active-add-input').value : '');
     }
 }
- 
+
 window.editSelectedNLTag = function() {
     const sel = Array.from(activeSelectedTags);
     if (sel.length !== 1 || !window.checkIfNL(sel[0])) return;
@@ -417,7 +398,7 @@ window.updateActiveSuggestVisibility = function() {
         }
     }
 };
- 
+
 window.acceptGhostTagActive = function(tag) {
     selectedIndices.forEach(idx => {
         const img = imageFiles[idx];
@@ -435,39 +416,26 @@ window.acceptGhostTagActive = function(tag) {
         window.savePendingTagsStore(handle);
     }
 }
- 
-window.removeTagFromSelected = function(tagToRemove) {
-    selectedIndices.forEach(idx => {
-        if (imageFiles[idx].type === 'tags') {
-            imageFiles[idx].content = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t && t !== tagToRemove).join(', ');
-        } else if (imageFiles[idx].type === 'nl') {
-            if (imageFiles[idx].content && imageFiles[idx].content.trim() === tagToRemove.trim()) {
-                imageFiles[idx].content = "";
-            }
-        }
-    });
-    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+
+function _aeRefreshAfterTagChange() {
+    window.TM.tags.refreshViews();
 }
- 
+
+window.removeTagFromSelected = function(tagToRemove) {
+    window.TM.tags.remove(window.TM.tags.selectedImages(), tagToRemove);
+    _aeRefreshAfterTagChange();
+}
+
 window.convertTagToGhost = async function(tagToConvert) {
-    const isCustomNL = window.checkIfNL(tagToConvert);
-    if (isCustomNL) return;
- 
-    if (!tagToConvert) return;
+    if (!tagToConvert || window.checkIfNL(tagToConvert)) return;
     let affectedCount = 0; const modifiedFiles = [];
     selectedIndices.forEach(idx => {
         const img = imageFiles[idx];
-        if (img.type !== 'tags' || !img.content) return;
-        let tags = img.content.split(',').map(t => t.trim()).filter(t => t);
+        if (!img.content) return;
+        let tags = _aeSplitTags(img.content);
         if (!tags.includes(tagToConvert)) return;
-        tags = tags.filter(t => t !== tagToConvert);
-        img.content = tags.join(', ');
-        
+        img.content = tags.filter(t => t !== tagToConvert).join(', ');
+
         img.pendingAdd = img.pendingAdd || [];
         if (!img.pendingAdd.includes(tagToConvert)) img.pendingAdd.push(tagToConvert);
         if (typeof pendingTagsStore !== 'undefined') pendingTagsStore[img.baseName] = img.pendingAdd;
@@ -476,72 +444,32 @@ window.convertTagToGhost = async function(tagToConvert) {
     if (affectedCount === 0) return;
     if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
     activeSelectedTags.delete(tagToConvert);
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+    _aeRefreshAfterTagChange();
     if (typeof window.updateActiveSuggestVisibility === 'function') window.updateActiveSuggestVisibility();
     const handle = window.currentImagesHandle || window.rootHandle;
     if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(handle);
     if (typeof window.showAlert === 'function') window.showAlert(`Converted "${tagToConvert}" to ghost in ${affectedCount} image(s).`, 'info');
 };
- 
+
 window.removeSelectedActiveTags = function() {
     if (activeSelectedTags.size === 0) return;
     const tagsToRemove = Array.from(activeSelectedTags);
-    selectedIndices.forEach(idx => {
-        if (imageFiles[idx].hasFile) {
-            if (imageFiles[idx].type === 'tags') {
-                let currentTags = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t);
-                currentTags = currentTags.filter(t => !tagsToRemove.includes(t));
-                imageFiles[idx].content = currentTags.join(', ');
-            } else if (imageFiles[idx].type === 'nl') {
-                if (imageFiles[idx].content && tagsToRemove.includes(imageFiles[idx].content.trim())) {
-                    imageFiles[idx].content = "";
-                }
-            }
-        }
-    });
-    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    window.TM.tags.remove(window.TM.tags.selectedImages().filter(img => img.hasFile), tagsToRemove);
     activeSelectedTags.clear();
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+    _aeRefreshAfterTagChange();
 }
- 
+
 window.clearActiveSelection = function() { activeSelectedTags.clear(); if(typeof window.renderEditor === 'function') window.renderEditor(); }
- 
+
+/* newTag pode ser uma tag ou uma lista (inlineAdd manda várias de uma vez:
+   1 refresh em vez de 1 por tag). */
 window.addTagToSelected = function(newTag, position = 'bottom') {
-    const tag = newTag.trim(); if(!tag) return;
-    selectedIndices.forEach(idx => {
-        if (!imageFiles[idx].hasFile) imageFiles[idx].type = 'tags';
-        if (imageFiles[idx].type === 'tags') {
-            let tags = imageFiles[idx].content ? imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t) : [];
-            if (!tags.includes(tag)) { position === 'top' ? tags.unshift(tag) : tags.push(tag); }
-            imageFiles[idx].content = tags.join(', '); 
-        } else if (imageFiles[idx].type === 'nl') {
-            let text = imageFiles[idx].content ? imageFiles[idx].content.trim() : "";
-            if (text) {
-                if (position === 'top') { imageFiles[idx].content = tag + ", " + text; } 
-                else { imageFiles[idx].content = text + ", " + tag; }
-            } else { imageFiles[idx].content = tag; }
-        }
-        imageFiles[idx].hasFile = true;
-        if(!imageFiles[idx].ext) imageFiles[idx].ext = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
-    });
-    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
-    if(typeof masterTagSet !== 'undefined') masterTagSet.add(tag); 
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList(); 
-    if (typeof window.renderEditor === 'function') window.renderEditor(); 
-    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+    const tags = (Array.isArray(newTag) ? newTag : [newTag]).map(t => String(t || '').trim()).filter(t => t);
+    if (!tags.length) return;
+    window.TM.tags.add(window.TM.tags.selectedImages(), tags, position);
+    _aeRefreshAfterTagChange();
 }
- 
+
 window.addEmptyNLTag = function() {
     if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
     const tag = 'NL:';
@@ -551,50 +479,25 @@ window.addEmptyNLTag = function() {
     window.nlEditTarget = { scope: 'active', tag: tag };
     window.renderEditor();
 };
- 
+
 window.addTagToAllImages = function(newTag, position = 'bottom') {
-    const tag = newTag.trim(); if(!tag) return;
-    const affected = [];
-    imageFiles.forEach(img => {
-        if (img.hidden) return;
-        if (!img.hasFile) img.type = 'tags';
-        if (img.type === 'tags') {
-            let tags = img.content ? img.content.split(',').map(t => t.trim()).filter(t => t) : [];
-            if (!tags.includes(tag)) { position === 'top' ? tags.unshift(tag) : tags.push(tag); }
-            img.content = tags.join(', ');
-        } else if (img.type === 'nl') {
-            let text = img.content ? img.content.trim() : "";
-            if (text) {
-                if (position === 'top') { img.content = tag + ", " + text; } 
-                else { img.content = text + ", " + tag; }
-            } else { img.content = tag; }
-        }
-        img.hasFile = true;
-        if(!img.ext) img.ext = document.getElementById('topbar-save-format') ? document.getElementById('topbar-save-format').value : 'txt';
-        affected.push(img);
-    });
-    if(typeof window.markDirty === 'function') window.markDirty(affected);
-    if(typeof masterTagSet !== 'undefined') masterTagSet.add(tag);
-    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    if (typeof window.renderEditor === 'function') window.renderEditor();
-    if(typeof window.refreshListStatus === 'function') window.refreshListStatus();
-    if (typeof window.applyFilters === 'function') window.applyFilters();
+    const tags = (Array.isArray(newTag) ? newTag : [newTag]).map(t => String(t || '').trim()).filter(t => t);
+    if (!tags.length) return;
+    window.TM.tags.add(window.TM.tags.visibleImages(), tags, position);
+    _aeRefreshAfterTagChange();
 }
- 
+
 window.reorderTags = function(fromIndex, toIndex) {
-    selectedIndices.forEach(idx => {
-        if (imageFiles[idx].type === 'tags') {
-            let tags = imageFiles[idx].content.split(',').map(t => t.trim()).filter(t => t);
-            tags.splice(toIndex, 0, tags.splice(fromIndex, 1)[0]);
-            imageFiles[idx].content = tags.join(', ');
-        }
+    const imgs = window.TM.tags.selectedImages();
+    imgs.forEach(img => {
+        const tags = window.TM.tags.get(img);
+        tags.splice(toIndex, 0, tags.splice(fromIndex, 1)[0]);
+        window.TM.tags.set(img, tags.filter(t => t !== undefined));
     });
-    if(typeof window.markDirty === 'function') window.markDirty(Array.from(selectedIndices).map(idx => imageFiles[idx]));
+    if(typeof window.markDirty === 'function') window.markDirty(imgs);
     if(typeof window.renderEditor === 'function') window.renderEditor();
 }
- 
+
 window.inlineAdd = function(source) {
     const input = document.getElementById(`${source}-add-input`);
     const pos = document.getElementById(`${source}-add-pos`).value;
@@ -602,8 +505,9 @@ window.inlineAdd = function(source) {
     if(!rawText) return;
     let tagsToAdd = rawText.includes(',') ? rawText.split(',').map(t => t.trim()).filter(t => t) : [rawText];
     if(tagsToAdd.length === 0) return;
-    if (source === 'master') tagsToAdd.forEach(t => window.addTagToAllImages(t, pos));
-    else tagsToAdd.forEach(t => window.addTagToSelected(t, pos));
+    // 'top' com várias tags: mantém a ordem digitada no topo.
+    if (source === 'master') window.addTagToAllImages(tagsToAdd, pos);
+    else window.addTagToSelected(tagsToAdd, pos);
     input.value = '';
     if (source === 'active' && window.activeSearchMode && typeof window.filterActiveTagsByName === 'function') window.filterActiveTagsByName('');
     if (source === 'master' && window.masterSearchMode && typeof window.filterMasterTagsByName === 'function') window.filterMasterTagsByName('');

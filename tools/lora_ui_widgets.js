@@ -91,11 +91,16 @@ function setStatus(type, msg) {
 	el.className = 'civitai-status ' + (type || ''); el.textContent = msg;
 }
 
+/* Antes testava a conexão com uma busca no Danbooru (API com limite de uso
+   e sem relação com o Civitai): Danbooru fora do ar / 429 = "sem internet".
+   Agora: navigator.onLine + um ping no-cors ao próprio Civitai (qualquer
+   resposta, mesmo opaca, prova que há rede). */
 window.checkInternet = async function() {
+	if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
 	try {
 		const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 4000);
-		const r = await fetch('https://danbooru.donmai.us/tags.json?search[name]=1girl&limit=1', { signal: ctrl.signal, cache: 'no-store' });
-		clearTimeout(t); return r.ok;
+		await fetch('https://civitai.com/favicon.ico', { mode: 'no-cors', signal: ctrl.signal, cache: 'no-store' });
+		clearTimeout(t); return true;
 	} catch(e) { return false; }
 };
 

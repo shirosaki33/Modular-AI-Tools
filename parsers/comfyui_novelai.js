@@ -114,6 +114,11 @@
     return '';
   }
 
+  function _cnCleanName(v) {
+    return _cnTxt(v).replace(/^['"]+|['"]+$/g, '').replace(/[\\\/]+/g, '/').split('/').pop()
+      .replace(/\.(safetensors|ckpt|pt|pth|bin|gguf|onnx)$/i, '').replace(/_+/g, ' ').trim();
+  }
+
   function _cnDisplayModel(raw) {
     var s   = _cnTxt(raw).trim();
     var low = s.toLowerCase().replace(/[\s_]+/g, '-');
@@ -124,7 +129,7 @@
     if (/nai-diffusion-4-5-curated|v4\.5.*c02d4f98/.test(low)) return 'NAI Diffusion 4.5 Curated';
     if (/nai-diffusion-4-full|v4.*37442fca/.test(low))          return 'NAI Diffusion 4.0 FULL';
     if (/nai-diffusion-4-curated|v4.*7abffa2a/.test(low))       return 'NAI Diffusion 4.0 Curated';
-    return s ? (typeof cleanName === 'function' ? cleanName(s) : s) : '';
+    return s ? _cnCleanName(s) : '';
   }
 
   function _cnParamNode(json, naiNode) {
@@ -139,117 +144,17 @@
     return '→ ' + c + r;
   }
 
-  function _cnParseCharacterPrompts(json, positionMode) {
-    var chars        = [];
-    var isRandomMode = /random/i.test(_cnTxt(positionMode));
-    _cnFindNodes(json, /^NovelAICharacter$/i).forEach(function (ref) {
-      var n   = ref.node || {};
-      var inp = n.inputs || {};
-      var wv  = _cnWidgets(n);
-      var enabled = inp.enabled;
-      if (enabled === undefined) enabled = wv.length ? wv[0] : true;
-      if (enabled === false || enabled === 'false') return;
-      var pos = inp.prompt;
-      var neg = inp.negative;
-      if (pos === undefined) pos = wv[1];
-      if (neg === undefined) neg = wv[2];
-      pos = (typeof cleanPrompt === 'function') ? cleanPrompt(_cnTxt(pos)) : _cnTxt(pos).trim();
-      neg = (typeof cleanPrompt === 'function') ? cleanPrompt(_cnTxt(neg)) : _cnTxt(neg).trim();
-      if (!(pos || neg)) return;
-      var charObj = { positive: pos, negative: neg };
-      if (!isRandomMode) {
-        var col = inp.position_col;
-        var row = inp.position_row;
-        if (col === undefined) col = wv[3];
-        if (row === undefined) row = wv[4];
-        var label = _cnFormatGridPosition(col, row);
-        if (label) charObj.name = label;
-      }
-      chars.push(charObj);
-    });
-    return chars;
-  }
-
-  function _cnParseComfyNovelAI(text, json) {
-    if (!_cnHasComfyNovelAI(json)) return null;
-    // This branch produces the richer "v4-shape" object (out.models/out.params/out.prompts)
-    // used internally by comfy.js. If comfy.js's helpers aren't loaded, skip silently
-    // instead of throwing — window.parseComfyNovelAI below is the self-contained path
-    // png_metadata_reader.html actually calls, and does not need any of this.
-    if (typeof makeParsedV4 !== 'function' || typeof addParamV4 !== 'function' || typeof addSizeParamV4 !== 'function') {
-      return null;
-    }
-    var main   = _cnFirstNode(json, /^NovelAI(?:T2I|I2I)$/i)
-              || _cnFirstNode(json, /^NovelAIT2I$/i)
-              || _cnFirstNode(json, /^NovelAII2I$/i);
-    var out    = makeParsedV4('ComfyUI (NovelAI)');
-    var inp    = (main && main.node && main.node.inputs) || {};
-    var wvMain = _cnWidgets(main && main.node);
-    var pRef   = _cnParamNode(json, main && main.node);
-    var p      = (pRef && pRef.node && pRef.node.inputs) || {};
-    var pWv    = _cnWidgets(pRef && pRef.node);
-
-    var width  = p.width  !== undefined ? p.width  : pWv[0];
-    var height = p.height !== undefined ? p.height : pWv[1];
-    var model  = p.model  !== undefined ? p.model  : pWv[2];
-
-    out.models.checkpoint = _cnDisplayModel(model);
-    addParamV4(out.params, 'Steps',       p.steps       !== undefined ? p.steps       : pWv[6]);
-    addParamV4(out.params, 'CFG',         p.cfg_scale   !== undefined ? p.cfg_scale   : (p.scale !== undefined ? p.scale : pWv[7]));
-    addParamV4(out.params, 'CFG Rescale', p.cfg_rescale !== undefined ? p.cfg_rescale : pWv[8]);
-    addParamV4(out.params, 'Seed',        p.seed        !== undefined ? p.seed        : pWv[3]);
-    addSizeParamV4(out.params, (width && height) ? (width + ' x ' + height) : '', '', '');
-    addParamV4(out.params, 'Sampler',     p.sampler     !== undefined ? p.sampler     : pWv[4]);
-    addParamV4(out.params, 'Scheduler',   p.scheduler   !== undefined ? p.scheduler   : (p.noise_schedule !== undefined ? p.noise_schedule : pWv[5]));
-
-    var pos = _cnResolveString(json, inp.prompt,          0, {});
-    var neg = _cnResolveString(json, inp.negative_prompt, 0, {});
-    if (!pos && typeof wvMain[0] === 'string') pos = wvMain[0];
-    if (!neg && typeof wvMain[1] === 'string') neg = wvMain[1];
-    out.prompts.positive = (typeof cleanPrompt === 'function') ? cleanPrompt(pos) : _cnTxt(pos).trim();
-    out.prompts.negative = (typeof cleanPrompt === 'function') ? cleanPrompt(neg) : _cnTxt(neg).trim();
-
-    var stack       = _cnInputNode(json, inp.characters) || _cnFirstNode(json, /^NovelAICharacterStack$/i);
-    var stackInputs = (stack && stack.node && stack.node.inputs) || {};
-    var stackWv     = _cnWidgets(stack && stack.node);
-    var stackMode   = stackInputs.position_mode !== undefined ? stackInputs.position_mode : stackWv[0];
-    out.prompts.characters = _cnParseCharacterPrompts(json, stackMode);
-
-    function addExtra(label, val) {
-      if (val === undefined || val === null || val === '') return;
-      if (typeof val === 'boolean') val = val ? 'true' : 'false';
-      var row = label + ': ' + val;
-      if (typeof _addUnique === 'function') _addUnique(out.extras, row, { keepRaw: true, allowNodeWords: true });
-      else if (out.extras.indexOf(row) === -1) out.extras.push(row);
-    }
-    // Runtime-only values intentionally hidden: raw model, seed mode, noise schedule,
-    // UC preset, batch size, check_anlas, retry settings.
-    // Boolean feature flags shown only when enabled.
-    function addTrueExtra(label, val) {
-      if (val === true || val === 'true' || val === 1 || val === '1') addExtra(label, 'true');
-    }
-    addTrueExtra('Quality Toggle',  p.quality_toggle  !== undefined ? p.quality_toggle  : pWv[10]);
-    addTrueExtra('Prefer Brownian', p.prefer_brownian !== undefined ? p.prefer_brownian : pWv[11]);
-    addTrueExtra('SM',              p.sm              !== undefined ? p.sm              : pWv[12]);
-    addTrueExtra('SM Dyn',          p.sm_dyn          !== undefined ? p.sm_dyn          : pWv[13]);
-    addTrueExtra('Legacy',          p.legacy          !== undefined ? p.legacy          : pWv[15]);
-    if (/random/i.test(_cnTxt(stackMode)) && (out.prompts.characters || []).length)
-      addExtra('Character Position', 'Random');
-
-    return out;
-  }
-
   /* ──────────────────────────────────────────────────────────────────────
      FLAT PARSER — self-contained, no dependency on comfy.js internals.
-     This is the function png_metadata_reader.html actually calls:
-       window.parseComfyNovelAI?.(cleanJsonString)
+     Called by png metadata reader.html and gallery_core.js:
+       window.parseComfyNovelAI(jsonString | object)
      It returns the same flat { source, ckpt, pos, neg, steps, cfg, seed,
      sampler, scheduler, size, loras, notes, source } shape produced by
      parsers/novelai.js, so it plugs straight into applyMetadataToUI().
      ────────────────────────────────────────────────────────────────── */
 
   function _cnCleanPromptFlat(v) {
-    return (typeof cleanPrompt === 'function') ? cleanPrompt(_cnTxt(v)) : _cnTxt(v).trim();
+    return _cnTxt(v).replace(/^parameters[\s\0]*/i, '').replace(/^\0+/, '').trim();
   }
 
   function _cnBuildFlatMeta(json) {
@@ -346,24 +251,4 @@
     }
   };
 
-  // ── Hook into detectSource ──────────────────────────────────────────────
-  if (typeof detectSource === 'function') {
-    var _baseDetectSource_v67cn = detectSource;
-    detectSource = function (text, json) {
-      if (_cnHasComfyNovelAI(json)) return 'ComfyUI (NovelAI)';
-      return _baseDetectSource_v67cn(text, json);
-    };
-  }
-
-  // ── Hook into parseMetadataV4 ───────────────────────────────────────────
-  if (typeof parseMetadataV4 === 'function') {
-    var _baseParseMetadataV4_v67cn = parseMetadataV4;
-    parseMetadataV4 = function (text, json, mode) {
-      if ((mode || 'image') !== 'video' && _cnHasComfyNovelAI(json)) {
-        var parsed = _cnParseComfyNovelAI(text, json);
-        if (parsed) return parsed;
-      }
-      return _baseParseMetadataV4_v67cn(text, json, mode);
-    };
-  }
 })();

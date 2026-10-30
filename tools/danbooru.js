@@ -99,8 +99,10 @@ style.innerHTML = `
             dbResult.classList.remove('open');
             try {
                 const res = await fetch(`https://danbooru.donmai.us/tags.json?search[name]=${encodeURIComponent(tag)}&limit=1`);
+                // Erro da API (429 = limite de uso) não é "tag inexistente".
+                if (!res.ok) { alert(res.status === 429 ? 'Danbooru rate limit reached — wait a few seconds and try again.' : `Danbooru error (HTTP ${res.status}).`); return; }
                 const data = await res.json();
-                if (!data || data.length === 0) { alert(`Tag "${tag}" not found on Danbooru.`); return; }
+                if (!Array.isArray(data) || data.length === 0) { alert(`Tag "${tag}" not found on Danbooru.`); return; }
                 const t = data[0];
                 document.getElementById('dbTagName').textContent = t.name.replace(/_/g, ' ');
                 document.getElementById('dbTagCat').innerHTML = `<span style="color:${CAT_COLORS[t.category] || '#888'}">● ${CAT_LABELS[t.category] || 'Unknown'} (${Number(t.post_count).toLocaleString()} posts)</span>`;
@@ -110,7 +112,10 @@ style.innerHTML = `
                     const wRes = await fetch(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent(t.name)}.json`);
                     if (wRes.ok) {
                         const wData = await wRes.json();
-                        if (wData && wData.body) desc = wData.body.replace(/\[.*?\]/g, '').slice(0, 800) + '...';
+                        if (wData && wData.body) {
+                            const clean = wData.body.replace(/\[.*?\]/g, '').trim();
+                            desc = clean.slice(0, 800) + (clean.length > 800 ? '...' : '');
+                        }
                     }
                 } catch(e) {}
                 document.getElementById('dbTagDesc').textContent = desc;

@@ -49,17 +49,19 @@
             return;
         }
 
-        const creatorRow = creatorName ? [['Creator', '<a href="' + (creatorUrl||'#') + '" target="_blank">' + window.escHtml(creatorName) + '</a>']] : [];
+        // URLs vindas da API entram no href escapadas e só se forem http(s).
+        const safeUrl = (u) => (/^https?:\/\//i.test(String(u || '')) ? window.escHtml(u) : '#');
+        const creatorRow = creatorName ? [['Creator', '<a href="' + safeUrl(creatorUrl) + '" target="_blank" rel="noopener noreferrer">' + window.escHtml(creatorName) + '</a>']] : [];
         const hashRow = matchedHash ? [['Matched Hash', '<span style="font-family:monospace;color:#00ff99;">' + window.escHtml(matchedHash) + '</span>']] : [];
 
         const rows = [...creatorRow,
-            ['Model',      '<a href="' + civUrl + '" target="_blank">' + window.escHtml(modelName) + '</a>'],
+            ['Model',      '<a href="' + safeUrl(civUrl) + '" target="_blank" rel="noopener noreferrer">' + window.escHtml(modelName) + '</a>'],
             ['Version',    window.escHtml(ver.name || '—')],
             ...hashRow,
             ['Base Model', window.escHtml(ver.baseModel || '—')],
             ['Type',       window.escHtml(ver.model?.type || '—')],
             ['Downloads',  (ver.stats?.downloadCount ?? 0).toLocaleString()],
-            ['Rating',     ver.stats?.rating ? ver.stats.rating.toFixed(1) + ' ⭐ (' + ver.stats.ratingCount + ')' : '—'],
+            ['Rating',     ver.stats?.rating ? Number(ver.stats.rating).toFixed(1) + ' ⭐ (' + (Number(ver.stats.ratingCount) || 0) + ')' : '—'],
             ['Published',  ver.publishedAt ? new Date(ver.publishedAt).toLocaleDateString() : '—'],
         ].map(([l,v]) => '<div class="olc-row"><span class="olc-label">' + l + '</span><span class="olc-value">' + v + '</span></div>').join('');
         

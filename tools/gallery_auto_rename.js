@@ -136,12 +136,12 @@ async function autoRenameNewFiles(dirHandle) {
         if (newName === oldName) continue;
 
         try {
-            // Skip if a file with that name already exists (don't overwrite)
-            try {
-                await dirHandle.getFileHandle(newName);
-                console.warn(`Auto-rename: a file named ${newName} already exists, skipping ${oldName}.`);
+            // Skip if the image OR its JSON already exists with the new name (don't overwrite)
+            const taken = async n => { try { await dirHandle.getFileHandle(n); return true; } catch (e) { return false; } };
+            if (await taken(newName) || (await taken(oldBaseName + '.json') && await taken(newBaseName + '.json'))) {
+                console.warn(`Auto-rename: ${newName} (or its JSON) already exists, skipping ${oldName}.`);
                 continue;
-            } catch (e) {}
+            }
 
             // Copy the image
             const oldImgHandle = await dirHandle.getFileHandle(oldName);
@@ -151,24 +151,9 @@ async function autoRenameNewFiles(dirHandle) {
             await imgWritable.write(await oldImgFile.arrayBuffer());
             await imgWritable.close();
 
-            // Copy/update the sidecar JSON, if it exists
-            try {
-                const oldJsonHandle = await dirHandle.getFileHandle(oldBaseName + '.json');
-                const oldJsonFile   = await oldJsonHandle.getFile();
-                let jsonObj          = JSON.parse(await oldJsonFile.text());
-                jsonObj.file_name    = newName;
-
-                const newJsonHandle = await dirHandle.getFileHandle(newBaseName + '.json', { create: true });
-                const jsonWritable  = await newJsonHandle.createWritable();
-                await jsonWritable.write(JSON.stringify(jsonObj, null, 2));
-                await jsonWritable.close();
-                await dirHandle.removeEntry(oldBaseName + '.json');
-
-                if (typeof currentJsonFiles !== 'undefined') {
-                    currentJsonFiles.delete(oldBaseName + '.json');
-                    currentJsonFiles.add(newBaseName + '.json');
-                }
-            } catch (e) {}
+            // Move the sidecar JSON, if it exists (kept as-is if it isn't valid JSON)
+            try { await gallerySafeMoveSidecar(dirHandle, oldBaseName, newBaseName, newName); }
+            catch (e) { console.warn('Auto-rename: sidecar move failed for', oldName, e); }
 
             // Remove the old image
             await dirHandle.removeEntry(oldName);
@@ -176,7 +161,7 @@ async function autoRenameNewFiles(dirHandle) {
             // Update the in-memory cache (currentFiles)
             const fileIndex = currentFiles.findIndex(f => f.name === oldName);
             if (fileIndex !== -1) {
-                URL.revokeObjectURL(currentFiles[fileIndex].url);
+                if (window.ThumbLoader) window.ThumbLoader.forget(currentFiles[fileIndex].url); URL.revokeObjectURL(currentFiles[fileIndex].url);
                 const newImgFile = await newImgHandle.getFile();
                 currentFiles[fileIndex] = {
                     name: newName,
@@ -193,6 +178,7 @@ async function autoRenameNewFiles(dirHandle) {
             }
 
             if (typeof updateMergeGroupFileName === 'function') updateMergeGroupFileName(oldName, newName);
+            if (typeof renameViewCountEntry === 'function') renameViewCountEntry(oldName, newName);
 
             renamedCount++;
         } catch (error) {

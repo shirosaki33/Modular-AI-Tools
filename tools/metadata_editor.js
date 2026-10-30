@@ -93,28 +93,31 @@
     for (let i=0;i<str.length;i++) out[i]=str.charCodeAt(i)&0xFF;
     return out;
   }
-  function writeU32(arr, v) {
-    arr.push((v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255);
+  /* Junta pedaços Uint8Array num só (antes os arquivos eram montados byte a
+     byte num Array comum — lento e pesado em memória para PNGs de vários MB). */
+  function concatBytes(parts) {
+    let total=0; parts.forEach(p=>total+=p.length);
+    const out=new Uint8Array(total);
+    let o=0; parts.forEach(p=>{out.set(p,o);o+=p.length;});
+    return out;
   }
+  function u32(v) { return new Uint8Array([(v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255]); }
   function makePngChunk(type, dataBytes) {
     const tb=asciiBytes(type);
-    const out=[];
-    writeU32(out,dataBytes.length);
-    for (const b of tb) out.push(b);
-    for (const b of dataBytes) out.push(b);
-    writeU32(out,crc32(tb,dataBytes));
-    return new Uint8Array(out);
+    return concatBytes([u32(dataBytes.length), tb, dataBytes, u32(crc32(tb,dataBytes))]);
   }
+  /* tEXt só aceita Latin-1. Texto com outros caracteres (japonês, emoji...)
+     vai como iTXt (UTF-8) — antes virava texto embaralhado em outros leitores. */
   function pngTextChunk(keyword, text) {
     const enc=new TextEncoder();
-    const key=String(keyword||'Comment').replace(/[\0\n\r]/g,' ').trim().slice(0,79)||'Comment';
-    const keyBytes=enc.encode(key);
-    const textBytes=enc.encode(String(text||''));
-    const data=new Uint8Array(keyBytes.length+1+textBytes.length);
-    data.set(keyBytes,0);
-    data[keyBytes.length]=0;
-    data.set(textBytes,keyBytes.length+1);
-    return makePngChunk('tEXt',data);
+    const key=String(keyword||'Comment').replace(/[\0\n\r]/g,' ').replace(/[^\x20-\x7E\xA1-\xFF]/g,'_').trim().slice(0,79)||'Comment';
+    const keyBytes=asciiBytes(key);
+    const str=String(text||'');
+    if (/^[\x00-\xFF]*$/.test(str)) {
+      return makePngChunk('tEXt', concatBytes([keyBytes, new Uint8Array([0]), asciiBytes(str)]));
+    }
+    // iTXt: keyword \0 compFlag(0) compMethod(0) lang \0 translatedKeyword \0 text(UTF-8)
+    return makePngChunk('iTXt', concatBytes([keyBytes, new Uint8Array([0,0,0,0,0]), enc.encode(str)]));
   }
 
   /* ── PNG chunk parser & builder ──────────────────────────────────────────── */
@@ -136,21 +139,22 @@
   }
   function buildPng(originalBytes, insertChunks, mode) {
     const chunks=parsePngChunks(originalBytes);
-    const out=[];
-    for (const b of originalBytes.slice(0,8)) out.push(b);
+    const parts=[originalBytes.slice(0,8)];
     const textTypes=new Set(['tEXt','iTXt','zTXt']);
-    const criticalTypes=new Set(['IHDR','PLTE','IDAT','IEND']);
+    // Kill: além dos críticos, mantém o que muda a COR/aparência da imagem
+    // (perfil ICC, gama, cromaticidade, sRGB, transparência).
+    const keepOnKill=new Set(['IHDR','PLTE','IDAT','IEND','iCCP','gAMA','cHRM','sRGB','tRNS','sBIT']);
     let inserted=false;
     chunks.forEach(chunk => {
       if (chunk.type==='IEND'&&!inserted) {
-        (insertChunks||[]).forEach(c=>{for(const b of c)out.push(b);});
+        (insertChunks||[]).forEach(c=>parts.push(c));
         inserted=true;
       }
-      if (mode==='kill') { if (!criticalTypes.has(chunk.type)) return; }
+      if (mode==='kill') { if (!keepOnKill.has(chunk.type)) return; }
       else if (mode==='replaceText') { if (textTypes.has(chunk.type)) return; }
-      for (const b of chunk.raw) out.push(b);
+      parts.push(chunk.raw);
     });
-    return new Uint8Array(out);
+    return concatBytes(parts);
   }
 
   /* ── JPEG segment builder ─────────────────────────────────────────────────── */
@@ -171,10 +175,14 @@
     return segs;
   }
   function buildJpeg(originalBytes, insertSegments, mode) {
-    const out=[0xFF,0xD8];
+    const parts=[new Uint8Array([0xFF,0xD8])];
     let pos=2,inserted=false;
-    const skip=m=>(m>=0xE0&&m<=0xEF)||m===0xFE;
-    const pushBytes=arr=>{for(const b of arr)out.push(b);};
+    // Remove APPn/COM, mas mantém o perfil de cor ICC (APP2 "ICC_PROFILE") e o
+    // APP14 "Adobe" (transformação de cor) — sem eles algumas fotos mudam de cor.
+    const isIcc=(p)=>originalBytes[p+1]===0xE2&&String.fromCharCode(...originalBytes.slice(p+4,p+15))==='ICC_PROFILE';
+    const isAdobe=(p)=>originalBytes[p+1]===0xEE&&String.fromCharCode(...originalBytes.slice(p+4,p+9))==='Adobe';
+    const skip=(m,p)=>((m>=0xE0&&m<=0xEF)||m===0xFE)&&!isIcc(p)&&!isAdobe(p);
+    const pushBytes=arr=>parts.push(arr);
     if (mode!=='kill') { (insertSegments||[]).forEach(pushBytes); inserted=true; }
     while (pos<originalBytes.length) {
       if (originalBytes[pos]!==0xFF){pushBytes(originalBytes.slice(pos));break;}
@@ -188,10 +196,10 @@
       const len=(originalBytes[pos+2]<<8)|originalBytes[pos+3];
       const end=pos+2+len;
       if (end>originalBytes.length||len<2) break;
-      if (!skip(marker)) pushBytes(originalBytes.slice(pos,end));
+      if (!skip(marker,pos)) pushBytes(originalBytes.slice(pos,end));
       pos=end;
     }
-    return new Uint8Array(out);
+    return concatBytes(parts);
   }
 
   /* ── Video metadata kill (text scrub) ────────────────────────────────────── */

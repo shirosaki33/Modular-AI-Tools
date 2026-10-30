@@ -198,7 +198,7 @@ function calculateManualRank() {
     document.getElementById('final-alpha').innerText = data.alpha;
     document.getElementById('final-size').innerText = `~${data.sizeMB} MB`;
     const modelEl = document.getElementById('final-model');
-    if (modelEl) modelEl.innerText = (BASE_MODELS[window.selectedBaseModel] || BASE_MODELS.sdxl).label;
+    if (modelEl) modelEl.innerText = (BASE_MODELS[window.selectedBaseModel] || BASE_MODELS.anima).label;
     const profileEl = document.getElementById('final-profile');
     if (profileEl) profileEl.innerText = data.profile;
     updateGauge('gauge-manual', 'manual-fill', data.tierIdx);

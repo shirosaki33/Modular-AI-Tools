@@ -452,7 +452,10 @@
     async function renderArchiveList() {
         buildModal();
 
-        window._archiveObjectUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
+        window._archiveObjectUrls.forEach(u => {
+            if (window.ThumbLoader) window.ThumbLoader.forget(u);
+            try { URL.revokeObjectURL(u); } catch (e) {}
+        });
         window._archiveObjectUrls = [];
 
         const thumbSlider = document.getElementById('archive-thumb-slider');
@@ -489,7 +492,7 @@
             const row = document.createElement('div');
             row.className = 'archive-item';
             row.innerHTML = `
-                <img src="${url}" title="Double-click to zoom">
+                <img title="Double-click to zoom" alt="">
                 <div class="archive-item-name">
                     <div>${entry.originalName}</div>
                     <div style="color:#666; font-size:10px; margin-top:2px;">📂 ${entry.folderLabel || '—'} · ${dateStr}</div>
@@ -509,6 +512,10 @@
             row.querySelector('.btn-archive-delete-perm').onclick = () => window.deleteArchiveEntryPermanently(entry);
 
             const imgEl = row.querySelector('img');
+            // Miniatura reduzida (tools/thumb_loader.js); o zoom continua usando a original.
+            if (imgEl && url) {
+                if (window.ThumbLoader) window.ThumbLoader.attach(imgEl, url, { root: list }); else imgEl.src = url;
+            }
             if (imgEl && url) {
                 imgEl.ondblclick = () => window.openArchiveImageZoom(url);
             }

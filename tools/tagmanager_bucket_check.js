@@ -1,51 +1,31 @@
 /* =========================================================================
-   ASPECT RATIO BUCKET CHECKER (SDXL) — novo arquivo, standalone
+   ASPECT RATIO BUCKET CHECKER (SDXL) — standalone
    ---------------------------------------------------------------------
    Detecta imagens do dataset cuja resolução NÃO bate exatamente com uma
-   das 41 resoluções oficiais de treino do SDXL (paper, seção "Multi-Aspect
-   Training"), e ajuda a corrigir isso via crop guiado.
+   das 41 resoluções oficiais de treino do SDXL e ajuda a corrigir via
+   crop guiado.
 
    FLUXO:
-   1) Botão 🪣 na barra de busca/compact-view da lista "Dataset" força um
-      scan (lê naturalWidth/naturalHeight de cada imagem visível — reusa
-      a mesma <img> já carregada na lista, sem baixar nada de novo).
-      Imagens já medidas ao renderizar a lista (mesmo evento que já
-      preenche a resolução ao lado do nome) são aproveitadas do cache.
-   2) Toda imagem fora do bucket ganha uma borda vermelha + selo "🪣 WxH"
-      na lista (mesmo padrão visual do aviso de nome duplicado), e um
-      contador vermelho aparece do lado do badge de contagem do Dataset
-      ("🪣 N Bad Bucket"), clicável — igual ao ⚠️ Conflicts/🟨 Similar —
-      pra pular de uma imagem problemática pra outra.
-   3) Selecionando UMA imagem fora do bucket, aparece o botão
-      "🪣 Fix Bucket" no cabeçalho da Active Image. Ele abre um popout
-      com os buckets mais próximos (por aspect ratio), mostrando quanto
-      da imagem original cada um mantém, e uma preview arrastável do
-      corte (retângulo verde sobre a imagem, com máscara escurecendo o
-      que seria descartado).
-   4) Ao confirmar: a imagem ORIGINAL (+ legenda) é movida pro 📦 Archive
-      já existente no app (backup automático, restaurável a qualquer
-      momento pelo painel de Archive) e só DEPOIS o arquivo cortado é
-      gravado no lugar, com o MESMO nome — a legenda em memória é
-      regravada normalmente. Nada é perdido mesmo se o usuário errar o
-      crop: é só restaurar pelo Archive.
+   1) Botão 🪣 na barra da lista força um scan (reusa a <img> já carregada).
+   2) Imagem fora do bucket ganha borda vermelha + selo "🪣 WxH" e um
+      contador clicável "🪣 N Bad Bucket".
+   3) Com UMA imagem selecionada, "🪣 Fix Bucket" abre o popout com os
+      buckets mais próximos e uma preview arrastável do corte.
+   4) Ao confirmar: o ORIGINAL (+ legenda) vai pro 📦 Archive e só DEPOIS o
+      arquivo cortado é gravado com o MESMO nome.
 
-   Depende de (já carregados antes, no HTML): tagmanager_globals.js,
-   tagmanager_render_hooks.js, tagmanager_ui_core.js (saveImageToDisk,
-   openModal/closeModal), tagmanager_ui_list.js (renderImageList),
-   tagmanager_active_editor.js (renderEditor), tagmanager_archive.js
-   (window.moveToArchive).
+   FIX (metadados): o crop é regravado via canvas, que descarta os chunks
+   de texto do PNG (prompt / parâmetros de geração). Agora, para PNG, os
+   chunks tEXt / iTXt / zTXt do original são copiados para o arquivo novo.
+   JPEG/WebP: o modal avisa que os metadados não são mantidos (o original
+   continua intacto no Archive).
 ========================================================================= */
 
 (function () {
 
     /* ---------- TABELA OFICIAL DE BUCKETS SDXL (w, h) ----------
-       Lista COMPLETA de 41 buckets do paper da SDXL (seção "Multi-Aspect
-       Training") — todos com área ≈ 1024×1024 (1.048.576 px) e lados
-       múltiplos de 64. A lista que veio no print do usuário era um
-       recorte de 24 itens: faltava o 1024×1024 (o bucket quadrado base)
-       e os 8 extremos mais esticados (512×2048 ... 2048×512); também
-       tinha "1407x704" onde o valor oficial é "1408x704" (espelho exato
-       de "704x1408", já presente na própria tabela). Corrigido aqui. */
+       41 buckets do paper da SDXL ("Multi-Aspect Training"), área ≈ 1024²,
+       lados múltiplos de 64. */
     const BUCKETS = [
         [1024, 1024],
         // paisagem (largura > altura)
@@ -69,7 +49,7 @@
     ];
     const BUCKET_KEYS = new Set(BUCKETS.map(([w, h]) => w + 'x' + h));
 
-    /* ▭ paisagem, ▯ retrato, □ quadrado — pra não ter que comparar os números */
+    /* ▭ paisagem, ▯ retrato, □ quadrado */
     function orientMark(w, h) {
         if (w > h) return '▭';
         if (h > w) return '▯';
@@ -102,7 +82,6 @@
         .bucket-candidate-chip .bc-kept { display:block; font-size:10px; color:#888; margin-top:2px; }
         .bucket-candidate-chip.active .bc-kept { color:#66ffaa; }
 
-        /* flex column + max-height esmagava a preview e o overflow cortava a base */
         #bucket-preview-wrap { position:relative; margin: 15px auto; background:#000; overflow:hidden; border:1px solid #333; border-radius:6px; width: fit-content; max-width: 100%; line-height: 0; flex-shrink: 0; align-self: center; touch-action: none; cursor: grab; user-select: none; }
         #bucket-preview-wrap.dragging { cursor: grabbing; }
         #bucket-preview-img { display:block; width:auto; height:auto; max-width: min(480px, 100%); max-height: 52vh; object-fit: contain; user-select:none; -webkit-user-drag:none; position: relative; z-index: 0 !important; pointer-events: none !important; }
@@ -110,45 +89,31 @@
         #bucket-crop-rect { position:absolute; border:2px solid #00ff99; cursor: grab; box-sizing: border-box; z-index: 2 !important; pointer-events: auto !important; background: rgba(0,255,153,0.05); }
         #bucket-crop-rect.dragging { cursor: grabbing; }
         .bucket-warn-upscale { font-size:11px; color:#ffcc66; background:#2a1a00; border:1px solid #aa6600; padding:8px 10px; border-radius:6px; margin-top:10px; display:none; }
+        #bucket-meta-note { font-size:11px; color:#888; margin-top:4px; }
+        #bucket-meta-note.warn { color:#ffcc66; }
     `;
     document.head.appendChild(style);
 
     /* ---------- ESTADO ---------- */
     window._bucketResults = window._bucketResults || new Map(); // img -> {w,h,bad}
-    let _lastImageFilesRefBucket = null;
 
     function resetForNewDataset() {
-        if (typeof imageFiles === 'undefined') return;
-        if (imageFiles === _lastImageFilesRefBucket) return;
-        _lastImageFilesRefBucket = imageFiles;
         window._bucketResults = new Map();
         window._bucketIssueIndices = [];
         // Scan automático e silencioso a cada dataset/subpasta carregado
         setTimeout(() => window.scanDatasetBuckets(true), 150);
     }
 
-    /* ---------- MEDIÇÃO DE RESOLUÇÃO REAL ----------
-       Reaproveita a MESMA <img> já usada como miniatura na lista (o src é
-       o blob do arquivo original — naturalWidth/naturalHeight já refletem
-       o tamanho real do arquivo, não o tamanho exibido via --thumb-size).
-       Se ainda não carregou (thumb fora da viewport, lazy paint, etc.),
-       cai para um probe Image() próprio como fallback. */
+    /* ---------- MEDIÇÃO DE RESOLUÇÃO REAL ---------- */
+    // A miniatura da lista agora é reduzida (tagmanager_ui_list.js), então o tamanho
+    // dela NÃO é a resolução real. Usa só a resolução real já guardada.
     function measureFromThumb(img) {
-        if (!img.element) return null;
-        const thumbEl = img.element.querySelector('.list-item-thumb-wrap img');
-        if (thumbEl && thumbEl.complete && thumbEl.naturalWidth) {
-            return { w: thumbEl.naturalWidth, h: thumbEl.naturalHeight };
-        }
-        return null;
+        return img && img._resolution ? img._resolution : null;
     }
 
+    // Lê a resolução pelo cabeçalho do arquivo (tagmanager_tm.js), sem decodificar a imagem.
     function measureViaLoader(img) {
-        return new Promise((resolve) => {
-            const probe = new Image();
-            probe.onload = () => resolve({ w: probe.naturalWidth, h: probe.naturalHeight });
-            probe.onerror = () => resolve(null);
-            probe.src = img.url;
-        });
+        return window.TM.getImageSize(img);
     }
 
     async function getImageSize(img) {
@@ -229,9 +194,9 @@
         if (typeof window.renderEditor === 'function') window.renderEditor();
     };
 
-    /* ---------- SCAN MANUAL (botão 🪣 na barra da lista) ---------- */
+    /* ---------- SCAN (botão 🪣 / automático) ---------- */
     window.scanDatasetBuckets = async function (silent) {
-        silent = silent === true; // o onclick manual passa um evento/undefined → não é silencioso
+        silent = silent === true;
         if (typeof imageFiles === 'undefined' || imageFiles.length === 0) {
             if (!silent && window.showAlert) window.showAlert('No dataset loaded.', 'warn');
             return;
@@ -239,9 +204,9 @@
         const btn = document.getElementById('btn-scan-buckets');
         if (!silent && btn) { btn.disabled = true; btn.textContent = '⏳'; }
 
-        // Se o dataset trocar no meio do scan, aborta (os resultados seriam do dataset antigo).
+        // Se o dataset trocar no meio do scan, aborta.
         const resultsRef = window._bucketResults;
-        const toMeasure = imageFiles.slice(); // inclui ocultas: a resolução aparece pra todas
+        const toMeasure = imageFiles.slice();
         const concurrency = 20;
         let aborted = false;
         for (let i = 0; i < toMeasure.length; i += concurrency) {
@@ -279,8 +244,6 @@
     }
 
     function injectScanButton() {
-        // Ancora na mesma barra do filtro de nome/compact-view (ao lado do
-        // toggle 🗂️), pra não poluir a topbar como pedido.
         const anchor = document.getElementById('btn-compact-group-depth') || document.getElementById('btn-toggle-compact-view');
         if (!anchor || document.getElementById('btn-scan-buckets')) return;
         const btn = document.createElement('button');
@@ -342,10 +305,67 @@
             .slice(0, limit);
     }
 
+    function imageExt(img) {
+        return (String(img && img.name || '').split('.').pop() || 'png').toLowerCase();
+    }
+
+    /* ---------- PNG: cópia dos chunks de texto (prompt / parâmetros) ---------- */
+    const PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10];
+    const PNG_TEXT_CHUNKS = new Set(['tEXt', 'iTXt', 'zTXt']);
+
+    function isPng(bytes) {
+        if (!bytes || bytes.length < 8) return false;
+        for (let i = 0; i < 8; i++) if (bytes[i] !== PNG_SIG[i]) return false;
+        return true;
+    }
+
+    // Lista [{type, start, end}] de cada chunk (start/end cobrem length+type+data+crc).
+    function listPngChunks(bytes) {
+        const out = [];
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        let p = 8;
+        while (p + 12 <= bytes.length) {
+            const len = view.getUint32(p);
+            const type = String.fromCharCode(bytes[p + 4], bytes[p + 5], bytes[p + 6], bytes[p + 7]);
+            const end = p + 12 + len;
+            if (end > bytes.length) break;
+            out.push({ type, start: p, end });
+            p = end;
+            if (type === 'IEND') break;
+        }
+        return out;
+    }
+
+    /* Devolve um Blob PNG = PNG novo + chunks de texto do original inseridos
+       logo antes do primeiro IDAT. Sem chunks de texto (ou se algo falhar),
+       devolve o PNG novo como veio. */
+    async function copyPngTextChunks(originalBlob, newBlob) {
+        try {
+            const orig = new Uint8Array(await originalBlob.arrayBuffer());
+            const fresh = new Uint8Array(await newBlob.arrayBuffer());
+            if (!isPng(orig) || !isPng(fresh)) return { blob: newBlob, copied: 0 };
+
+            const textChunks = listPngChunks(orig).filter(c => PNG_TEXT_CHUNKS.has(c.type));
+            if (textChunks.length === 0) return { blob: newBlob, copied: 0 };
+
+            const freshChunks = listPngChunks(fresh);
+            const firstIdat = freshChunks.find(c => c.type === 'IDAT');
+            if (!firstIdat) return { blob: newBlob, copied: 0 };
+
+            const parts = [fresh.subarray(0, firstIdat.start)];
+            textChunks.forEach(c => parts.push(orig.subarray(c.start, c.end)));
+            parts.push(fresh.subarray(firstIdat.start));
+            return { blob: new Blob(parts, { type: 'image/png' }), copied: textChunks.length };
+        } catch (e) {
+            console.warn('[Bucket Fix] Could not copy PNG metadata:', e);
+            return { blob: newBlob, copied: 0 };
+        }
+    }
+
     /* ---------- MODAL DE FIX + PREVIEW ARRASTÁVEL ---------- */
     function buildFixModal() {
         const existing = document.getElementById('modal-fix-bucket');
-        if (existing && document.getElementById('bucket-crop-shade')) return;
+        if (existing && document.getElementById('bucket-crop-shade') && document.getElementById('bucket-meta-note')) return;
         if (existing) existing.remove();
         const overlay = document.createElement('div');
         overlay.id = 'modal-fix-bucket';
@@ -367,6 +387,7 @@
                 <div id="bucket-upscale-warning" class="bucket-warn-upscale">⚠️ This bucket is larger than the crop. Saving will upscale with Lanczos-3, which stays sharper than the browser's default resize.</div>
                 <div id="bucket-drag-hint" style="font-size:11px; color:#aaa; margin-top:8px;"></div>
                 <div style="font-size:11px; color:#666; margin-top:4px;">The original file will be moved to 📦 Archive before saving (fully recoverable from there).</div>
+                <div id="bucket-meta-note"></div>
                 <div class="modal-buttons">
                     <button class="btn-cancel" onclick="window.closeModal('modal-fix-bucket')">Cancel</button>
                     <button id="btn-confirm-fix-bucket" style="background:#00aa66; color:#000; border:none; padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer;">✅ Apply Crop &amp; Save</button>
@@ -463,11 +484,8 @@
         }
     }
 
-    /* Listeners no window (capture), lendo o estado do módulo.
-       A versão antiga guardava "dragging" dentro de setupCropDrag e
-       reatribuía o mousedown a cada abertura: o mousemove continuava
-       olhando a flag da primeira vez, então o arraste morria no 2º open.
-       Capture no window também chega antes dos handlers globais do app. */
+    /* Listeners no window (capture), lendo o estado do módulo — assim o
+       arraste continua funcionando em todas as aberturas do modal. */
     let _drag = null;
     let _dragBound = false;
     function onBucketPointerDown(e) {
@@ -555,6 +573,16 @@
         document.getElementById('bucket-fix-info').textContent = alreadyValid
             ? `Current resolution: ${formatRes(result.w, result.h)} — already a valid SDXL bucket. Pick another size below to change it (dashed chip = current).`
             : `Current resolution: ${formatRes(result.w, result.h)} (not a valid SDXL bucket). Choose a target bucket below:`;
+
+        const metaNote = document.getElementById('bucket-meta-note');
+        if (metaNote) {
+            const isPngFile = imageExt(img) === 'png';
+            metaNote.className = isPngFile ? '' : 'warn';
+            metaNote.textContent = isPngFile
+                ? 'PNG text metadata (prompt / generation parameters) is copied to the new file.'
+                : '⚠️ JPEG/WebP metadata (EXIF, prompt) is not kept in the cropped file — the original with its metadata stays in 📦 Archive.';
+        }
+
         const previewImgEl = document.getElementById('bucket-preview-img');
         const paintPreview = () => requestAnimationFrame(() => requestAnimationFrame(() => {
             if (_fixState) renderCropOverlay();
@@ -572,10 +600,7 @@
         if (previewImgEl.complete && previewImgEl.naturalWidth) paintPreview();
     };
 
-    /* ---------- LANCZOS-3 (separável, alpha pré-multiplicado) ----------
-       Usado quando o recorte não tem o tamanho exato do bucket. No upscale
-       o kernel fica em 3px de raio (mais nítido que o bilinear do canvas).
-       No downscale o kernel alarga para não serrilhar. */
+    /* ---------- LANCZOS-3 (separável, alpha pré-multiplicado) ---------- */
     const LANCZOS_A = 3;
     function lanczosKernel(x) {
         x = Math.abs(x);
@@ -668,6 +693,10 @@
         btn.disabled = true; btn.textContent = '⏳ Processing...';
 
         try {
+            // Bytes do original ANTES de arquivar (usados para copiar os metadados do PNG).
+            let originalBlob = null;
+            try { originalBlob = await (await fetch(img.url)).blob(); } catch (e) {}
+
             const sourceImgEl = document.getElementById('bucket-preview-img');
             const cw = Math.max(1, Math.round(_fixState.cropW));
             const ch = Math.max(1, Math.round(_fixState.cropH));
@@ -692,31 +721,35 @@
                 outCanvas.getContext('2d').putImageData(new ImageData(resized, candidate.bw, candidate.bh), 0, 0);
             }
 
-            const extLower = (img.name.split('.').pop() || 'png').toLowerCase();
+            const extLower = imageExt(img);
             const mime = extLower === 'png' ? 'image/png' : extLower === 'webp' ? 'image/webp' : 'image/jpeg';
-            const blob = await new Promise(res => outCanvas.toBlob(res, mime, 0.95));
+            let blob = await new Promise(res => outCanvas.toBlob(res, mime, 0.95));
             if (!blob) throw new Error('Failed to generate the cropped image.');
 
-            // Backup automático: manda a imagem + legenda originais pro 📦
-            // Archive já existente no app (restaurável a qualquer momento).
+            let copiedMeta = 0;
+            if (mime === 'image/png' && originalBlob) {
+                const r = await copyPngTextChunks(originalBlob, blob);
+                blob = r.blob;
+                copiedMeta = r.copied;
+            }
+
+            // Backup automático: imagem + legenda originais vão pro 📦 Archive.
             if (typeof window.moveToArchive !== 'function') throw new Error('Archive module not loaded.');
             const archived = await window.moveToArchive(img);
             if (!archived) throw new Error('Could not archive the original image — aborting to avoid data loss.');
 
-            // Escreve o arquivo cortado com o MESMO nome original (o nome
-            // ficou livre porque o original acabou de ser movido pro Archive).
+            // Grava o arquivo cortado com o MESMO nome (ficou livre com o archive).
             const fileHandle = await img.parentDirHandle.getFileHandle(img.name, { create: true });
             const writable = await fileHandle.createWritable();
             await writable.write(blob);
             await writable.close();
 
-            // A legenda também foi arquivada junto com o original — regrava
-            // do conteúdo que já está em memória (sem perder edições não salvas).
+            // A legenda também foi arquivada — regrava do conteúdo em memória.
             if (img.hasFile && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
 
-            // Atualiza o preview em memória (a blob URL antiga não existe mais).
             try { URL.revokeObjectURL(img.url); } catch (e) {}
             img.url = URL.createObjectURL(blob);
+            img._resolution = { w: candidate.bw, h: candidate.bh };
 
             markResult(img, { w: candidate.bw, h: candidate.bh });
 
@@ -725,7 +758,8 @@
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
             window.closeModal('modal-fix-bucket');
-            if (window.showAlert) window.showAlert(`Saved at ${formatRes(candidate.bw, candidate.bh)}${upscaled ? ' with Lanczos upscale' : resizing ? ' with Lanczos resize' : ''}. Original safely kept in 📦 Archive.`, 'success');
+            const metaMsg = copiedMeta > 0 ? ` PNG metadata kept (${copiedMeta} chunk(s)).` : '';
+            if (window.showAlert) window.showAlert(`Saved at ${formatRes(candidate.bw, candidate.bh)}${upscaled ? ' with Lanczos upscale' : resizing ? ' with Lanczos resize' : ''}. Original safely kept in 📦 Archive.${metaMsg}`, 'success');
         } catch (e) {
             console.error('[Bucket Fix] failed:', e);
             if (window.showAlert) window.showAlert('Error applying the bucket fix: ' + (e.message || e), 'error');
@@ -737,7 +771,8 @@
     /* ---------- HOOKS ---------- */
     function installHooks() {
         if (typeof window.registerPostRenderImageList === 'function') {
-            window.registerPostRenderImageList(() => { resetForNewDataset(); applyBadgesToList(); });
+            window.TM.on('dataset:loaded', resetForNewDataset);
+            window.registerPostRenderImageList(applyBadgesToList);
         }
         if (typeof window.registerPostRenderEditor === 'function') {
             window.registerPostRenderEditor(updateFixBucketButtonVisibility);

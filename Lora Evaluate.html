@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -147,13 +147,14 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 <div id="cr"><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank" rel="noopener">GitHub Repository</a><br>© 2026 shirosaki33</div>
 
 <!-- Mesmo módulo do Lora Metadata Reader: findVal, escHtml, detectSystemInfo, detectTrainingTiming, resolve*, sanitizeCivitaiDesc -->
+<script src="tools/thumb_loader.js"></script>
 <script src="tools/lora_meta_reader.js?v=7"></script>
 <script>
 const $=id=>document.getElementById(id),esc=s=>window.escHtml(s??''),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const fv=(m,k)=>{const v=findVal(m,k);return v&&v!=='None'&&v!=='null'?v:null};
 const API='https://civitai.com/api/v1/',CACHE_PATH='local/lora_evaluate_cache.json',CF='lora_evaluate_cache.json';
 const PREV=['.preview.png','.preview.jpg','.preview.jpeg','.preview.webp','.png','.jpg','.jpeg','.webp'],SIZES=[25,50,75,100];
-const isLocal=['localhost','127.0.0.1'].includes(location.hostname);
+const isLocal=['localhost','127.0.0.1','[::1]'].includes(location.hostname);
 let autoRC=true,roots=[],items=[],view=[],all=[],cat='All',cur=-1,asc=true,scale=1,tx=0,ty=0,gal=[],gi=0,page=1,per=100,busy=false,cache={},saveT,chain=Promise.resolve(),mode='none',favs=new Set(),hidden=new Set();
 const tried=new Set();let stamp=0;const debRender=(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(render,120)}})();
 
@@ -208,7 +209,7 @@ async function scan(root){const out=[];
       if(pv)try{url=URL.createObjectURL(await pv.getFile())}catch{}
       out.push({root,dir,name:e.name,rel,path,file,previewName:pv?pv.name:null,key:path+'|'+file.size+'|'+file.lastModified,url,meta:{},cls:'Other'})}}
   await walk(root.handle,'',0);for(const it of out){it.raw=await readHeader(it.file);it.meta=expandMeta(it.raw)}return out}
-async function scanAll(){items.forEach(i=>i.url&&i.url.startsWith('blob:')&&URL.revokeObjectURL(i.url));items=[];page=1;await loadFs();
+async function scanAll(){window.ThumbLoader&&ThumbLoader.clear();items.forEach(i=>i.url&&i.url.startsWith('blob:')&&URL.revokeObjectURL(i.url));items=[];page=1;await loadFs();
   for(const r of roots)items.push(...(r.handle?await scan(r):r.loose||[]));
   items.forEach(i=>i.cls=classify(i));folders();render();await syncPrev();await runQueue()}
 const rescan=()=>{$('fl').textContent='Reading folders…';return scanAll()};
@@ -219,7 +220,8 @@ async function addFiles(){try{const hs=await showOpenFilePicker({multiple:true,t
   await scanAll()}catch(e){e.name!=='AbortError'&&alert('Error: '+e.message)}}
 
 /* ---------- Civitai ---------- */
-async function sha256(f){const d=new Uint8Array(await crypto.subtle.digest('SHA-256',await f.arrayBuffer()));return Array.from(d,b=>b.toString(16).padStart(2,'0')).join('')}
+// window.loraSha256 (lora_meta_reader.js): nativo até 768 MB, streaming acima (checkpoints de vários GB não travam mais a aba).
+const sha256=f=>window.loraSha256(f);
 const imgUrls=v=>[...new Set((v.images||[]).filter(i=>i&&i.type!=='video'&&/^https:\/\//i.test(i.url||'')).map(i=>i.url))].slice(0,24);
 function apply(c,v){Object.assign(c,{status:'found',modelId:v.modelId,versionId:v.id,name:v.model?.name||v.name||null,version:v.name||null,base:v.baseModel||null,type:v.model?.type||null,
   trained:Array.isArray(v.trainedWords)?v.trainedWords.slice(0,40):[],downloads:v.stats?.downloadCount??null,images:imgUrls(v),latest:null,
@@ -233,7 +235,7 @@ async function ensurePrev(it){const c=rec(it),f=c&&c.images&&c.images[0];if(!f||
   if(c.previewSaved&&it.url&&c.previewUrl===f)return true;const k=(it._hash||it.key)+'|'+f;if(tried.has(k))return!!it.url;tried.add(k);
   try{const b=await getBlob(f),t=it.name.replace(/\.safetensors$/i,'')+'.preview.'+extOf(b,f),w=await(await it.dir.getFileHandle(t,{create:true})).createWritable();await w.write(b);await w.close();
     if(it.previewName&&it.previewName.toLowerCase()!==t.toLowerCase())try{await it.dir.removeEntry(it.previewName)}catch{}
-    it.url&&it.url.startsWith('blob:')&&URL.revokeObjectURL(it.url);it.url=URL.createObjectURL(b);it.previewName=t;c.previewSaved=true;c.previewUrl=f;save();updCard(it);return true}catch{return false}}
+    it.url&&it.url.startsWith('blob:')&&(window.ThumbLoader&&ThumbLoader.forget(it.url),URL.revokeObjectURL(it.url));it.url=URL.createObjectURL(b);it.previewName=t;c.previewSaved=true;c.previewUrl=f;save();updCard(it);return true}catch{return false}}
 const METAH=['sshs_model_hash','sha256_autov2','sha256_autov3','sha256','blake3','hash'];
 async function lookup(h){const r=await fetch(API+'model-versions/by-hash/'+h);return r.status===404?null:r.ok?r.json():undefined}
 async function checkOne(it){let h=it._hash,v=null;
@@ -286,13 +288,14 @@ function pager(){const t=all.length,n=Math.max(1,Math.ceil(t/per));$('pager').st
 const changePage=d=>{page+=d;$('grid').scrollTop=0;render()};
 const togglePer=()=>{per=SIZES[(SIZES.indexOf(per)+1)%SIZES.length];page=1;$('grid').scrollTop=0;render()};
 const empty=()=>`<div id="empty"><strong>${items.length?'No LoRAs in this filter.':'No folder loaded.'}</strong><p>${items.length?'Try another category, folder, or name.':'Click <b>Add folder</b> and choose the directory with your .safetensors files (Chrome or Edge, desktop). Civitai data is cached in <code>local/lora_evaluate_cache.json</code> on localhost, or in the library folder when opened from <code>file://</code>.'}</p></div>`;
-const card=(it,i)=>`<div class="card" data-i="${i}" data-k="${esc(it.key)}"><button class="star${isFav(it)?' on':''}" data-star="${i}" title="Favorite">★</button><span class="tg"><span class="dot ${st(it)}"></span>${esc(it.cls)}</span>${it.url?`<img loading="lazy" alt="" src="${esc(it.url)}">`:'<div class="ph"></div>'}<div class="nm" title="${esc(it.name)}">${esc(it.name.replace(/\.safetensors$/i,''))}</div><div class="sb">${esc((trigger(it)||'—')+' · '+(dimAlpha(it.meta)||'—'))}</div></div>`;
+const card=(it,i)=>`<div class="card" data-i="${i}" data-k="${esc(it.key)}"><button class="star${isFav(it)?' on':''}" data-star="${i}" title="Favorite">★</button><span class="tg"><span class="dot ${st(it)}"></span>${esc(it.cls)}</span>${it.url?`<img alt="" data-thumb="${esc(it.url)}">`:'<div class="ph"></div>'}<div class="nm" title="${esc(it.name)}">${esc(it.name.replace(/\.safetensors$/i,''))}</div><div class="sb">${esc((trigger(it)||'—')+' · '+(dimAlpha(it.meta)||'—'))}</div></div>`;
 function render(){all=filtered();pager();const s=(page-1)*per;view=all.slice(s,s+per);renderCats();
   $('grid').innerHTML=view.length?view.map(card).join(''):empty();
+  window.ThumbLoader?ThumbLoader.scan($('grid')):$('grid').querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);
   $('fl').textContent=`${items.length} LoRA${items.length===1?'':'s'}${roots.length?' · '+roots.map(r=>r.name).join(' · '):''} · showing ${all.length?`${s+1}–${s+view.length} / ${all.length}`:0} · ${cacheLabel()}`;window.ccAfter&&ccAfter()}
 function updCard(it){const el=[...document.querySelectorAll('.card')].find(c=>c.dataset.k===it.key);if(!el)return;
   el.querySelector('.dot').className='dot '+st(it);el.querySelector('.tg').lastChild.textContent=it.cls;if(!it.url)return;
-  let i=el.querySelector('img');if(!i){i=document.createElement('img');i.alt='';el.querySelector('.ph').replaceWith(i)}if(i.src!==it.url)i.src=it.url}
+  let i=el.querySelector('img');if(!i){i=document.createElement('img');i.alt='';el.querySelector('.ph').replaceWith(i)}if(window.ThumbLoader)ThumbLoader.attach(i,it.url);else if(i.src!==it.url)i.src=it.url}
 $('grid').onclick=e=>{const s=e.target.closest('[data-star]');if(s){const it=view[+s.dataset.star];it&&toggleFav(it,e);return}const c=e.target.closest('.card');if(c&&!(window.ccClick&&ccClick(c,e)))showDetail(+c.dataset.i)};
 
 /* ---------- Detalhe (campos via resolvers do lora_meta_reader.js) ---------- */
@@ -321,7 +324,8 @@ const has=h=>h&&h.replace(/<[^>]*>/g,'').trim();
 function showDetail(i,keep){
   if(i<0||i>=view.length)return;cur=i;const it=view[i],c=rec(it)||{},m=it.meta,s=st(it);
   $('grid').style.display=$('side').style.display=$('bar').style.display=$('pager').style.display='none';$('detail').style.display='flex';
-  $('dl').innerHTML=view.map((x,j)=>`<div class="li${j===i?' on':''}" data-j="${j}">${x.url?`<img alt="" src="${esc(x.url)}">`:'<div class="ph"></div>'}<div><b>${esc(x.name.replace(/\.safetensors$/i,''))}</b><small>${esc(x.cls)}</small></div></div>`).join('');
+  $('dl').innerHTML=view.map((x,j)=>`<div class="li${j===i?' on':''}" data-j="${j}">${x.url?`<img alt="" data-thumb="${esc(x.url)}">`:'<div class="ph"></div>'}<div><b>${esc(x.name.replace(/\.safetensors$/i,''))}</b><small>${esc(x.cls)}</small></div></div>`).join('');
+  window.ThumbLoader?ThumbLoader.scan($('dl')):$('dl').querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);
   $('dl').querySelector('.li.on')?.scrollIntoView({block:'nearest'});
   gal=[];if(it.url)gal.push({src:it.url,kind:'local'});
   (c.images||[]).filter(u=>/^https:\/\//i.test(u)).slice(it.url&&c.previewSaved?1:0).forEach(u=>gal.push({src:u,kind:'remote'}));

@@ -61,31 +61,51 @@
     };
 
     window.runAutoMergeRule = function(tagsArray, rule, embeds) {
-        const removes = Array.isArray(rule.removeTags) ? rule.removeTags : [];
+        const keep = (rule.keepTag && String(rule.keepTag).trim() !== '') ? String(rule.keepTag).trim() : '';
+        const keepLower = keep.toLowerCase();
         const reqs = Array.isArray(rule.require) ? rule.require : [];
         const excs = Array.isArray(rule.exclude) ? rule.exclude : [];
 
-        // Trigger Tags (removeTags) agora é OPCIONAL: se vazio, o gatilho vira
-        // só o Require (tags soltas e/ou @embedName). Uma regra sem NENHUM
-        // gatilho (nem Trigger Tags, nem Require) nunca dispara, pra não virar
-        // uma regra "sempre ativa" por acidente.
+        // Trigger Tags (removeTags) are OPTIONAL and may be plain tags or
+        // @embedName. The Main Tag is never treated as a trigger of its own
+        // rule (otherwise Merge would remove and re-add it on every run).
+        const removes = (Array.isArray(rule.removeTags) ? rule.removeTags : [])
+            .filter(r => String(r).trim() !== '' && String(r).trim().toLowerCase() !== keepLower);
+
+        // A rule with NO trigger at all (no Trigger Tags and no Require) never
+        // fires, so it can't become an "always on" rule by accident.
         if (removes.length === 0 && reqs.length === 0) return null;
 
-        if (removes.length > 0) {
-            const presentRemoves = removes.filter(rem => tagsArray.some(t => t.toLowerCase() === rem.toLowerCase()));
-            if (presentRemoves.length === 0) return null;
+        const isTrigger = t => String(t).toLowerCase() !== keepLower && removes.some(rem => matchTag(t, rem, embeds));
+        if (removes.length > 0 && !tagsArray.some(isTrigger)) return null;
+
+        const hasRequired = reqs.length === 0 || reqs.every(req => tagsArray.some(t => matchTag(t, req, embeds)));
+        const hasExcluded = excs.length > 0 && tagsArray.some(t => excs.some(ex => matchTag(t, ex, embeds)));
+        if (!hasRequired || hasExcluded) return null;
+
+        const alreadyHasKeep = keep !== '' && tagsArray.some(t => String(t).toLowerCase() === keepLower);
+
+        if (rule.isAutoFill) {
+            // Fill: keep the trigger tags, just add the Main Tag (case-insensitive check).
+            const out = [...tagsArray];
+            if (keep && !alreadyHasKeep) out.push(keep);
+            return out;
         }
 
-        let hasRequired = reqs.length === 0 || reqs.every(req => tagsArray.some(t => matchTag(t, req, embeds)));
-        let hasExcluded = excs.length > 0 && tagsArray.some(t => excs.some(ex => matchTag(t, ex, embeds)));
-
-        if (hasRequired && !hasExcluded) {
-            let newTags = [...tagsArray];
-            if (!rule.isAutoFill) newTags = tagsArray.filter(t => !removes.some(rem => rem.toLowerCase() === t.toLowerCase()));
-            if (rule.keepTag && String(rule.keepTag).trim() !== '') newTags.push(String(rule.keepTag).trim());
-            return [...new Set(newTags)];
-        }
-        return null;
+        // Merge: drop the trigger tags and put the Main Tag where the FIRST
+        // removed trigger used to be (so tag order is preserved). With no
+        // trigger present (embed-only rule) it is appended at the end.
+        const out = [];
+        let placed = false;
+        tagsArray.forEach(t => {
+            if (isTrigger(t)) {
+                if (keep && !alreadyHasKeep && !placed) { out.push(keep); placed = true; }
+                return;
+            }
+            out.push(t);
+        });
+        if (keep && !alreadyHasKeep && !placed) out.push(keep);
+        return out;
     };
 
     /* =====================================================================
@@ -115,6 +135,7 @@
 
     window._autoDoChangedCount = window._autoDoChangedCount || 0;
     window._autoDoAlertDismissed = window._autoDoAlertDismissed || false;
+    window._autoDoTouched = window._autoDoTouched || new Set(); // images Auto-Do changed (balloon counts the ones still unsaved)
 
     function ensureAutoDoAlertBar() {
         let bar = document.getElementById('autodo-changes-alert');
@@ -139,37 +160,28 @@
     window.updateAutoDoAlertUI = function () {
         const bar = ensureAutoDoAlertBar();
 
-        // Se não sobra mais NADA sujo no dataset (tudo já foi salvo), zera o
-        // estado — não faz sentido continuar anunciando uma mudança que já
-        // está salva em disco. IMPORTANTE: isto só é usado pra decidir
-        // quando o balão deve SUMIR sozinho — não é mais uma condição pra
-        // decidir se ele pode APARECER (ver FIX abaixo).
-        const stillDirty = (typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty);
-        if (!stillDirty && window._autoDoChangedCount > 0) {
+        // The balloon counts only the images Auto-Do touched that are STILL
+        // unsaved (img.dirty). Saved images drop out of the count by
+        // themselves; when none is left the balloon hides and resets.
+        // (Before, this ran BEFORE markDirty(), saw nothing dirty and zeroed
+        // the counter, so the balloon almost never showed up.)
+        let n = 0;
+        window._autoDoTouched.forEach(img => { if (img && img.dirty) n++; });
+        if (n === 0) {
+            window._autoDoTouched.clear();
             window._autoDoChangedCount = 0;
             window._autoDoAlertDismissed = false;
-        }
-
-        // FIX (balão não aparecia): a versão anterior exigia `stillDirty`
-        // também para EXIBIR o balão, na mesma chamada que acabou de rodar
-        // window.markDirty(modifiedFiles). Isso deveria ser sempre
-        // verdadeiro nesse ponto, mas criava uma dependência frágil da
-        // ordem exata de execução (se markDirty ou qualquer coisa no meio
-        // do caminho não deixasse o dataset "sujo" a tempo, o balão nunca
-        // chegava a aparecer). Agora a exibição depende só da contagem e do
-        // dismiss — o `stillDirty` continua sendo usado, só que separado,
-        // para AUTO-ESCONDER depois que tudo for salvo.
-        const shouldShow = window._autoDoChangedCount > 0 && !window._autoDoAlertDismissed;
-        if (!shouldShow) {
             bar.style.display = 'none';
             return;
         }
+        window._autoDoChangedCount = n;
+        if (window._autoDoAlertDismissed) { bar.style.display = 'none'; return; }
 
         bar.style.display = 'block';
-        const plural = window._autoDoChangedCount === 1 ? 'image' : 'images';
+        const plural = n === 1 ? 'image' : 'images';
         bar.innerHTML = `
             <span style="color:#00ff99;margin:0 6px;font-size:14px;line-height:1;">⚡</span>
-            Auto-Do automatically modified tags in ${window._autoDoChangedCount} ${plural} — review and save when ready
+            Auto-Do automatically modified tags in ${n} ${plural} — review and save when ready
             <span style="color:#00ff99;margin:0 6px;font-size:14px;line-height:1;">⚡</span>
             <button id="btn-dismiss-autodo-alert" title="Dismiss this notice" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#88ffcc; font-size:16px; font-weight:bold; cursor:pointer; padding:0 6px; line-height:1;">&times;</button>
         `;
@@ -182,61 +194,39 @@
         }
     };
 
-    // Mantém o balão em sincronia com o estado de "salvo"/"não salvo" do
-    // dataset SEM duplicar essa lógica: qualquer markDirty()/markClean()
-    // já dispara window.updateUnsavedChangesUI() em algum ponto do app
-    // (tagmanager_ui_core.js) — só "encaixamos" nosso próprio refresh
-    // logo depois, reaproveitando o mesmo sinal.
+    // Mantém o balão em sincronia com o estado de "salvo"/"não salvo":
+    // o hub dispara 'ui:unsaved' depois de window.updateUnsavedChangesUI().
     function installAutoDoAlertUnsavedHook() {
-        if (typeof window.updateUnsavedChangesUI !== 'function' || window.updateUnsavedChangesUI.__autoDoAlertWrapped) return false;
-        const original = window.updateUnsavedChangesUI;
-        const wrapped = function () {
-            const result = original.apply(this, arguments);
-            window.updateAutoDoAlertUI();
-            return result;
-        };
-        wrapped.__autoDoAlertWrapped = true;
-        window.updateUnsavedChangesUI = wrapped;
+        if (!window.TM || !window.TM.on) return false;
+        window.TM.on('ui:unsaved', () => window.updateAutoDoAlertUI());
         return true;
     }
     if (!installAutoDoAlertUnsavedHook()) window.addEventListener('DOMContentLoaded', () => setTimeout(installAutoDoAlertUnsavedHook, 0));
 
-    // Zera o balão sempre que o dataset/subpasta muda (nova referência de
-    // window.imageFiles) — mesmo padrão de detecção de troca de dataset já
-    // usado em vários outros arquivos deste projeto (auto_task_queue.js,
-    // danbooru_panel.js, rule_redudant.js, etc).
-    let _lastImageFilesRefAutoDoAlert = null;
+    // Zera o balão sempre que o dataset/subpasta muda (evento do hub TM).
     function resetAutoDoAlertOnDatasetChange() {
-        if (typeof imageFiles === 'undefined') return;
-        if (imageFiles === _lastImageFilesRefAutoDoAlert) return;
-        _lastImageFilesRefAutoDoAlert = imageFiles;
+        window._autoDoTouched.clear();
         window._autoDoChangedCount = 0;
         window._autoDoAlertDismissed = false;
         window.updateAutoDoAlertUI();
     }
     function installAutoDoAlertDatasetHook() {
-        if (typeof window.registerPostRenderImageList === 'function') {
-            if (!window._autoDoAlertHookRegistered) {
-                window.registerPostRenderImageList(resetAutoDoAlertOnDatasetChange);
-                window._autoDoAlertHookRegistered = true;
-            }
-            return true;
+        if (!window.TM || !window.TM.on) return false;
+        if (!window._autoDoAlertHookRegistered) {
+            window.TM.on('dataset:loaded', resetAutoDoAlertOnDatasetChange);
+            window._autoDoAlertHookRegistered = true;
         }
-        if (typeof window.renderImageList === 'function' && !window.renderImageList.__autoDoAlertWrapped) {
-            const orig = window.renderImageList;
-            const wrapped = function () { orig.apply(this, arguments); resetAutoDoAlertOnDatasetChange(); };
-            wrapped.__autoDoAlertWrapped = true;
-            window.renderImageList = wrapped;
-            return true;
-        }
-        return false;
+        return true;
     }
     if (!installAutoDoAlertDatasetHook()) window.addEventListener('DOMContentLoaded', () => setTimeout(installAutoDoAlertDatasetHook, 0));
 
     window.runAutoMergeOnDataset = async function(manual = false) {
-        if (window.enableConflictWarnings === false) return;
-        if (!window.imageFiles || window.imageFiles.length === 0) { if (manual && window.showAlert) window.showAlert('No dataset loaded.', 'warn'); return; }
-        
+        if (window.enableConflictWarnings === false) {
+            if (manual && window.showAlert) window.showAlert('Auto-Do is part of "Tag Manager Rules" — enable it in Settings first.', 'warn');
+            return 0;
+        }
+        if (!window.imageFiles || window.imageFiles.length === 0) { if (manual && window.showAlert) window.showAlert('No dataset loaded.', 'warn'); return 0; }
+
         const rows = await window.RulesDB.getAllRules();
         const amRules = rows.filter(r => r.category === 'automerge').map(row => {
             if (Array.isArray(row.tags) && row.tags.length > 0) return { keepTag: row.tags[0], removeTags: row.tags.slice(1), require: [], exclude: [], isAutoFill: false };
@@ -246,83 +236,153 @@
         });
 
         const embeds = rows.filter(r => r.category === 'embed');
-        if (amRules.length === 0) { if (manual && window.showAlert) window.showAlert('No Auto-Do rules configured.', 'warn'); return; }
+        if (amRules.length === 0) { if (manual && window.showAlert) window.showAlert('No Auto-Do rules configured.', 'warn'); return 0; }
 
-        let changedCount = 0; let modifiedFiles = [];
+        let changedCount = 0; const modifiedFiles = [];
+        const removedMap = new Map(); // tag -> [baseName] (what Auto-Do took out, for the Removed Tags History)
         window.imageFiles.forEach(img => {
             if (img.type === 'tags' && img.content && !img.hidden) {
-                let originalTags = img.content.split(',').map(t => t.trim()).filter(t => t);
+                const originalTags = img.content.split(',').map(t => t.trim()).filter(t => t);
                 let currentTags = [...originalTags];
                 amRules.forEach(rule => { const res = runAutoMergeRule(currentTags, rule, embeds); if (res) currentTags = res; });
                 if (originalTags.join(',') !== currentTags.join(',')) {
+                    const nowSet = new Set(currentTags.map(t => t.toLowerCase()));
+                    originalTags.forEach(t => {
+                        if (nowSet.has(t.toLowerCase())) return;
+                        if (!removedMap.has(t)) removedMap.set(t, []);
+                        removedMap.get(t).push(img.baseName);
+                    });
                     img.content = currentTags.join(', '); img.hasFile = true; modifiedFiles.push(img); changedCount++;
                 }
             }
         });
 
-        if (changedCount > 0) {
-            // FIX: define o estado do balão ANTES de qualquer outra chamada
-            // (markDirty, renderImageList, renderMasterTagList, renderEditor,
-            // applyFilters) — removendo qualquer dependência da ORDEM exata
-            // em que essas funções (e os hooks que elas disparam) executam.
-            window._autoDoChangedCount = (window._autoDoChangedCount || 0) + changedCount;
-            window._autoDoAlertDismissed = false;
-            if (typeof window.updateAutoDoAlertUI === 'function') window.updateAutoDoAlertUI();
-
-            if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
-            if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
-            if (window.masterTagSet) {
-                window.masterTagSet.clear();
-                window.imageFiles.forEach(img => { if(img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if(t.trim()) window.masterTagSet.add(t.trim()); }); });
-            }
-            if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
-            if (typeof window.renderImageList === 'function') window.renderImageList();
-            if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-            if (typeof window.renderEditor === 'function') window.renderEditor();
-            if (typeof window.applyFilters === 'function') window.applyFilters();
-
-            // Segunda garantia: reafirma o balão depois que TODOS os renders
-            // acima (e qualquer coisa assíncrona disparada por eles) já
-            // tiverem terminado. Redundante na maioria das vezes, mas
-            // protege contra qualquer re-render futuro que porventura mexa
-            // no estado entre o início e o fim desta função.
-            if (typeof window.updateAutoDoAlertUI === 'function') {
-                setTimeout(() => window.updateAutoDoAlertUI(), 0);
-            }
-
-            if (window.showAlert) window.showAlert(`Auto-Do applied to ${changedCount} image(s)!`, 'success');
-        } else {
+        if (changedCount === 0) {
             if (manual && window.showAlert) window.showAlert('No matching tags found to automate.', 'info');
+            return 0;
         }
+
+        // Removed Tags History: every tag Auto-Do took out is listed there, marked "Auto-Do".
+        if (removedMap.size > 0 && typeof window.recordRemovedTags === 'function') window.recordRemovedTags(removedMap, 'Auto-Do');
+
+        // markDirty FIRST, then tell the balloon which images were touched.
+        if (typeof window.markDirty === 'function') window.markDirty(modifiedFiles);
+        modifiedFiles.forEach(img => window._autoDoTouched.add(img));
+        window._autoDoAlertDismissed = false;
+        if (typeof window.updateAutoDoAlertUI === 'function') window.updateAutoDoAlertUI();
+
+        if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+        if (window.masterTagSet) {
+            window.masterTagSet.clear();
+            window.imageFiles.forEach(img => { if(img.type === 'tags' && img.content) img.content.split(',').forEach(t => { if(t.trim()) window.masterTagSet.add(t.trim()); }); });
+        }
+        if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+        if (typeof window.renderImageList === 'function') window.renderImageList();
+        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.applyFilters === 'function') window.applyFilters();
+        if (typeof window.updateAutoDoAlertUI === 'function') window.updateAutoDoAlertUI();
+
+        if (window.showAlert) window.showAlert(`Auto-Do applied to ${changedCount} image(s)!`, 'success');
+        return changedCount;
     };
 
+    /* =====================================================================
+       USAGE RULE — "run only once per dataset"
+       ---------------------------------------------------------------------
+       With the option ON (Manage Rules → Auto-Do, default), the AUTOMATIC
+       run happens only:
+         1. the first time a dataset is opened (remembered per dataset in
+            its _tagger_config.json as autoDoDone), and
+         2. right after an Auto-Caption batch finishes.
+       After that it stays quiet (reloads, refreshes, subfolder hops...) and
+       only runs from the "▶ Run Auto-Do Now" button. With the option OFF it
+       runs on every dataset load, as it used to.
+    ===================================================================== */
+    const _autoDoSessionDone = new WeakSet();
+    window._autoDoAfterCaptionAt = 0;
+
+    function autoDoHandleKey() { return window.currentImagesHandle || window.rootHandle || null; }
+
+    function isDatasetAutoDone() {
+        const h = autoDoHandleKey();
+        if (h && _autoDoSessionDone.has(h)) return true;
+        return (typeof datasetConfig !== 'undefined' && datasetConfig && datasetConfig.autoDoDone === true);
+    }
+
+    async function markDatasetAutoDone() {
+        const h = autoDoHandleKey();
+        if (h) _autoDoSessionDone.add(h);
+        if (typeof datasetConfig !== 'undefined' && datasetConfig && datasetConfig.autoDoDone !== true) {
+            datasetConfig.autoDoDone = true;
+            if (h && typeof window.saveDatasetConfig === 'function') { try { await window.saveDatasetConfig(h); } catch (e) {} }
+        }
+    }
+
+    // Used by the "↺ Re-arm" button: makes the current dataset count as "never opened".
+    window.rearmAutoDoForCurrentDataset = async function () {
+        const h = autoDoHandleKey();
+        try { if (h) _autoDoSessionDone.delete(h); } catch (e) {}
+        if (typeof datasetConfig !== 'undefined' && datasetConfig && datasetConfig.autoDoDone) {
+            delete datasetConfig.autoDoDone;
+            if (h && typeof window.saveDatasetConfig === 'function') { try { await window.saveDatasetConfig(h); } catch (e) {} }
+        }
+        if (window.showAlert) window.showAlert('Auto-Do re-armed: it will run automatically the next time this dataset loads.', 'info');
+    };
+
+    async function autoDoQueueHandler() {
+        if (window.enableConflictWarnings === false) return;
+        const autoRun = await window.getSetting('rm_auto_merge', false);
+        const afterCaption = (Date.now() - (window._autoDoAfterCaptionAt || 0)) < 120000;
+        if (!autoRun) { window._autoDoAfterCaptionAt = 0; return; }
+        const once = await window.getSetting('rm_auto_once', true);
+
+        // The dataset was replaced again while this queue pass was running:
+        // the extra pass that follows will reach us with the fresh data.
+        if (window._autoTaskQueuePending) return;
+        if (!window.imageFiles || window.imageFiles.length === 0) return;
+
+        if (once && !afterCaption && isDatasetAutoDone()) return;
+
+        window._autoDoAfterCaptionAt = 0;
+        await window.runAutoMergeOnDataset(false);
+        if (once) await markDatasetAutoDone();
+    }
+
+    // Auto-Caption finished (non-review mode ends with a dataset refresh) → re-arm for one run.
+    function installAutoCaptionHook() {
+        if (typeof window.startBatchTagging !== 'function') return false;
+        if (window.startBatchTagging.__autoDoWrapped) return true;
+        const original = window.startBatchTagging;
+        const wrapped = async function () {
+            const refBefore = (typeof imageFiles !== 'undefined') ? imageFiles : null;
+            const result = await original.apply(this, arguments);
+            // A real batch ends with refreshDataset() → new imageFiles reference.
+            // Early exits (no model, no folder) and Review Mode don't refresh.
+            if (typeof imageFiles !== 'undefined' && imageFiles !== refBefore) window._autoDoAfterCaptionAt = Date.now();
+            return result;
+        };
+        wrapped.__autoDoWrapped = true;
+        window.startBatchTagging = wrapped;
+        return true;
+    }
+
     window.RulesCore.hookAutoMergeLoader = function() {
+        if (!installAutoCaptionHook()) setTimeout(installAutoCaptionHook, 500);
         if (window._autoMergeHooked) return;
         if (typeof window.registerAutoDatasetTask === 'function') {
-            window.registerAutoDatasetTask('auto-merge', async () => {
-                const autoRun = await window.getSetting('rm_auto_merge', false);
-                if (autoRun && window.enableConflictWarnings !== false) await window.runAutoMergeOnDataset(false);
-            });
+            // priority 90 → runs after every other automatic dataset task
+            window.registerAutoDatasetTask('auto-merge', autoDoQueueHandler, 90);
             window._autoMergeHooked = true; return;
         }
-        let _lastImageFilesRef = null;
-        const _origRender = window.renderImageList;
-        if (typeof _origRender === 'function') {
-            window.renderImageList = function() {
-                if (window.imageFiles && window.imageFiles !== _lastImageFilesRef) {
-                    _lastImageFilesRef = window.imageFiles;
-                    window.getSetting('rm_auto_merge', false).then(autoRun => {
-                        if (autoRun && window.enableConflictWarnings !== false) setTimeout(() => window.runAutoMergeOnDataset(false), 100);
-                    });
-                }
-                return _origRender.apply(this, arguments);
-            };
+        if (window.TM && window.TM.on) {
+            window.TM.on('dataset:loaded', () => setTimeout(() => { autoDoQueueHandler().catch(e => console.warn('[Auto-Do]', e)); }, 600));
             window._autoMergeHooked = true;
         }
     };
 
     // --- UI AUTO MERGE ---
-    function renderAutoMergeSection(rows, isChecked) {
+    function renderAutoMergeSection(rows, isChecked, isOnce) {
         const meta = window.CATEGORY_META.automerge;
         const categoryRows = rows.filter(r => r.category === 'automerge');
         categoryRows.sort((a, b) => (a.isDefault === b.isDefault ? 0 : (a.isDefault ? -1 : 1)));
@@ -345,15 +405,26 @@
                 <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} rules</span>
             </div>
         `;
-        setTimeout(() => {
-            const cb = document.getElementById('cb-auto-merge');
-            if (cb) cb.onchange = async (e) => { await window.saveSetting('rm_auto_merge', e.target.checked); };
-        }, 0);
+        header.querySelector('#cb-auto-merge').onchange = async (e) => { await window.saveSetting('rm_auto_merge', e.target.checked); };
         wrap.appendChild(header);
+
+        /* USAGE RULE: automatic run only on first open + after Auto-Caption */
+        const optRow = document.createElement('div');
+        optRow.style.cssText = 'padding: 9px 15px; background: #0f1a14; border-bottom: 1px solid #222; flex-shrink: 0; font-size: 11px; color: #9fd8bb; line-height: 1.45; display:flex; align-items:flex-start; gap:10px;';
+        optRow.innerHTML = `
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; flex:1;" title="ON: the automatic run happens only the first time a dataset is opened and right after an Auto-Caption batch. OFF: it runs every time a dataset loads.">
+                <input type="checkbox" id="cb-auto-once" ${isOnce ? 'checked' : ''} style="margin:2px 0 0 0; cursor:pointer;">
+                <span><b>Run automatically only once per dataset</b> — on its first open and right after Auto-Caption. After that it only runs with <b>▶ Run Auto-Do Now</b>. Uncheck to run on every dataset load.</span>
+            </label>
+            <button id="btn-auto-rearm" title="Make the current dataset count as never opened, so the automatic run happens again on its next load" style="flex-shrink:0; background:#151515; border:1px solid #2e7d32; color:#4caf50; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:bold;">↺ Re-arm dataset</button>
+        `;
+        optRow.querySelector('#cb-auto-once').onchange = async (e) => { await window.saveSetting('rm_auto_once', e.target.checked); };
+        optRow.querySelector('#btn-auto-rearm').onclick = () => window.rearmAutoDoForCurrentDataset();
+        wrap.appendChild(optRow);
 
         const hint = document.createElement('div');
         hint.style.cssText = 'font-size:11px; color:#aaa; padding: 12px 15px; background: #151515; border-bottom: 1px solid #222; flex-shrink: 0; line-height: 1.5;';
-        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Trigger Tags are optional — leave them empty and use Require with an <b>@embedName</b> to fire a rule purely from an embed group (e.g. "any @clothing tag present → add 'clothed'").</span>`;
+        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Trigger Tags are optional and accept <b>@embedName</b> too — leave them empty and use Require with an <b>@embedName</b> to fire a rule purely from an embed group (e.g. "any @clothing tag present → add 'clothed'").</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Rules run top to bottom (Originals first, then yours) and each one sees the result of the previous one. Merge puts the Main Tag where the first removed Trigger was. Every tag Auto-Do removes is listed in 🕘 Removed Tags History, marked ⚡ Auto-Do.</span>`;
         wrap.appendChild(hint);
 
         const list = document.createElement('div');
@@ -396,7 +467,7 @@
                         </select>
                     </div>
                     <div style="display:flex; flex-direction:column; gap:2px;">
-                        <label style="font-size:10px; color:#888;">Trigger Tags <span style="color:#666;">(optional — leave empty to trigger only by Require)</span></label>
+                        <label style="font-size:10px; color:#888;">Trigger Tags <span style="color:#666;">(optional, comma-sep, or @embedName — leave empty to trigger only by Require)</span></label>
                         <input type="text" class="am-edit-remove" value="${window.RulesUI.escapeHTML(rems.join(', '))}" placeholder="e.g. visual novel cg" style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff;">
                     </div>
                     <div style="display:flex; flex-direction:column; gap:2px;">
@@ -427,6 +498,14 @@
 
                     if (newRemove.length === 0 && newReq.length === 0) {
                         if (window.showAlert) window.showAlert('Set at least one Trigger Tag or one Require condition (e.g. @embedName).', 'warn');
+                        return;
+                    }
+                    if (newMode === 'fill' && !newKeep) {
+                        if (window.showAlert) window.showAlert('A Fill rule needs a Main Tag to add.', 'warn');
+                        return;
+                    }
+                    if (newMode === 'merge' && !newKeep && newRemove.length === 0) {
+                        if (window.showAlert) window.showAlert('A Merge rule without a Main Tag needs Trigger Tags to remove.', 'warn');
                         return;
                     }
 
@@ -480,7 +559,7 @@
         addRow.innerHTML = `
             <div style="display:flex; gap:6px;">
                 <input type="text" class="cond-keep" placeholder="Main Tag (to add)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
-                <input type="text" class="cond-remove" placeholder="Trigger Tags (optional, comma-sep)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
+                <input type="text" class="cond-remove" placeholder="Trigger Tags (optional, comma-sep, or @embedName)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
             </div>
             <div style="display:flex; gap:6px;">
                 <input type="text" class="cond-req" placeholder="Requires (comma-sep, or @embedName)" style="flex:1; font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-width: 0;">
@@ -506,6 +585,15 @@
                 return;
             }
 
+            if (isAutoFill && !keep) {
+                if (window.showAlert) window.showAlert('A Fill rule needs a Main Tag to add.', 'warn');
+                return;
+            }
+            if (!isAutoFill && !keep && removeTags.length === 0) {
+                if (window.showAlert) window.showAlert('A Merge rule without a Main Tag needs Trigger Tags to remove.', 'warn');
+                return;
+            }
+
             const data = { keepTag: keep, removeTags, require, exclude, isAutoFill };
             await window.RulesDB.addRule('automerge', data, false); 
             await window.RulesCore.applyUserRulesToGlobals();
@@ -521,7 +609,8 @@
 
     window.RulesUI.registerSection(3, async (rows) => {
         const isEnabled = await window.getSetting('rm_auto_merge', false);
-        return renderAutoMergeSection(rows, isEnabled);
+        const isOnce = await window.getSetting('rm_auto_once', true);
+        return renderAutoMergeSection(rows, isEnabled, isOnce);
     });
 
     /* ---------- RENOMEAR UM EMBED — ATUALIZA REFERÊNCIAS EM TODO LUGAR ---------- */
@@ -551,11 +640,13 @@
             } else if (row.category === 'automerge') {
                 const req = Array.isArray(row.require) ? row.require : [];
                 const exc = Array.isArray(row.exclude) ? row.exclude : [];
+                const rem = Array.isArray(row.removeTags) ? row.removeTags : [];
                 const newReq = req.map(t => (String(t).toLowerCase() === oldRef) ? newRef : t);
                 const newExc = exc.map(t => (String(t).toLowerCase() === oldRef) ? newRef : t);
-                if (JSON.stringify(newReq) !== JSON.stringify(req) || JSON.stringify(newExc) !== JSON.stringify(exc)) {
+                const newRem = rem.map(t => (String(t).toLowerCase() === oldRef) ? newRef : t);
+                if (JSON.stringify(newReq) !== JSON.stringify(req) || JSON.stringify(newExc) !== JSON.stringify(exc) || JSON.stringify(newRem) !== JSON.stringify(rem)) {
                     await window.RulesDB.updateRule(row.id, {
-                        keepTag: row.keepTag, removeTags: row.removeTags,
+                        keepTag: row.keepTag, removeTags: newRem,
                         require: newReq, exclude: newExc, isAutoFill: !!row.isAutoFill
                     });
                     changedCount++;

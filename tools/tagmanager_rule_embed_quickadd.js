@@ -181,12 +181,25 @@
     }
 
     /* ---------- INJEÇÃO DO ÍCONE NAS LINHAS (Active Image e All Dataset Tags) ---------- */
+    /* Usa as regras já carregadas por RulesCore.applyUserRulesToGlobals
+       (window._userConflictRules) — antes relia todas as regras (async) a cada
+       render das duas listas. Só lê do banco se elas ainda não existirem. */
+    let _embedSetSrc = null, _embedSet = new Set();
+    function embedTagSet(rows) {
+        if (rows !== _embedSetSrc) {
+            _embedSetSrc = rows;
+            _embedSet = new Set();
+            rows.filter(r => r.category === 'embed').forEach(e => (Array.isArray(e.tags) ? e.tags : []).forEach(et => _embedSet.add(String(et).toLowerCase())));
+        }
+        return _embedSet;
+    }
+
     async function injectEmbedIcons(container) {
         if (!container || !window.RulesDB || typeof window.RulesDB.getAllRules !== 'function') return;
 
-        const rows = await window.RulesDB.getAllRules();
-        const embeds = rows.filter(r => r.category === 'embed');
-        const belongsToAny = (t) => embeds.some(e => Array.isArray(e.tags) && e.tags.some(et => String(et).toLowerCase() === t.toLowerCase()));
+        const rows = Array.isArray(window._userConflictRules) ? window._userConflictRules : await window.RulesDB.getAllRules();
+        const embedSet = embedTagSet(rows);
+        const belongsToAny = (t) => embedSet.has(t.toLowerCase());
 
         container.querySelectorAll('[data-tag-name]').forEach(row => {
             if (row.classList.contains('ghost')) return; // sugestões-fantasma (💡) não têm ação de embed

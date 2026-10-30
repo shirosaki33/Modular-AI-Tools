@@ -95,6 +95,32 @@ function toggleRenameBalloon() {
     }
 }
 
+/* Move o sidecar JSON junto com a imagem. Se o JSON não for válido, copia
+   o texto como está (antes ficava para trás com o nome antigo, órfão).
+   Retorna false se já existir um JSON com o nome novo (não sobrescreve). */
+async function gallerySafeMoveSidecar(dirHandle, oldBaseName, newBaseName, newName) {
+    let oldJsonHandle;
+    try { oldJsonHandle = await dirHandle.getFileHandle(oldBaseName + '.json'); } catch (e) { return true; } // sem JSON
+    try { await dirHandle.getFileHandle(newBaseName + '.json'); return false; } catch (e) {}
+    const text = await (await oldJsonHandle.getFile()).text();
+    let out = text;
+    try { const obj = JSON.parse(text); obj.file_name = newName; out = JSON.stringify(obj, null, 2); } catch (e) {}
+    const newJsonHandle = await dirHandle.getFileHandle(newBaseName + '.json', { create: true });
+    const w = await newJsonHandle.createWritable();
+    await w.write(out);
+    await w.close();
+    await dirHandle.removeEntry(oldBaseName + '.json');
+    if (typeof currentJsonFiles !== 'undefined') {
+        currentJsonFiles.delete(oldBaseName + '.json');
+        currentJsonFiles.add(newBaseName + '.json');
+    }
+    return true;
+}
+
+async function _exists(name) {
+    try { await currentHandle.getFileHandle(name); return true; } catch (e) { return false; }
+}
+
 /* ================================================================
    MAIN DISPATCHER
    Called by the "Confirm" button inside the rename popup.
@@ -129,7 +155,7 @@ async function renameSingleImage() {
 
     const extMatch       = oldName.match(/\.[^.]+$/);
     const oldExt         = extMatch ? extMatch[0] : '';
-    const oldNameWithoutExt = oldName.replace(oldExt, '');
+    const oldNameWithoutExt = oldExt ? oldName.slice(0, -oldExt.length) : oldName;
 
     let newNameRaw = document.getElementById('rename-input').value;
 
@@ -147,15 +173,17 @@ async function renameSingleImage() {
     showAlert('⏳ Renaming file...', 'info');
 
     try {
-        // Abort if the target name already exists
-        try {
-            await currentHandle.getFileHandle(newName);
-            showAlert('❌ A file with that name already exists!', 'error');
-            return;
-        } catch (e) {}
+        if (/[\\/:*?"<>|]/.test(newName)) { showAlert('❌ The name has characters that are not allowed in file names.', 'error'); return; }
 
         const oldBaseName = oldName.substring(0, oldName.lastIndexOf('.')) || oldName;
         const newBaseName = newName.substring(0, newName.lastIndexOf('.')) || newName;
+
+        // Abort if the target image OR its JSON already exists (never overwrite)
+        if (await _exists(newName)) { showAlert('❌ A file with that name already exists!', 'error'); return; }
+        if (oldBaseName.toLowerCase() !== newBaseName.toLowerCase() && await _exists(newBaseName + '.json') && await _exists(oldBaseName + '.json')) {
+            showAlert(`❌ "${newBaseName}.json" already exists — rename cancelled to avoid overwriting it.`, 'error');
+            return;
+        }
 
         // Copy the image file
         const oldImgHandle = await currentHandle.getFileHandle(oldName);
@@ -165,21 +193,8 @@ async function renameSingleImage() {
         await imgWritable.write(await oldImgFile.arrayBuffer());
         await imgWritable.close();
 
-        // Copy and update the sidecar JSON
-        try {
-            const oldJsonHandle = await currentHandle.getFileHandle(oldBaseName + '.json');
-            const oldJsonFile   = await oldJsonHandle.getFile();
-            const jsonText      = await oldJsonFile.text();
-
-            let jsonObj = {};
-            try { jsonObj = JSON.parse(jsonText); jsonObj.file_name = newName; } catch (e) {}
-
-            const newJsonHandle  = await currentHandle.getFileHandle(newBaseName + '.json', { create: true });
-            const jsonWritable   = await newJsonHandle.createWritable();
-            await jsonWritable.write(JSON.stringify(jsonObj, null, 2));
-            await jsonWritable.close();
-            await currentHandle.removeEntry(oldBaseName + '.json');
-        } catch (e) {}
+        // Move the sidecar JSON (kept as-is if it isn't valid JSON)
+        try { await gallerySafeMoveSidecar(currentHandle, oldBaseName, newBaseName, newName); } catch (e) { console.warn('Sidecar move failed:', e); }
 
         // Remove the old image
         await currentHandle.removeEntry(oldName);
@@ -187,7 +202,7 @@ async function renameSingleImage() {
         // Update the in-memory cache
         const fileIndex = currentFiles.findIndex(f => f.name === oldName);
         if (fileIndex !== -1) {
-            URL.revokeObjectURL(currentFiles[fileIndex].url);
+            if (window.ThumbLoader) window.ThumbLoader.forget(currentFiles[fileIndex].url); URL.revokeObjectURL(currentFiles[fileIndex].url);
             const newImgFile = await newImgHandle.getFile();
             currentFiles[fileIndex] = {
                 name: newName,
@@ -205,6 +220,7 @@ async function renameSingleImage() {
 
         // Update merge-group membership (interface-only "alternate versions")
         if (typeof updateMergeGroupFileName === 'function') updateMergeGroupFileName(oldName, newName);
+            if (typeof renameViewCountEntry === 'function') renameViewCountEntry(oldName, newName);
         if (typeof renderMergeVersionStrip === 'function') renderMergeVersionStrip(newName);
 
         document.getElementById('file-name').value = newName;
@@ -212,7 +228,8 @@ async function renameSingleImage() {
         // Update the active thumbnail
         const activeThumb = document.querySelector('#thumbnail-strip .thumb.active');
         if (activeThumb && fileIndex !== -1) {
-            activeThumb.src     = currentFiles[fileIndex].url;
+            if (window.ThumbLoader) window.ThumbLoader.attach(activeThumb, currentFiles[fileIndex].url, { root: document.getElementById('thumbnail-strip') });
+            else activeThumb.src = currentFiles[fileIndex].url;
             activeThumb.onclick = () => openDetailView(currentFiles[fileIndex].url, newName);
         }
 
@@ -245,7 +262,7 @@ async function batchRenameImages(checkboxes) {
 
     showAlert(`⏳ Renaming ${checkboxes.length} file(s)...`, 'info');
 
-    let count = 0;
+    let count = 0, skipped = 0;
     const padding = String(checkboxes.length).length;
 
     for (let i = 0; i < checkboxes.length; i++) {
@@ -258,12 +275,13 @@ async function batchRenameImages(checkboxes) {
         const oldBaseName = oldName.substring(0, oldName.lastIndexOf('.')) || oldName;
 
         try {
-            // Skip if it already exists, to avoid overwriting
-            try {
-                await currentHandle.getFileHandle(newName);
-                console.warn(`File ${newName} already exists! Skipping to avoid data loss.`);
+            // Skip if the image or its JSON already exists, to avoid overwriting
+            if (oldName === newName) { count++; continue; }
+            if (await _exists(newName) || (await _exists(oldBaseName + '.json') && await _exists(newBaseName + '.json'))) {
+                console.warn(`${newName} (or its JSON) already exists! Skipping to avoid data loss.`);
+                skipped++;
                 continue;
-            } catch (e) {}
+            }
 
             const oldImgHandle = await currentHandle.getFileHandle(oldName);
             const oldImgFile   = await oldImgHandle.getFile();
@@ -272,24 +290,13 @@ async function batchRenameImages(checkboxes) {
             await imgWritable.write(await oldImgFile.arrayBuffer());
             await imgWritable.close();
 
-            try {
-                const oldJsonHandle = await currentHandle.getFileHandle(oldBaseName + '.json');
-                const oldJsonFile   = await oldJsonHandle.getFile();
-                let jsonObj         = JSON.parse(await oldJsonFile.text());
-                jsonObj.file_name   = newName;
-
-                const newJsonHandle = await currentHandle.getFileHandle(newBaseName + '.json', { create: true });
-                const jsonWritable  = await newJsonHandle.createWritable();
-                await jsonWritable.write(JSON.stringify(jsonObj, null, 2));
-                await jsonWritable.close();
-                await currentHandle.removeEntry(oldBaseName + '.json');
-            } catch (e) {}
+            try { await gallerySafeMoveSidecar(currentHandle, oldBaseName, newBaseName, newName); } catch (e) { console.warn('Sidecar move failed:', e); }
 
             await currentHandle.removeEntry(oldName);
 
             const fileIndex = currentFiles.findIndex(f => f.name === oldName);
             if (fileIndex !== -1) {
-                URL.revokeObjectURL(currentFiles[fileIndex].url);
+                if (window.ThumbLoader) window.ThumbLoader.forget(currentFiles[fileIndex].url); URL.revokeObjectURL(currentFiles[fileIndex].url);
                 const newImgFile = await newImgHandle.getFile();
                 currentFiles[fileIndex] = {
                     name: newName,
@@ -305,6 +312,7 @@ async function batchRenameImages(checkboxes) {
             }
 
             if (typeof updateMergeGroupFileName === 'function') updateMergeGroupFileName(oldName, newName);
+            if (typeof renameViewCountEntry === 'function') renameViewCountEntry(oldName, newName);
 
             count++;
         } catch (error) {
@@ -319,5 +327,5 @@ async function batchRenameImages(checkboxes) {
     if (selectionCount) selectionCount.style.display = 'none';
 
     renderGrid();
-    showAlert(`✅ ${count} file(s) renamed successfully!`, 'success');
+    showAlert(`✅ ${count} file(s) renamed successfully!` + (skipped ? ` ${skipped} skipped because the target name already exists.` : ''), skipped ? 'warn' : 'success');
 }

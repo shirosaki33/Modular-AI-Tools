@@ -2,36 +2,30 @@
    REMOVE TAG COOLDOWN (Standalone — não mexe nos outros arquivos)
    ---------------------------------------------------------------------
    PROBLEMA QUE ISSO RESOLVE:
-   Mouse com o switch do botão gasto pode disparar 2 eventos de "click"
-   pra um único clique físico ("double-click fantasma"). No contexto de
-   remover tag (× na Active Image / All Dataset Tags), isso faz o app
-   remover a tag clicada E, sem querer, a próxima tag que ficou na mesma
-   posição do × logo em seguida — ou repetir a remoção de todo o grupo
-   selecionado.
+   Mouse com o switch gasto pode disparar 2 "clicks" para um único clique
+   físico. No × de remover tag isso remove a tag clicada E a próxima que
+   ficou na mesma posição logo em seguida.
 
    COMO FUNCIONA:
-   Este módulo envolve (wrap) as funções globais que efetivamente
-   removem tag(s):
-     - window.removeTagFromSelected   (× de uma tag na Active Image)
+   Envolve as funções globais que removem tag(s) por clique direto:
+     - window.removeTagFromSelected    (× de uma tag na Active Image)
      - window.removeSelectedActiveTags (🗑️ Remove Selected, Active Image)
-     - window.globalRemoveTags         (× de uma tag em All Dataset Tags)
-     - window.removeSelectedMasterTags (🗑️ Remove, All Dataset Tags)
+     - window.globalRemoveTags         (× de uma tag em All Dataset Tags,
+                                        e também o 🗑️ Remove, que delega pra cá)
+   Depois de uma remoção, novas remoções ficam bloqueadas por
+   window.tagRemoveCooldownMs milissegundos (padrão: 1000 = 1 segundo).
 
-   Depois de QUALQUER remoção bem-sucedida, todas essas funções ficam
-   bloqueadas por COOLDOWN_MS milissegundos — um clique (ou clique
-   fantasma) que caia dentro dessa janela é simplesmente ignorado, com um
-   aviso rápido na tela, em vez de remover outra tag sem querer.
+   FIX: removeSelectedMasterTags NÃO é mais envolvida. Ela só pede
+   confirmação e chama globalRemoveTags — com as duas envolvidas, a
+   primeira iniciava o cooldown e a segunda (já em cooldown) bloqueava a
+   própria remoção. Só funcionava porque o confirm() costuma demorar mais
+   de 1 s.
 
-   AJUSTE FÁCIL: mude o valor de COOLDOWN_MS abaixo (está em
-   milissegundos; 3000 = 3 segundos, como pedido). Também dá pra mudar
-   em tempo real no Console do navegador com:
-     window.tagRemoveCooldownMs = 1500;
+   AJUSTE: no Console do navegador, window.tagRemoveCooldownMs = 1500;
 ========================================================================= */
 
 (function () {
 
-    // Valor padrão: 3 segundos. Pode ser sobrescrito em runtime
-    // (window.tagRemoveCooldownMs = ...) sem precisar editar este arquivo.
     window.tagRemoveCooldownMs = window.tagRemoveCooldownMs !== undefined ? window.tagRemoveCooldownMs : 1000;
 
     let lastRemovalAt = 0;
@@ -47,13 +41,10 @@
     function warnBlocked() {
         const secondsLeft = Math.max(0, ((window.tagRemoveCooldownMs - (Date.now() - lastRemovalAt)) / 1000)).toFixed(1);
         if (typeof window.showAlert === 'function') {
-            window.showAlert(`⏳ Wait ${secondsLeft}s before try to remove again.`, 'warn');
+            window.showAlert(`⏳ Wait ${secondsLeft}s before removing again.`, 'warn');
         }
     }
 
-    /* Envolve a função globalName: se estiver em cooldown, ignora a
-       chamada e avisa; caso contrário, executa normalmente e inicia um
-       novo cooldown a partir de agora. */
     function guardRemovalFn(globalName) {
         const original = window[globalName];
         if (typeof original !== 'function' || original.__removeCooldownWrapped) return;
@@ -74,20 +65,20 @@
         [
             'removeTagFromSelected',    // × de 1 tag — Active Image
             'removeSelectedActiveTags', // 🗑️ Remove Selected — Active Image
-            'globalRemoveTags',         // × de 1 tag — All Dataset Tags
-            'removeSelectedMasterTags'  // 🗑️ Remove — All Dataset Tags
+            'globalRemoveTags'          // × de 1 tag / 🗑️ Remove — All Dataset Tags
         ].forEach(guardRemovalFn);
     }
 
-    // As funções acima já existem como window.xxx no momento em que os
-    // scripts terminam de rodar (definidas de forma síncrona nos outros
-    // arquivos), então tanto faz rodar antes ou depois do DOMContentLoaded
-    // — mas esperamos por segurança, caso a ordem dos <script> mude no
-    // futuro.
+    // Must be the OUTERMOST wrapper: Review Mode (tagmanager_review_unconfirmed.js)
+    // also wraps these functions on DOMContentLoaded and clears the "pending
+    // remove" mark after the call. If this guard were inside, a blocked click
+    // would still clear that mark. setTimeout(0) runs after every
+    // DOMContentLoaded listener, whatever the script order in the HTML.
+    const installLast = () => setTimeout(installGuards, 0);
     if (document.readyState === 'loading') {
-        window.addEventListener('DOMContentLoaded', installGuards);
+        window.addEventListener('DOMContentLoaded', installLast);
     } else {
-        installGuards();
+        installLast();
     }
 
 })();

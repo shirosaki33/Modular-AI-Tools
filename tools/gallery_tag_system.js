@@ -75,6 +75,31 @@ function updateViewModeButtonUI() {
 }
 
 /* ----------------------------------------------------------------
+   SIDECAR JSON — leitura segura
+   { exists, ok, data }: exists=false -> não há arquivo; ok=false -> o
+   arquivo existe mas não é JSON válido (NÃO deve ser sobrescrito, senão
+   o conteúdo se perde).
+   ---------------------------------------------------------------- */
+async function readSidecarSafe(dirHandle, sidecarName) {
+    let fh;
+    try { fh = await dirHandle.getFileHandle(sidecarName); } catch (e) { return { exists: false, ok: true, data: {} }; }
+    try {
+        const data = JSON.parse(await (await fh.getFile()).text());
+        return { exists: true, ok: !!data && typeof data === 'object', data: (data && typeof data === 'object') ? data : {} };
+    } catch (e) {
+        return { exists: true, ok: false, data: {} };
+    }
+}
+
+async function writeSidecar(dirHandle, sidecarName, obj) {
+    const fh = await dirHandle.getFileHandle(sidecarName, { create: true });
+    const writable = await fh.createWritable();
+    await writable.write(JSON.stringify(obj, null, 2));
+    await writable.close();
+    if (typeof currentJsonFiles !== 'undefined') currentJsonFiles.add(sidecarName);
+}
+
+/* ----------------------------------------------------------------
    DATALIST  — keeps the <datalist id="all-tags-list"> up to date
    ---------------------------------------------------------------- */
 function updateTagsDatalist() {
@@ -252,27 +277,20 @@ async function deleteGalleryTag(tagName) {
     if (!confirm(`Remove the gallery "${tagName}"?\n${filesToClear.length} image(s) will no longer belong to it (the tag will be cleared, but the images and JSON files stay in the folder).`)) return;
 
     showAlert(`Removing gallery "${tagName}"...`, 'info');
-    let count = 0;
+    let count = 0, skipped = 0;
 
     for (const fname of filesToClear) {
         const baseName    = fname.substring(0, fname.lastIndexOf('.')) || fname;
         const sidecarName = baseName + '.json';
 
-        let oldData = {};
-        try {
-            const existingFh   = await currentHandle.getFileHandle(sidecarName);
-            const existingFile = await existingFh.getFile();
-            oldData = JSON.parse(await existingFile.text());
-        } catch (e) {}
-
+        const sc = await readSidecarSafe(currentHandle, sidecarName);
+        if (!sc.ok) { skipped++; console.warn('[Galleries] Invalid JSON left untouched:', sidecarName); continue; }
+        const oldData = sc.data;
         oldData.file_name = fname;
         oldData.tag = '';
 
         try {
-            const fh       = await currentHandle.getFileHandle(sidecarName, { create: true });
-            const writable = await fh.createWritable();
-            await writable.write(JSON.stringify(oldData, null, 2));
-            await writable.close();
+            await writeSidecar(currentHandle, sidecarName, oldData);
             tagsPerFile.delete(fname);
             count++;
         } catch (e) { console.error(e); }
@@ -285,7 +303,7 @@ async function deleteGalleryTag(tagName) {
 
     updateTagsDatalist(); // also re-renders the sidebar
     renderGrid();
-    showAlert(`🗑️ Gallery "${tagName}" removed from ${count} image(s).`, 'success');
+    showAlert(`🗑️ Gallery "${tagName}" removed from ${count} image(s).` + (skipped ? ` ${skipped} JSON file(s) were invalid and left untouched.` : ''), 'success');
 }
 
 
@@ -465,18 +483,15 @@ async function applyBatchTags() {
     }
 
     showAlert(`Applying tag to ${filesToUpdate.length} images...`, 'info');
-    let count = 0;
+    let count = 0, skipped = 0;
 
     for (const fname of filesToUpdate) {
         const baseName    = fname.substring(0, fname.lastIndexOf('.')) || fname;
         const sidecarName = baseName + '.json';
 
-        let oldData = {};
-        try {
-            const existingFh   = await currentHandle.getFileHandle(sidecarName);
-            const existingFile = await existingFh.getFile();
-            oldData = JSON.parse(await existingFile.text());
-        } catch (e) {}
+        const sc = await readSidecarSafe(currentHandle, sidecarName);
+        if (!sc.ok) { skipped++; console.warn('[Galleries] Invalid JSON left untouched:', sidecarName); continue; }
+        const oldData = sc.data;
 
         let meta = null;
         if (Object.keys(oldData).length === 0) {
@@ -500,18 +515,16 @@ async function applyBatchTags() {
         };
 
         try {
-            const fh       = await currentHandle.getFileHandle(sidecarName, { create: true });
-            const writable = await fh.createWritable();
-            await writable.write(JSON.stringify(dataObj, null, 2));
-            await writable.close();
-            tagsPerFile.set(fname, newTag);
-            if (newTag) allTags.add(newTag);
+            await writeSidecar(currentHandle, sidecarName, dataObj);
+            if (newTag) { tagsPerFile.set(fname, newTag); allTags.add(newTag); }
+            else tagsPerFile.delete(fname);
             count++;
         } catch (e) { console.error(e); }
     }
 
     updateTagsDatalist();
-    showAlert(`✅ Tag applied to ${count} images!`, 'success');
+    if (typeof updateGridCounters === 'function') updateGridCounters();
+    showAlert(`✅ Tag applied to ${count} images!` + (skipped ? ` ${skipped} JSON file(s) were invalid and left untouched.` : ''), skipped ? 'warn' : 'success');
 
     if (isDetailView) {
         document.getElementById('tag-dropdown').classList.remove('open');
@@ -561,21 +574,14 @@ async function removeBatchTags() {
         const baseName    = fname.substring(0, fname.lastIndexOf('.')) || fname;
         const sidecarName = baseName + '.json';
 
-        let oldData = {};
-        try {
-            const existingFh   = await currentHandle.getFileHandle(sidecarName);
-            const existingFile = await existingFh.getFile();
-            oldData = JSON.parse(await existingFile.text());
-        } catch (e) {}
-
+        const sc = await readSidecarSafe(currentHandle, sidecarName);
+        if (!sc.ok) { console.warn('[Galleries] Invalid JSON left untouched:', sidecarName); continue; }
+        const oldData = sc.data;
         oldData.file_name = fname;
         oldData.tag = '';
 
         try {
-            const fh       = await currentHandle.getFileHandle(sidecarName, { create: true });
-            const writable = await fh.createWritable();
-            await writable.write(JSON.stringify(oldData, null, 2));
-            await writable.close();
+            await writeSidecar(currentHandle, sidecarName, oldData);
             tagsPerFile.delete(fname);
             count++;
         } catch (e) { console.error(e); }

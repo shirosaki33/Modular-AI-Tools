@@ -11,6 +11,12 @@
 /* ================================================================
    BLOCK 1 — UI UTILITIES & SETTINGS
    ================================================================ */
+// Texto vindo de metadados de imagem/JSON entra no HTML escapado (antes um
+// prompt com "<...>" ou aspas quebrava o campo ou injetava HTML).
+function escGallery(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function autoResize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
 
 function copyText(btn, id) { 
@@ -370,7 +376,7 @@ function addNote(name = 'Note', value = '') {
     const readonlyAttr = isEditing ? '' : 'readonly';
     block.innerHTML = `
         <div class="promptTitle">
-            <input type="text" class="note-title-input" value="${name}" ${readonlyAttr}>
+            <input type="text" class="note-title-input" value="${escGallery(name)}" ${readonlyAttr}>
             <div class="promptTitle-actions">
                 <button class="copy-btn" onclick="copyText(this)" title="Copy">⧉</button>
                 <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
@@ -378,7 +384,7 @@ function addNote(name = 'Note', value = '') {
             </div>
         </div>
         <div class="collapsible-content">
-            <textarea class="val-note-input" ${readonlyAttr} oninput="autoResize(this)">${value}</textarea>
+            <textarea class="val-note-input" ${readonlyAttr} oninput="autoResize(this)">${escGallery(value)}</textarea>
         </div>`;
     container.appendChild(block); 
     setTimeout(() => autoResize(block.querySelector('textarea')), 10);
@@ -391,7 +397,7 @@ function addLora(value = '') {
     const rmStyle = isEditing ? 'inline-block' : 'none';
     const readonlyAttr = isEditing ? '' : 'readonly';
     item.innerHTML = `
-        <input type="text" class="lora-input" value="${value}" ${readonlyAttr} placeholder="LoRA name / weight">
+        <input type="text" class="lora-input" value="${escGallery(value)}" ${readonlyAttr} placeholder="LoRA name / weight">
         <button class="remove-btn" style="display:${rmStyle}; color:#ff6060; background:none; border:none; cursor:pointer; font-size:12px; margin-left:5px; padding:0 3px;" onclick="removeLora(this)" title="Remove LoRA">✖</button>
     `;
     container.appendChild(item);
@@ -610,6 +616,8 @@ async function deleteCurrentImage() {
         
         tagsPerFile.delete(fname);
         if (typeof removeFromMergeGroup === 'function') removeFromMergeGroup(fname);
+        const gone = currentFiles.find(f => f.name === fname);
+        if (gone) { if (window.ThumbLoader) window.ThumbLoader.forget(gone.url); try { URL.revokeObjectURL(gone.url); } catch (e) {} }
         currentFiles = currentFiles.filter(f => f.name !== fname);
         currentJsonFiles.delete(baseName + '.json'); // Remove from counter
         

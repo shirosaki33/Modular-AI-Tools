@@ -116,14 +116,17 @@
                 hList.appendChild(item);
             });
 
-            processQueue(hashes);
+            processQueue(hashes, ++queueToken);
         };
 
-        async function processQueue(hashes) {
+        // Clicar em Detect de novo cancela a fila anterior (antes as duas rodavam juntas).
+        let queueToken = 0;
+        async function processQueue(hashes, token) {
             for (const h of hashes) {
+                if (token !== queueToken) return;
                 const statusEl = document.getElementById(`hfstatus-${h}`);
-                const itemEl = statusEl.parentElement;
-                if (statusEl && statusEl.classList.contains('hf-pending')) {
+                const itemEl = statusEl ? statusEl.parentElement : null;
+                if (statusEl && itemEl && statusEl.classList.contains('hf-pending') && statusEl.textContent === 'Pending') {
                     await checkHash(h, statusEl, itemEl);
                     await sleep(250);
                 }
@@ -149,9 +152,13 @@
                             hashSpan.textContent = `${modelName} - ${hash}`;
                         }
                     }
-                } else {
+                } else if (r.status === 404) {
                     statusEl.textContent = "Not Found";
                     statusEl.className = "hf-status hf-notfound";
+                } else {
+                    // 429 / 5xx: o Civitai não respondeu — não é "não existe".
+                    statusEl.textContent = r.status === 429 ? "Rate limited — click to retry" : `Error ${r.status} — click to retry`;
+                    statusEl.className = "hf-status hf-pending";
                 }
             } catch(e) {
                 statusEl.textContent = "Error";

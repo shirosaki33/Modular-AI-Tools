@@ -5,14 +5,10 @@
    aparecer sempre num painel próprio, à esquerda do painel "Dataset",
    com preview grande + lista de tags dela.
 
-   - Continua fixada mesmo trocando de pasta/dataset (estado global,
-     independente do array `imageFiles`, que é resetado a cada troca).
-   - As tags mostradas ali são SOMENTE leitura: um clique nelas apenas
-     COPIA a tag para a imagem ativa (a que está selecionada no editor
-     central). Não existe remove/edit tocando na imagem fixada a partir
-     deste painel.
-   - Um ícone 📌 é injetado em cada item da lista (via wrap de
-     window.renderImageList) para fixar/desafixar aquela imagem.
+   - Continua fixada mesmo trocando de pasta/dataset.
+   - As tags mostradas ali são SOMENTE leitura: só podem ser copiadas
+     para a imagem ativa / para todas.
+   - Um ícone 📌 é injetado em cada item da lista (hook pós-render).
 ========================================================================= */
 
 (function () {
@@ -20,7 +16,6 @@
     /* ---------- ESTADO GLOBAL ---------- */
     // { baseName, name, url, content, ext, parentDirHandle, folderName }
     window.pinnedImage = window.pinnedImage || null;
-    // Tags selecionadas dentro do painel de pin (multi-seleção, igual às outras listas)
     window._pinnedSelectedTags = window._pinnedSelectedTags || new Set();
     window._lastPinnedIndex = window._lastPinnedIndex || 0;
 
@@ -44,10 +39,7 @@
         #pinned-image-folder { font-size: 10px; color: #666; text-align: center; margin-top: -4px; flex-shrink: 0; }
         #pinned-tags-title { font-size: 11px; color: #888; text-transform: uppercase; font-weight: bold; margin-top: 6px; letter-spacing: 0.5px; flex-shrink: 0; }
         #pinned-tags-hint { font-size: 10px; color: #555; margin-top: -4px; margin-bottom: 2px; flex-shrink: 0; }
-        /* Região de scroll PRÓPRIA da lista de tags — antes o scroll (ou a falta
-           dele) era do wrap inteiro (foto + nome + lista + botões juntos), o que
-           também empurrava os botões "Add" pra fora da vista. Agora só esta
-           região rola; foto/nome ficam fixos em cima e os botões fixos embaixo. */
+        /* Só a lista de tags rola; foto/nome fixos em cima e botões fixos embaixo. */
         #pinned-tags-scroll { flex: 1; min-height: 0; overflow-y: auto; }
         #pinned-tags-list { display: flex; flex-direction: column; gap: 0; background: #111; border-radius: 6px; }
         .pinned-tag-row { border-radius: 0; cursor: pointer; }
@@ -62,16 +54,12 @@
         .list-pin-btn:hover { color: #00ff99; transform: scale(1.1); }
         .list-pin-btn.pinned-active { color: #00ff99; text-shadow: 0 0 6px rgba(0,255,153,0.6); }
 
-        /* Em modo Grid (ver tagmanager_grid_view.js) o botão de pin vira um selo no canto */
         #image-list.grid-mode .list-pin-btn {
             position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.55);
             border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center;
             justify-content: center; font-size: 12px;
         }
 
-        /* Resizer próprio do painel de Pin (mesmo visual dos outros .resizer do
-           app via a classe global .resizer.vertical, sem precisar tocar em
-           tagmanager_ui_core.js). Visibilidade controlada via JS junto com o painel. */
         #resizer-pinned { display: none; }
     `;
     document.head.appendChild(style);
@@ -124,7 +112,7 @@
         loadPinnedPanelWidth(panel);
     }
 
-    /* ---------- RESIZER (arrastar a lateral do painel, igual aos outros da app) ---------- */
+    /* ---------- RESIZER ---------- */
     function setupPinnedResizer(panel, resizer) {
         if (resizer.__pinResizerInit) return;
         resizer.__pinResizerInit = true;
@@ -181,22 +169,9 @@
         return isSameImage(window.pinnedImage, img);
     };
 
-    /* ---------------------------------------------------------------------
-       FIX (preview da imagem fixada quebrando ao trocar/recarregar dataset):
-       Antes, o pin reaproveitava a MESMA blob URL (img.url) já usada pela
-       lista "Dataset" (ou pelo painel do Archive). Essa URL é revogada por
-       window.revokeImageFileUrls() toda vez que o dataset atual é recarregado
-       (trocar de pasta, refreshDataset, rename, clone etc — tagmanager_ui_core.js)
-       ou, no caso do Archive, toda vez que o modal do Archive é reaberto
-       (tagmanager_archive.js revoga window._archiveObjectUrls). Como a URL é
-       compartilhada, revogá-la ali quebrava a preview da imagem AINDA fixada
-       no painel de Pin, mesmo sem o usuário ter desafixado nada.
-
-       Agora clonamos o blob numa URL PRÓPRIA e independente (fetch da blob:
-       URL original + novo createObjectURL) — funciona tanto pra imagens da
-       lista normal quanto pra pseudo-imagens do Archive, sem precisar saber
-       de onde a imagem veio. Essa URL própria só é revogada quando a imagem
-       é desafixada ou substituída por outro pin. */
+    /* O pin usa uma blob URL PRÓPRIA (cópia), porque a URL da lista é
+       revogada sempre que o dataset é recarregado ou o Archive reaberto.
+       Ela só é revogada quando a imagem é desafixada ou substituída. */
     window._pinnedOwnUrl = window._pinnedOwnUrl || null;
 
     window.pinImage = async function (img) {
@@ -211,7 +186,7 @@
             const blob = await res.blob();
             pinnedUrl = URL.createObjectURL(blob);
         } catch (e) {
-            pinnedUrl = img.url; // fallback: melhor mostrar algo do que nada
+            pinnedUrl = img.url;
         }
 
         if (window._pinnedOwnUrl) { try { URL.revokeObjectURL(window._pinnedOwnUrl); } catch (e) {} }
@@ -266,7 +241,6 @@
 
         const tags = (p.content || '').split(',').map(t => t.trim()).filter(Boolean);
 
-        // Remove da seleção qualquer tag que não exista mais na imagem fixada
         Array.from(window._pinnedSelectedTags).forEach(t => { if (!tags.includes(t)) window._pinnedSelectedTags.delete(t); });
 
         if (tags.length === 0) {
@@ -283,7 +257,10 @@
             item.className = 'master-tag-item pinned-tag-row' + (isNL ? ' is-nl' : '');
             if (window._pinnedSelectedTags.has(tag)) item.classList.add('selected-master');
             item.title = 'Select, then use Add / Add to All below';
-            item.innerHTML = `<span class="tag-name">${displayTag}</span>`;
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'tag-name';
+            nameSpan.textContent = displayTag; // texto puro: nunca interpreta HTML da legenda
+            item.appendChild(nameSpan);
 
             item.onclick = (e) => {
                 if (e.shiftKey && window._pinnedSelectedTags.size > 0) {
@@ -318,14 +295,9 @@
         if (bar) bar.style.display = window._pinnedSelectedTags.size > 0 ? 'flex' : 'none';
     }
 
-    /* Mantém a mesma função de sempre (copiar tag(s) fixada(s) para a imagem
-       ativa), só que agora agindo sobre TODAS as tags selecionadas de uma vez,
-       e com a opção extra de mandar para o dataset inteiro. */
     window.addPinnedSelectedTagsTo = function (target) {
         if (window._pinnedSelectedTags.size === 0) return;
         const tagsToAdd = Array.from(window._pinnedSelectedTags);
-        // Painel do Pin agora tem seu PRÓPRIO seletor de posição (Top/Bot), em vez
-        // de depender do "active-add-pos" ou "master-add-pos" de outros painéis.
         const posSelect = document.getElementById('pinned-add-pos');
         const pos = posSelect ? posSelect.value : 'bottom';
 
@@ -370,13 +342,7 @@
         });
     }
 
-    /* ---------- HOOK PÓS-RENDER (via tagmanager_render_hooks.js) ----------
-       Antes, este arquivo fazia seu próprio wrap de window.renderImageList.
-       Agora só registra o callback no ponto central de hooks — 1 wrap só
-       pra todos os plugins, em vez de um por plugin empilhado em cima do
-       outro. Fallback: se por algum motivo render_hooks.js não tiver
-       carregado (ordem alterada no HTML), cai de volta pro wrap manual
-       antigo, pra nunca deixar de funcionar. */
+    /* ---------- HOOK PÓS-RENDER (via tagmanager_render_hooks.js) ---------- */
     function installPinHook() {
         if (typeof window.registerPostRenderImageList === 'function') {
             window.registerPostRenderImageList(injectPinButtons);

@@ -214,46 +214,12 @@
         window.ignoredSimilarPairs = new Set(saved);
     }
 
+    // Roda logo depois de window.loadDatasetConfig (evento do hub TM),
+    // antes de qualquer render/contador pro dataset recém-carregado.
     function installSimilarDatasetChangeHook() {
-        // Caminho principal: envelopa window.loadDatasetConfig, que roda bem
-        // antes de qualquer render/contador pro dataset recém-carregado.
-        if (typeof window.loadDatasetConfig === 'function' && !window.loadDatasetConfig.__similarIgnoreSyncWrapped) {
-            const original = window.loadDatasetConfig;
-            const wrapped = async function (dirHandle) {
-                const result = await original.apply(this, arguments);
-                syncIgnoredPairsForDatasetSimilar();
-                return result;
-            };
-            wrapped.__similarIgnoreSyncWrapped = true;
-            window.loadDatasetConfig = wrapped;
-            return true;
-        }
-        // Fallback de segurança (não deveria ser necessário — loadDatasetConfig
-        // já existe bem antes deste arquivo carregar): sincroniza depois do
-        // render como rede de segurança, caso window.loadDatasetConfig não
-        // esteja disponível por algum motivo (ordem dos <script> alterada).
-        if (typeof window.registerPostRenderImageList === 'function') {
-            if (!window._similarDatasetHookRegistered) {
-                window.registerPostRenderImageList(() => {
-                    syncIgnoredPairsForDatasetSimilar();
-                    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-                });
-                window._similarDatasetHookRegistered = true;
-            }
-            return true;
-        }
-        if (typeof window.renderImageList === 'function' && !window.renderImageList.__similarDatasetWrapped) {
-            const orig = window.renderImageList;
-            const wrapped = function () {
-                orig.apply(this, arguments);
-                syncIgnoredPairsForDatasetSimilar();
-                if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-            };
-            wrapped.__similarDatasetWrapped = true;
-            window.renderImageList = wrapped;
-            return true;
-        }
-        return false;
+        if (!window.TM || typeof window.TM.on !== 'function') return false;
+        window.TM.on('config:loaded', syncIgnoredPairsForDatasetSimilar);
+        return true;
     }
     if (!installSimilarDatasetChangeHook()) window.addEventListener('DOMContentLoaded', () => setTimeout(installSimilarDatasetChangeHook, 0));
 
