@@ -284,17 +284,13 @@ const tlPlural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`
 /* ================================================================
    DIRECTORIES
    ================================================================ */
+/* Starts with no directory selected: only "Add Directory" and the saved list (pick one to open it) */
 window.onload = async () => {
     try {
         if (tlSettingsPromise) await tlSettingsPromise;
         await updateSelect();
-        const last = await tlKvGet('last');
-        const handles = await tlGetHandles();
-        const pick = handles.find(h => h.name === last) || handles[0];
-        if (pick && (await pick.handle.queryPermission({ mode: 'readwrite' })) === 'granted') {
-            $tl('dir-list').value = pick.name;
-            await tlLoadRoot(pick.handle);
-        }
+        $tl('dir-list').value = '';
+        if (!tlRoot) renderGrid();
     } catch (e) { console.warn(e); }
 };
 

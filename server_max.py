@@ -322,13 +322,120 @@ def open_browser():
     webbrowser.open(url)
 
 
-try:
-    httpd = Server(('127.0.0.1', PORT), Handler)
-except OSError:
-    log('INFO', 'Port {} is already in use - a server is already running. Opening it in the browser.'.format(PORT))
-    open_browser()
-    time.sleep(2)
-    sys.exit(0)
+def _run(cmd):
+    """Runs a command and returns its text output ('' on any failure)."""
+    try:
+        out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15).stdout
+        return out.decode('utf-8', 'replace')
+    except Exception:
+        return ''
+
+
+def find_port_owner(port):
+    """Returns [(pid, process_name)] of the processes LISTENING on the port (best effort)."""
+    pids = []
+    if os.name == 'nt':
+        # Do not rely on the word LISTENING: it is translated on non-English Windows.
+        for line in _run(['netstat', '-ano', '-p', 'TCP']).splitlines():
+            cols = line.split()
+            if len(cols) >= 5 and cols[0].upper() == 'TCP' and cols[1].endswith(':{}'.format(port)) and cols[2].endswith(':0') and cols[-1].isdigit():
+                if int(cols[-1]) not in pids:
+                    pids.append(int(cols[-1]))
+    else:
+        for tok in _run(['lsof', '-t', '-iTCP:{}'.format(port), '-sTCP:LISTEN']).split():
+            if tok.isdigit() and int(tok) not in pids:
+                pids.append(int(tok))
+        if not pids:
+            for m in re.finditer(r'pid=(\d+)', ''.join(l for l in _run(['ss', '-ltnp']).splitlines() if ':{} '.format(port) in l)):
+                if int(m.group(1)) not in pids:
+                    pids.append(int(m.group(1)))
+    out = []
+    for pid in pids:
+        name = '?'
+        if os.name == 'nt':
+            row = _run(['tasklist', '/FI', 'PID eq {}'.format(pid), '/FO', 'CSV', '/NH']).strip().splitlines()
+            if row and row[0].startswith('"'):
+                name = row[0].split('","')[0].strip('"')
+        else:
+            name = _run(['ps', '-p', str(pid), '-o', 'comm=']).strip() or '?'
+        out.append((pid, name))
+    return out
+
+
+def kill_pid(pid):
+    if os.name == 'nt':
+        _run(['taskkill', '/PID', str(pid), '/F', '/T'])
+    else:
+        try:
+            os.kill(pid, 15)
+            time.sleep(1)
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+def ask(prompt):
+    try:
+        return input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return 'n'
+
+
+def bind_server():
+    """Starts the server; if the port is busy, asks what to do instead of just failing."""
+    global PORT
+    while True:
+        try:
+            return Server(('127.0.0.1', PORT), Handler)
+        except OSError:
+            pass
+        owners = find_port_owner(PORT)
+        log('WARN', 'Port {} is already in use.'.format(PORT))
+        for pid, name in owners:
+            log('WARN', 'Used by: {} (PID {})'.format(name, pid))
+        if not owners:
+            log('WARN', 'Could not find which program is using it.')
+        if not sys.stdin or not sys.stdin.isatty():              # nobody to ask: previous behavior
+            log('INFO', 'Opening the server that is already running.')
+            open_browser()
+            time.sleep(2)
+            sys.exit(0)
+        print()
+        print('  [Y] Close the previous one and start a new server here (default)')
+        print('  [O] Keep the previous one and just open it in the browser')
+        print('  [P] Start this one on another free port')
+        print('  [Q] Quit')
+        choice = ask('Choose [Y/O/P/Q]: ') or 'y'
+        if choice.startswith('o'):
+            open_browser()
+            time.sleep(2)
+            sys.exit(0)
+        if choice.startswith('q'):
+            sys.exit(0)
+        if choice.startswith('p'):
+            PORT += 1
+            log('INFO', 'Trying port {}...'.format(PORT))
+            continue
+        if not owners:
+            log('ERROR', 'Nothing to close automatically. Close the old console window / python process (Task Manager) or choose P.')
+            continue
+        for pid, name in owners:
+            if pid == os.getpid():
+                continue
+            log('INFO', 'Closing {} (PID {})...'.format(name, pid))
+            kill_pid(pid)
+        for _ in range(20):                                       # give the OS a moment to free the port
+            time.sleep(0.5)
+            try:
+                srv = Server(('127.0.0.1', PORT), Handler)
+                log('INFO', 'Previous server closed.')
+                return srv
+            except OSError:
+                pass
+        log('ERROR', 'The port is still busy (the process may need administrator rights to close). Run this as administrator, or choose P.')
+
+
+httpd = bind_server()
 
 log('INFO', 'Server running at http://localhost:{}  (press Ctrl+C to stop)'.format(PORT))
 log('INFO', 'Serving folder: {}'.format(ROOT))
