@@ -1,7 +1,7 @@
 """Modular AI Tools - local server (port 8100).
 Usage: python server_max.py [chrome] [page.html]  (default: index.html)
 """
-import http.server, json, os, re, shutil, subprocess, sys, threading, time, webbrowser
+import http.server, json, os, re, shutil, stat, subprocess, sys, threading, time, webbrowser
 from urllib.parse import quote, urlparse, parse_qs
 
 PORT = 8100
@@ -228,6 +228,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log('FAILED', 'Could not delete models/{}: {}'.format(mid, e))
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
 
+    def _folder_dates(self):
+        """Gallery Timeline: creation/modification date of folders (metadata only, no file is read).
+
+        The browser cannot see a folder's creation date, so the page sends the real path of the
+        directory it opened plus the relative folders it found, and this returns their dates.
+        """
+        try:
+            n = int(self.headers.get('Content-Length', 0))
+            data = json.loads(self.rfile.read(n).decode('utf-8')) if n else {}
+            root = os.path.abspath(str(data.get('root', '')).strip().strip('"'))
+            if not os.path.isdir(root):
+                raise ValueError('folder not found on disk: {}'.format(root))
+            dates = {}
+            for rel in data.get('folders', []):
+                rel = str(rel).replace('\\', '/').strip('/')
+                target = os.path.abspath(os.path.join(root, *rel.split('/'))) if rel else root
+                try:
+                    if os.path.commonpath([target, root]) != root:
+                        continue
+                    st = os.stat(target)
+                except (OSError, ValueError):
+                    continue
+                if not stat.S_ISDIR(st.st_mode):
+                    continue
+                created = getattr(st, 'st_birthtime', None) or st.st_ctime  # st_ctime = creation time on Windows
+                dates[rel] = {'created': int(created * 1000), 'modified': int(st.st_mtime * 1000)}
+            log('OK', 'Folder dates read: {} folder(s) of {}'.format(len(dates), root))
+            self._reply(200, json.dumps({'status': 'success', 'dates': dates}).encode('utf-8'))
+        except Exception as e:
+            log('FAILED', 'Could not read folder dates: {}'.format(e))
+            self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
+
     def do_POST(self):
         route = self.path.split('?')[0]
         if not self._same_origin():
@@ -238,6 +270,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._save_model_file()
         if route == '/api/delete_model':
             return self._delete_model()
+        if route == '/api/folder_dates':
+            return self._folder_dates()
         if route != '/api/save_local_cache':
             log('FAILED', 'Unknown POST endpoint: {}'.format(self.path))
             return self._reply(404, b'{"status": "error", "message": "unknown endpoint"}')

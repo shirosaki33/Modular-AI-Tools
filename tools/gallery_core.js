@@ -307,6 +307,7 @@ async function saveSettingsToDB() {
             countField:     document.getElementById('toggle-count-field').checked,
             jsonCountField: document.getElementById('toggle-json-count-field').checked,
             randomButtonEnabled: document.getElementById('toggle-random-button').checked,
+            dynamicPages:   ghDynamic,
             sortMode:       sortMode,
             itemsPerPage:   itemsPerPage,
             blockCollapse:  blockCollapsePrefs,
@@ -344,6 +345,8 @@ async function loadSettingsFromDB() {
         document.getElementById('toggle-count-field').checked     = settings.countField     !== undefined ? !!settings.countField     : true;
         document.getElementById('toggle-json-count-field').checked = !!settings.jsonCountField;
         document.getElementById('toggle-random-button').checked = settings.randomButtonEnabled !== undefined ? !!settings.randomButtonEnabled : true;
+        ghDynamic = settings.dynamicPages !== undefined ? !!settings.dynamicPages : true;
+        document.getElementById('toggle-dynamic-pages').checked = ghDynamic;
 
         if (settings.sortMode === 0 || settings.sortMode === 1 || settings.sortMode === 2) {
             sortMode = settings.sortMode;
@@ -682,36 +685,16 @@ function toggleSort() {
     saveSettingsToDB();
 }
 
-function renderGrid() {
-    const grid = document.getElementById('grid-view');
-    grid.innerHTML = '';
-    
-    let arrRender = [...currentFiles];
-    if (sortMode === 1) arrRender.sort((a,b) => a.name.localeCompare(b.name));
-    else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
+/* Cards keep a stable height before their thumbnail loads (placeholder = last known ratio), so the
+   dynamic page loader measures real page heights instead of "empty" cards. */
+let ghRatio = 2 / 3;
+function ghAttachThumb(img, url) {
+    img.style.aspectRatio = String(ghRatio);
+    if (window.ThumbLoader) window.ThumbLoader.attach(img, url, { onSize: (w, h) => { if (w && h) { ghRatio = w / h; img.style.aspectRatio = w + ' / ' + h; } } });
+    else img.src = url;
+}
 
-    // --- TAGS VIEW: filters by the tag/gallery currently active in the sidebar ---
-    // (shared with updateGridCounters/updatePaginationControls/changePage so they
-    // never disagree with what's actually being rendered here)
-    if (typeof getGalleryFilteredFiles === 'function') {
-        arrRender = getGalleryFilteredFiles(arrRender);
-    }
-
-    // --- PAGINATION LOGIC (only kicks in above 100 images) ---
-    const totalItems = arrRender.length;
-    if (totalItems > itemsPerPage) {
-        const totalPages = Math.ceil(totalItems / itemsPerPage);
-        if (currentPage > totalPages) currentPage = totalPages;
-        
-        const start = (currentPage - 1) * itemsPerPage;
-        const end = start + itemsPerPage;
-        arrRender = arrRender.slice(start, end);
-    } else {
-        currentPage = 1; // Reset if the folder is small
-    }
-    // -----------------------------------------------------------------
-
-    arrRender.forEach(fileItem => {
+function ghBuildCard(fileItem, idx) {
         const wrapper = document.createElement('div');
         wrapper.className = 'grid-item-wrapper';
 
@@ -719,7 +702,7 @@ function renderGrid() {
         img.decoding = 'async';
         img.className = 'grid-item'; img.dataset.filename = fileItem.name;
         // Miniatura reduzida (não a imagem original decodificada) — tools/thumb_loader.js
-        if (window.ThumbLoader) window.ThumbLoader.attach(img, fileItem.url); else img.src = fileItem.url;
+        ghAttachThumb(img, fileItem.url);
         
         const label = document.createElement('div');
         label.className = 'grid-item-label';
@@ -762,9 +745,156 @@ function renderGrid() {
         }
         
         wrapper.appendChild(label);
-        grid.appendChild(wrapper);
-    });
+    wrapper.dataset.i = idx;
+    return wrapper;
+}
+
+/* ---------------------------------------------------------------
+   DYNAMIC PAGE CHANGE (infinite scroll)
+   Pages are added/removed around the viewport while scrolling, so there
+   is no need to click the page buttons and the DOM/RAM stay small.
+   --------------------------------------------------------------- */
+let ghDynamic = true;
+let ghList = [], ghWinStart = 0, ghWinEnd = 0, ghDynRAF = null;
+
+function ghInSelectionMode() {
+    return (typeof isTagMode !== 'undefined' && isTagMode) || (typeof isRenameMode !== 'undefined' && isRenameMode) || (typeof isMergeMode !== 'undefined' && isMergeMode);
+}
+function ghIsDynamic() { return ghDynamic && !ghInSelectionMode(); }
+
+/* [start, end) of the items kept in the DOM while `page` is the current one */
+function ghWindowFor(page, total) {
+    const pages = Math.max(1, Math.ceil(total / itemsPerPage));
+    const lo = ghIsDynamic() ? Math.max(1, page - 1) : page;
+    const hi = ghIsDynamic() ? Math.min(pages, page + 1) : page;
+    return [(lo - 1) * itemsPerPage, Math.min(total, hi * itemsPerPage)];
+}
+
+function ghFirstVisibleCard(grid) {
+    const top = grid.getBoundingClientRect().top + 1;
+    for (const c of grid.querySelectorAll('.grid-item-wrapper')) {
+        if (c.style.display === 'none') continue;
+        if (c.getBoundingClientRect().bottom > top) return c;
+    }
+    return null;
+}
+
+function ghForgetThumbs(from, to) {
+    if (!window.ThumbLoader) return;
+    for (let i = from; i < to; i++) { const it = ghList[i]; if (it && it.url) window.ThumbLoader.forget(it.url); }
+}
+
+function ghDynamicStep() {
+    ghDynRAF = null;
+    const grid = document.getElementById('grid-view');
+    if (!ghIsDynamic() || !currentHandle || !grid || grid.style.display === 'none' || ghList.length <= itemsPerPage) return;
+    const ipp = itemsPerPage, total = ghList.length, vh = grid.clientHeight;
+    if (!vh) return;
+    const anchor = ghFirstVisibleCard(grid);
+    if (!anchor) return;
+    const aIdx = Number(anchor.dataset.i);
+
+    let rowLast = anchor;                                    // a page can start mid-row: judge the page by the last card of the top row
+    const t0 = anchor.getBoundingClientRect().top;
+    for (let n = anchor.nextElementSibling; n && n.style.display !== 'none' && Math.abs(n.getBoundingClientRect().top - t0) < 2; n = n.nextElementSibling) rowLast = n;
+    let page = Math.floor(Number(rowLast.dataset.i) / ipp) + 1;
+    if (ghWinEnd >= total && grid.scrollTop + vh >= grid.scrollHeight - 2) page = Math.ceil(total / ipp);   // bottom of the list = last page
+    if (page !== currentPage) { currentPage = page; updatePaginationControls(); }
+
+    const nearBottom = grid.scrollTop + vh > grid.scrollHeight - vh * 1.5 && ghWinEnd < total;
+    const nearTop = grid.scrollTop < vh * 1.5 && ghWinStart > 0;
+    if (!nearBottom && !nearTop) return;
+
+    const before = anchor.getBoundingClientRect().top;
+    const pageH = grid.scrollHeight / Math.max(1, ghWinEnd - ghWinStart) * ipp;     // rough height of one page
+    const canTrim = grid.scrollHeight - pageH >= vh * 4;
+    const dropRange = (from, to) => {
+        grid.querySelectorAll('.grid-item-wrapper').forEach(c => { const i = Number(c.dataset.i); if (i >= from && i < to) c.remove(); });
+        ghForgetThumbs(from, to);
+    };
+
+    if (nearBottom) {
+        const to = Math.min(total, ghWinEnd + ipp);
+        const frag = document.createDocumentFragment();
+        for (let i = ghWinEnd; i < to; i++) frag.appendChild(ghBuildCard(ghList[i], i));
+        grid.appendChild(frag);
+        ghWinEnd = to;
+        if (canTrim && ghWinEnd - ghWinStart > 3 * ipp && aIdx >= ghWinStart + ipp) { dropRange(ghWinStart, ghWinStart + ipp); ghWinStart += ipp; }
+    } else {
+        const from = Math.max(0, ghWinStart - ipp);
+        const frag = document.createDocumentFragment();
+        for (let i = from; i < ghWinStart; i++) frag.appendChild(ghBuildCard(ghList[i], i));
+        grid.insertBefore(frag, grid.firstChild);
+        ghWinStart = from;
+        const boundary = Math.floor((ghWinEnd - 1) / ipp) * ipp;
+        if (canTrim && ghWinEnd - ghWinStart > 3 * ipp && aIdx < boundary) { dropRange(boundary, ghWinEnd); ghWinEnd = boundary; }
+    }
+    grid.scrollTop += anchor.getBoundingClientRect().top - before;                   // keep what the user is looking at in place
+    if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges();
+    if (typeof filterGallery === 'function') filterGallery();
+    ghScheduleDynamic();
+}
+function ghScheduleDynamic() { if (ghDynRAF === null) ghDynRAF = requestAnimationFrame(ghDynamicStep); }
+
+function ghOnDynamicToggle() {
+    ghDynamic = document.getElementById('toggle-dynamic-pages').checked;
+    saveSettingsToDB();
+    const grid = document.getElementById('grid-view');
+    if (currentHandle && grid && grid.style.display !== 'none') {
+        const a = ghFirstVisibleCard(grid);
+        if (a) currentPage = Math.floor(Number(a.dataset.i) / itemsPerPage) + 1;
+        grid.scrollTop = 0;
+        renderGrid();
+    }
+}
+document.addEventListener('DOMContentLoaded', () => {
+    const g = document.getElementById('grid-view');
+    if (g) g.addEventListener('scroll', ghScheduleDynamic, { passive: true });
+});
+
+function renderGrid() {
+    const grid = document.getElementById('grid-view');
+    grid.innerHTML = '';
     
+    let arrRender = [...currentFiles];
+    if (sortMode === 1) arrRender.sort((a,b) => a.name.localeCompare(b.name));
+    else if (sortMode === 2) arrRender.sort((a,b) => b.name.localeCompare(a.name));
+
+    // --- TAGS VIEW: filters by the tag/gallery currently active in the sidebar ---
+    // (shared with updateGridCounters/updatePaginationControls/changePage so they
+    // never disagree with what's actually being rendered here)
+    if (typeof getGalleryFilteredFiles === 'function') {
+        arrRender = getGalleryFilteredFiles(arrRender);
+    }
+
+    // --- PAGINATION / DYNAMIC WINDOW ---------------------------------
+    // Dynamic mode keeps the previous, current and next page in the DOM and
+    // swaps pages while scrolling (see ghDynamicStep). Selection modes (tag,
+    // rename, merge) stay on a single fixed page, as before.
+    const totalItems = arrRender.length;
+    ghList = arrRender;
+    let start = 0, end = totalItems;
+    if (totalItems > itemsPerPage) {
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+        [start, end] = ghWindowFor(currentPage, totalItems);
+    } else {
+        currentPage = 1; // Reset if the folder is small
+    }
+    ghWinStart = start; ghWinEnd = end;
+    // -----------------------------------------------------------------
+
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < end; i++) frag.appendChild(ghBuildCard(arrRender[i], i));
+    grid.appendChild(frag);
+
+    const pageStart = (currentPage - 1) * itemsPerPage;
+    if (pageStart > start) {                       // dynamic: previous page sits above, begin at the current one
+        const card = grid.querySelector(`.grid-item-wrapper[data-i="${pageStart}"]`);
+        if (card) grid.scrollTop += card.getBoundingClientRect().top - grid.getBoundingClientRect().top;
+    }
+
     updateGridCounters();
     updatePaginationControls(); // Refresh the page button display
     if (typeof renderAllViewCountBadges === 'function') renderAllViewCountBadges();

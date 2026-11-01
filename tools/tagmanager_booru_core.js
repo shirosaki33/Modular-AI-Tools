@@ -473,39 +473,57 @@
             return cache()[key] || null;
         }
 
-        /* ---------- AUTOCOMPLETE ---------- */
+        /* ---------- AUTOCOMPLETE ----------
+           Só devolve tags CONFIRMADAS no site (post_count > 0, ou alias cuja
+           tag principal tem posts). Placeholders "count 0" que o scan em lote
+           grava para tags do dataset que não existem no site NUNCA aparecem
+           aqui (era isso que mostrava tags desconhecidas em azul com "0").
+           A API é consultada uma vez por termo a cada 10 min (memo em memória);
+           dentro dessa janela o cache local responde sozinho. */
+        const SEARCH_MEMO_TTL = 10 * 60 * 1000;
+        const searchMemo = new Map();   // query -> ts da última consulta à API
+
+        function confirmedEntry(key, entry) {
+            if (!entry || isUnknown(key)) return false;
+            if (entry.aliasTo) return (entry.count || 0) > 0;
+            return (entry.count || 0) > 0;
+        }
+
         async function searchTagMatches(query, limit = 6) {
             const now = Date.now();
-            const queryLower = String(query || '').trim().toLowerCase();
+            const queryLower = String(query || '').trim().toLowerCase().replace(/_/g, ' ');
+            if (!queryLower) return [];
             const localResults = [];
             for (const [key, entry] of Object.entries(cache())) {
-                if (key.includes(queryLower)) {
-                    localResults.push({
-                        name: key, post_count: entry.count || 0, category: entry.category || 0,
-                        isAlias: !!entry.aliasTo, aliasTo: entry.aliasTo || null, isDeprecated: !!entry.isDeprecated
-                    });
-                }
+                if (!key.includes(queryLower) || !confirmedEntry(key, entry)) continue;
+                localResults.push({
+                    name: key, post_count: entry.count || 0, category: entry.category || 0,
+                    isAlias: !!entry.aliasTo, aliasTo: entry.aliasTo || null, isDeprecated: !!entry.isDeprecated
+                });
             }
-            if (localResults.length >= limit) {
-                localResults.sort((a, b) => b.post_count - a.post_count);
-                return localResults.slice(0, limit);
-            }
+            localResults.sort((a, b) => b.post_count - a.post_count);
+
+            const memoTs = searchMemo.get(queryLower) || 0;
+            if (localResults.length >= limit && (now - memoTs) < SEARCH_MEMO_TTL) return localResults.slice(0, limit);
+            if (!enabled()) return localResults.slice(0, limit);
 
             const wc = wildcard(query);
-            let directRaw = [];
+            let directRaw = [], directOk = false;
             try {
-                const res = await fetch(`https://${host()}/tags.json?search[name_matches]=${wc}&limit=${limit}&search[order]=count`);
-                if (res.ok) directRaw = tagsArray(await res.json());
+                // hide_empty: o site não devolve tags com 0 posts.
+                const res = await fetch(`https://${host()}/tags.json?search[name_matches]=${wc}&search[hide_empty]=true&search[order]=count&limit=${limit}`);
+                if (res.ok) { directRaw = tagsArray(await res.json()); directOk = true; }
             } catch (e) {}
 
             const aliasMap = new Map();
             try {
-                const res = await fetch(`https://${host()}/tag_aliases.json?search[antecedent_name_matches]=${wc}&search[status]=active&limit=${Math.max(limit * 3, 20)}`);
+                const res = await fetch(`https://${host()}/tag_aliases.json?search[antecedent_name_matches]=${wc}&search[status]=active&limit=${Math.max(limit * 2, 12)}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (Array.isArray(data)) data.forEach(a => { if (a.antecedent_name) aliasMap.set(a.antecedent_name, a.consequent_name); });
                 }
             } catch (e) {}
+            if (directOk) searchMemo.set(queryLower, now);
 
             const results = [...localResults];
             const seen = new Set(localResults.map(r => r.name));
@@ -514,7 +532,7 @@
                 const info = await fetchSingleTagInfo(to);
                 const count = (info && info.count) || 0, category = (info && info.category) || 0;
                 put(key, { count, category, aliasTo: to, aliasChecked: true, aliasTs: now, isDeprecated: true, ts: now });
-                results.push({ name: key, post_count: count, category, isAlias: true, aliasTo: to, isDeprecated: true });
+                if (count > 0) results.push({ name: key, post_count: count, category, isAlias: true, aliasTo: to, isDeprecated: true });
             };
 
             for (const t of directRaw) {
@@ -526,13 +544,18 @@
                     await pushAlias(key, aliasTo);
                 } else {
                     put(key, Object.assign(rowPatch(t, now), { aliasTo: null, aliasChecked: true, aliasTs: now }));
-                    results.push({ name: key, post_count: parseInt(t.post_count) || 0, category: t.category, isAlias: false, isDeprecated: !!t.is_deprecated });
+                    const count = parseInt(t.post_count) || 0;
+                    if (count > 0) results.push({ name: key, post_count: count, category: t.category, isAlias: false, isDeprecated: !!t.is_deprecated });
                 }
             }
+            // Aliases que não vieram na busca direta: no máximo `limit` (cada um pode custar 1 requisição).
+            let extraAliases = 0;
             for (const [antecedent, consequent] of aliasMap.entries()) {
+                if (extraAliases >= limit) break;
                 const key = toKey(antecedent);
                 if (seen.has(key)) continue;
                 seen.add(key);
+                extraAliases++;
                 await pushAlias(key, consequent);
             }
 

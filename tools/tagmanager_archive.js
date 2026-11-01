@@ -6,6 +6,26 @@
    arquivo fica sempre dentro do próprio dataset, só que separado do
    conjunto principal (não aparece mais na lista, igual a "hidden").
 
+   NOVO (rótulo automático + micro filtro):
+   - Todo item arquivado recebe um RÓTULO AUTOMÁTICO conforme a ferramenta
+     que o mandou para cá — nada para digitar:
+         📦 Archive (botão da lista)  -> "excluded"
+         🖤 Convert to B&W            -> "grayscale"
+         🪣 Fix/Change Bucket         -> "bucket"
+   - O rótulo fica SÓ no manifesto do Archive (IndexedDB) — não altera
+     nenhum arquivo de imagem/legenda e não aparece em outro lugar do app.
+   - No painel do Archive: cada item mostra seu rótulo (clique para
+     renomear, se quiser) e, quando existe pelo menos 1 rótulo, aparece um
+     filtro em chips: cada rótulo aparece direto (com contador); clicar ativa,
+     clicar de novo desativa. Vários ativos = mostra itens de QUALQUER um deles;
+     nenhum ativo = mostra tudo. "No label" aparece quando há itens sem rótulo.
+   - window.moveToArchive(img, label) aceita o rótulo como 2º parâmetro
+     opcional. Sem ele, usa o rótulo da ferramenta em andamento (o Fix
+     Bucket é detectado sozinho, sem editar o tagmanager_bucket_check.js)
+     e, na falta de ambos, "excluded".
+   - Itens arquivados antes desta versão ficam "sem rótulo" (dá para
+     rotular pelo chip "＋ label").
+
    FIX (remoção do módulo de Trash): o sistema de Lixeira global
    (tagmanager_trash.js) foi removido do app. Duas coisas dependiam dele:
 
@@ -36,6 +56,10 @@
 
     const ARCHIVE_DB_NAME = 'TagManagerArchiveDB';
     const MANIFEST_STORE = 'manifest';
+    const LABEL_MAX = 40;
+    const DEFAULT_LABEL = 'excluded';
+
+    const esc = (v) => (typeof window.escHTML === 'function' ? window.escHTML(v) : String(v));
 
     /* ---------- INDEXEDDB ---------- */
     function initArchiveDB() {
@@ -62,6 +86,19 @@
                 tx.onerror = () => r(null);
             });
         } catch (e) { return null; }
+    }
+
+    // put() sobrescreve pela chave (id) — usado para editar o rótulo de um item já arquivado.
+    async function updateArchiveManifestEntry(entry) {
+        try {
+            const db = await initArchiveDB();
+            return new Promise(r => {
+                const tx = db.transaction(MANIFEST_STORE, 'readwrite');
+                tx.objectStore(MANIFEST_STORE).put(entry);
+                tx.oncomplete = () => r(true);
+                tx.onerror = () => r(false);
+            });
+        } catch (e) { return false; }
     }
 
     async function getAllArchiveManifestEntries() {
@@ -121,13 +158,60 @@
         } catch (e) { return false; }
     }
 
+    /* ---------- RÓTULOS ---------- */
+    function cleanLabel(raw) {
+        return String(raw || '').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX);
+    }
+
+    // Agrupa sem diferenciar maiúsculas/minúsculas ("Blurry" == "blurry").
+    // Retorna Map(chaveMinúscula -> { label (grafia exibida), count }).
+    function collectLabels(items) {
+        const map = new Map();
+        items.forEach(e => {
+            const l = cleanLabel(e.label);
+            if (!l) return;
+            const k = l.toLowerCase();
+            if (!map.has(k)) map.set(k, { label: l, count: 0 });
+            map.get(k).count++;
+        });
+        return map;
+    }
+
+    function sortedLabelList(map) {
+        return Array.from(map.values()).map(v => v.label).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    }
+
+    async function getKnownLabels() {
+        const items = await getArchiveEntriesForCurrentDataset();
+        return sortedLabelList(collectLabels(items));
+    }
+
+    // Um <datalist> único (usado pelo popout de motivo e pelo editor inline do painel).
+    function fillLabelDatalist(labels) {
+        let dl = document.getElementById('archive-label-list');
+        if (!dl) {
+            dl = document.createElement('datalist');
+            dl.id = 'archive-label-list';
+            document.body.appendChild(dl);
+        }
+        dl.innerHTML = '';
+        labels.forEach(l => {
+            const o = document.createElement('option');
+            o.value = l;
+            dl.appendChild(o);
+        });
+    }
+
     /* ---------- MOVER PARA O ARQUIVO (chamado por window.archiveSelectedImages) ----------
        GARANTIA: a pasta "_archive" é SEMPRE criada dentro de
        img.parentDirHandle — a MESMA pasta de onde a imagem veio (o dataset
        atual, seja o root ou uma subpasta). Se img.parentDirHandle estiver
        ausente por qualquer motivo, a função agora avisa claramente em vez
-       de falhar em silêncio. */
-    window.moveToArchive = async function (img) {
+       de falhar em silêncio.
+
+       label (opcional): rótulo interno; sem ele vale o da ferramenta em
+       andamento (window._archiveAutoLabel) ou "excluded". */
+    window.moveToArchive = async function (img, label) {
         if (!img || !img.parentDirHandle) {
             console.error('moveToArchive: missing image or parentDirHandle', img);
             if (window.showAlert) window.showAlert(`❌ Could not archive "${img && img.name ? img.name : 'file'}": no folder handle available.`, 'error');
@@ -171,6 +255,7 @@
                 originalExt: img.ext,
                 parentDirHandle: img.parentDirHandle,
                 folderLabel: (img.parentDirHandle && img.parentDirHandle.name) || '',
+                label: cleanLabel(label) || cleanLabel(window._archiveAutoLabel) || DEFAULT_LABEL,
                 archivedAt: Date.now()
             });
 
@@ -182,10 +267,30 @@
         }
     };
 
+    /* ---------- ROTULAGEM AUTOMÁTICA DO FIX BUCKET ----------
+       O tagmanager_bucket_check.js chama window.moveToArchive(img) sem rótulo.
+       Em vez de editá-lo, envolvemos window.applyFixBucket: enquanto ele roda,
+       window._archiveAutoLabel = 'bucket' e o moveToArchive usa esse rótulo. */
+    function installBucketAutoLabel() {
+        if (typeof window.applyFixBucket !== 'function' || window.applyFixBucket.__archiveLabelWrapped) return;
+        const original = window.applyFixBucket;
+        const wrapped = async function () {
+            const prev = window._archiveAutoLabel;
+            window._archiveAutoLabel = 'bucket';
+            try { return await original.apply(this, arguments); }
+            finally { window._archiveAutoLabel = prev; }
+        };
+        wrapped.__archiveLabelWrapped = true;
+        window.applyFixBucket = wrapped;
+    }
+
     /* ---------- AÇÃO EM MASSA (mesmo padrão de window.deleteSelectedImages, agora removido) ---------- */
     window.archiveSelectedImages = async function () {
         if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
-        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
+
+        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. They get the label "${DEFAULT_LABEL}". You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
+
+        const label = DEFAULT_LABEL;
 
         const indices = Array.from(selectedIndices).sort((a, b) => b - a);
         let archivedCount = 0;
@@ -195,7 +300,7 @@
             const img = imageFiles[i];
             try {
                 if (img.dirty && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
-                const ok = await window.moveToArchive(img);
+                const ok = await window.moveToArchive(img, label);
                 if (!ok) { failedNames.push(img.name); continue; }
                 if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
                 if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
@@ -210,7 +315,7 @@
         if (archivedCount > 0) {
             await window.markDatasetEdited();
             if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
-            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (kept in this same dataset folder).`, 'success');
+            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (label "${label}", kept in this same dataset folder).`, 'success');
             if (typeof window.refreshDataset === 'function') await window.refreshDataset();
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
         }
@@ -307,6 +412,26 @@
         .btn-archive-pin:hover { background: #66ccff; color: #000; }
         .btn-archive-pin.pinned-active { background: #00aa66; color: #000; border-color: #00cc88; }
         #archive-thumb-bar { display:flex; align-items:center; gap:10px; padding: 8px 0 2px; border-top: 1px solid #222; margin-top: 6px; flex-shrink: 0; }
+
+        /* Micro filtro por rótulo */
+        #archive-filter-bar { display: none; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+        #archive-label-filter { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+        .archive-filter-chip { font-size: 11px; font-weight: bold; color: #b08a40; background: #151007; border: 1px solid #4a3410; border-radius: 12px; padding: 2px 10px; cursor: pointer; user-select: none; white-space: nowrap; transition: 0.12s; }
+        .archive-filter-chip:hover { color: #ffcc66; border-color: #aa6600; }
+        .archive-filter-chip.active { color: #000; background: #ffcc66; border-color: #ffcc66; }
+        .archive-filter-chip .afc-count { font-weight: normal; opacity: 0.7; margin-left: 4px; }
+        .archive-filter-chip.no-label { font-weight: normal; font-style: italic; border-style: dashed; }
+        .archive-filter-chip.no-label.active { color: #000; background: #aaa; border-color: #aaa; }
+        #archive-filter-clear { font-size: 11px; background: transparent; border: none; color: #888; cursor: pointer; padding: 2px 4px; display: none; }
+        #archive-filter-clear:hover { color: #ff6666; }
+        #archive-filter-info { font-size: 10px; color: #666; }
+
+        /* Rótulo de cada item */
+        .archive-label-chip { display: inline-block; margin-top: 5px; font-size: 10px; font-weight: bold; color: #ffcc66; background: #2a1a00; border: 1px solid #aa6600; border-radius: 10px; padding: 1px 8px; cursor: pointer; user-select: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; }
+        .archive-label-chip:hover { background: #aa6600; color: #000; }
+        .archive-label-chip.empty { color: #666; background: transparent; border: 1px dashed #444; font-weight: normal; }
+        .archive-label-chip.empty:hover { color: #ffcc66; border-color: #ffcc66; background: transparent; }
+        .archive-item .archive-label-input { margin-top: 4px; font-size: 11px; padding: 3px 8px; width: 190px; max-width: 100%; box-sizing: border-box; }
 
         .list-archive-btn { background:#151515; border-color:#555; color:#aaa; }
 
@@ -430,7 +555,13 @@
                     <button onclick="window.closeModal('modal-archive')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
                 <div style="font-size:11px; color:#888; margin: -4px 0 10px;">
-                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. "Delete Permanently" removes the archived copy for good — this cannot be undone.
+                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. Items are labeled automatically by the tool that archived them (excluded / grayscale / bucket); click a label to rename it. "Delete Permanently" removes the archived copy for good — this cannot be undone.
+                </div>
+                <div id="archive-filter-bar">
+                    <span style="font-size:13px;" title="Filter by label — click a label to show only it, click again to turn it off">🏷️</span>
+                    <div id="archive-label-filter"></div>
+                    <button id="archive-filter-clear" title="Turn off all label filters">✕ clear</button>
+                    <span id="archive-filter-info"></span>
                 </div>
                 <div id="archive-list"><div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div></div>
                 <div id="archive-thumb-bar">
@@ -444,10 +575,101 @@
             </div>
         `;
         document.body.appendChild(overlay);
+
+        document.getElementById('archive-filter-clear').onclick = () => {
+            _activeLabels.clear();
+            renderArchiveList();
+        };
     }
 
     // Evita vazamento de blob URLs entre renderizações do modal
     window._archiveObjectUrls = window._archiveObjectUrls || [];
+
+    /* ---------- FILTRO POR RÓTULO (chips) ----------
+       _activeLabels: rótulos ligados ('texto em minúsculas' ou '__none__' = sem rótulo).
+       Vazio = mostra tudo. Persiste enquanto a página estiver aberta. */
+    const _activeLabels = new Set();
+
+    function entryMatchesFilter(entry) {
+        if (_activeLabels.size === 0) return true;
+        const l = cleanLabel(entry.label).toLowerCase();
+        return _activeLabels.has(l || '__none__');
+    }
+
+    // Monta os chips a partir de TODOS os itens do dataset e devolve a lista de rótulos conhecidos.
+    function updateFilterUI(allItems) {
+        const bar = document.getElementById('archive-filter-bar');
+        const box = document.getElementById('archive-label-filter');
+        const map = collectLabels(allItems);
+        const labels = sortedLabelList(map);
+        fillLabelDatalist(labels);
+
+        const unlabeled = allItems.filter(e => !cleanLabel(e.label)).length;
+
+        // Rótulos ligados que não existem mais (restaurado/excluído/editado) são desligados.
+        Array.from(_activeLabels).forEach(k => {
+            if (k === '__none__' ? unlabeled === 0 : !map.has(k)) _activeLabels.delete(k);
+        });
+
+        if (!bar || !box) return labels;
+        if (map.size === 0) { bar.style.display = 'none'; _activeLabels.clear(); return labels; }
+
+        box.innerHTML = '';
+        const addChip = (key, text, count, extraClass) => {
+            const chip = document.createElement('span');
+            chip.className = 'archive-filter-chip' + (extraClass ? ' ' + extraClass : '') + (_activeLabels.has(key) ? ' active' : '');
+            chip.innerHTML = `${esc(text)}<span class="afc-count">${count}</span>`;
+            chip.title = _activeLabels.has(key) ? 'Click to turn this filter off' : 'Click to show only this label (click more labels to combine)';
+            chip.onclick = () => {
+                if (_activeLabels.has(key)) _activeLabels.delete(key); else _activeLabels.add(key);
+                renderArchiveList();
+            };
+            box.appendChild(chip);
+        };
+        labels.forEach(l => addChip(l.toLowerCase(), l, map.get(l.toLowerCase()).count));
+        if (unlabeled > 0) addChip('__none__', 'No label', unlabeled, 'no-label');
+
+        const clear = document.getElementById('archive-filter-clear');
+        if (clear) clear.style.display = _activeLabels.size > 0 ? 'inline-block' : 'none';
+        bar.style.display = 'flex';
+        return labels;
+    }
+
+    // Editor inline do rótulo (clique no chip).
+    function startEditLabel(entry, chipEl) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'archive-label-input';
+        input.setAttribute('list', 'archive-label-list');
+        input.maxLength = LABEL_MAX;
+        input.placeholder = 'label (Enter = save)';
+        input.value = cleanLabel(entry.label);
+        input.onclick = (e) => e.stopPropagation();
+
+        let done = false;
+        const commit = async (save) => {
+            if (done) return;
+            done = true;
+            if (save) {
+                const next = cleanLabel(input.value);
+                if (next !== cleanLabel(entry.label)) {
+                    entry.label = next;
+                    const ok = await updateArchiveManifestEntry(entry);
+                    if (!ok && window.showAlert) window.showAlert('Could not save the label.', 'error');
+                }
+            }
+            renderArchiveList();
+        };
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+            else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+        };
+        input.onblur = () => commit(true);
+
+        chipEl.replaceWith(input);
+        input.focus();
+        input.select();
+    }
 
     async function renderArchiveList() {
         buildModal();
@@ -468,14 +690,22 @@
         const list = document.getElementById('archive-list');
         list.innerHTML = '<div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div>';
 
-        const items = await getArchiveEntriesForCurrentDataset();
-        items.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
+        const allItems = await getArchiveEntriesForCurrentDataset();
+        allItems.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
+        updateFilterUI(allItems);
+
+        const items = allItems.filter(entryMatchesFilter);
+        const info = document.getElementById('archive-filter-info');
+        if (info) info.textContent = _activeLabels.size > 0 ? `${items.length} of ${allItems.length} shown` : `${allItems.length} item(s)`;
+
         list.innerHTML = '';
 
         if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
         if (items.length === 0) {
-            list.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>';
+            list.innerHTML = allItems.length === 0
+                ? '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>'
+                : '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">No archived images with this label.</div>';
             return;
         }
 
@@ -488,19 +718,24 @@
             } catch (e) {}
 
             const dateStr = entry.archivedAt ? new Date(entry.archivedAt).toLocaleString() : '';
+            const label = cleanLabel(entry.label);
 
             const row = document.createElement('div');
             row.className = 'archive-item';
             row.innerHTML = `
                 <img title="Double-click to zoom" alt="">
                 <div class="archive-item-name">
-                    <div>${entry.originalName}</div>
-                    <div style="color:#666; font-size:10px; margin-top:2px;">📂 ${entry.folderLabel || '—'} · ${dateStr}</div>
+                    <div>${esc(entry.originalName)}</div>
+                    <div style="color:#666; font-size:10px; margin-top:2px;">📂 ${esc(entry.folderLabel || '—')} · ${esc(dateStr)}</div>
+                    <span class="archive-label-chip${label ? '' : ' empty'}" title="Click to ${label ? 'edit' : 'add'} the label">${label ? '🏷️ ' + esc(label) : '＋ label'}</span>
                 </div>
                 <button class="btn-archive-pin" title="Pin this image to view its tags in the Pinned panel — no need to restore it first">📌</button>
                 <button class="btn-archive-restore" title="Restore to the original folder">♻️ Restore</button>
                 <button class="btn-archive-delete-perm" title="Permanently delete this archived file — cannot be undone">🗑️ Delete Permanently</button>
             `;
+            const chip = row.querySelector('.archive-label-chip');
+            if (chip) chip.onclick = (e) => { e.stopPropagation(); startEditLabel(entry, chip); };
+
             const pinBtn = row.querySelector('.btn-archive-pin');
             if (pinBtn) {
                 if (typeof window.isImagePinned === 'function') {
@@ -585,6 +820,8 @@
             injectArchiveTopbarButton();
             injectArchiveSelectionButton();
         }, 0);
+        // Depois dos outros módulos (ordem de <script> não importa).
+        setTimeout(installBucketAutoLabel, 300);
 
         // Aplica o tamanho de miniatura salvo do Archive já no carregamento,
         // independente do modal ter sido aberto.

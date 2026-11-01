@@ -318,47 +318,29 @@
 
             timeout = setTimeout(async () => {
                 try {
-                    const results = await Promise.all(Object.values(DBP_SITES).map(async (site) => {
-                        try {
-                            const list = typeof site.search === 'function' ? await site.search(val, 6) : [];
-                            return (list || []).map(t => ({ ...t, _site: site.key }));
-                        } catch (err) { return []; }
-                    }));
+                    // Mesma regra do autocomplete do Tag Manager: 4 Danbooru primeiro, depois 4 e621.
+                    if (typeof window.fetchBooruSuggestions !== 'function') return;
+                    const list = (await window.fetchBooruSuggestions(val)).map(t => ({ ...t, sites: t.sources, aliasSite: t.aliasSource }));
                     if (myToken !== token) return; // stale response
-
-                    const merged = new Map();
-                    results.flat().forEach(t => {
-                        const k = t.name.replace(/_/g, ' ').toLowerCase();
-                        const ex = merged.get(k);
-                        // e621 alias segue a "Main alias source" (padrão: Danbooru manda).
-                        const dbMain = (t._site === 'e621' && window.isDanbooruMainTag ? window.isDanbooruMainTag(k) : false)
-                            || !!(ex && ex.sites.includes('danbooru') && !ex.isAlias);
-                        const useAlias = !!t.isAlias && (t._site !== 'e621' || !window.allowE621Alias || window.allowE621Alias(dbMain));
-                        if (!ex) {
-                            merged.set(k, { ...t, isAlias: useAlias, aliasTo: useAlias ? t.aliasTo : null, aliasSite: useAlias ? t._site : null, sites: [t._site] });
-                        } else {
-                            if (!ex.sites.includes(t._site)) ex.sites.push(t._site);
-                            if ((t.post_count || 0) > (ex.post_count || 0)) ex.post_count = t.post_count;
-                            const e6First = t._site === 'e621' && window.getAliasPrimarySource && window.getAliasPrimarySource() === 'e621';
-                            if (useAlias && (!ex.isAlias || e6First)) { ex.isAlias = true; ex.aliasTo = t.aliasTo; ex.aliasSite = t._site; }
-                        }
-                    });
-                    const list = Array.from(merged.values()).sort((a, b) => (b.post_count || 0) - (a.post_count || 0)).slice(0, 10);
 
                     suggBox.innerHTML = '';
                     if (list.length === 0) { suggBox.style.display = 'none'; return; }
 
+                    const hasBoth = list.some(t => t.group === 'danbooru') && list.some(t => t.group === 'e621');
+                    let lastGroup = null;
                     list.forEach(t => {
-                        const firstSite = DBP_SITES[t.sites[0]];
+                        if (hasBoth && t.group !== lastGroup && typeof window.makeSuggestionDivider === 'function') {
+                            suggBox.appendChild(window.makeSuggestionDivider(t.group === 'danbooru' ? 'Danbooru' : 'e621'));
+                            lastGroup = t.group;
+                        }
+                        const firstSite = DBP_SITES[t.group] || DBP_SITES[t.sites[0]];
                         const srcColors = window.TAG_SOURCE_COLORS || { danbooru: '#4db8ff', e621: '#f48fb1' };
                         const color = t.sites.includes('danbooru') ? srcColors.danbooru : srcColors.e621;
                         const displayName = t.name.replace(/_/g, ' ');
-                        const aliasToSpaced = t.isAlias ? t.aliasTo.replace(/_/g, ' ') : '';
+                        const aliasToSpaced = (t.isAlias && t.aliasTo) ? t.aliasTo.replace(/_/g, ' ') : '';
                         const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${DBP_ESC(aliasToSpaced)}</span>` : '';
                         const badges = t.sites.map(s => `<span class="dbp-src-badge ${s === 'e621' ? 'e6' : 'db'}">${DBP_SITES[s].badge}</span>`).join('');
-                        const countHtml = (t.post_count > 0)
-                            ? Number(t.post_count).toLocaleString()
-                            : (t.isDeprecated ? 'Deprecated' : '0');
+                        const countHtml = t.post_count > 0 ? Number(t.post_count).toLocaleString() : 'Alias';
 
                         const div = document.createElement('div');
                         div.className = 'db-sugg-item';

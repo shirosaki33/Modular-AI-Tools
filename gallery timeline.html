@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gallery Timeline</title>
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+
+    <style>
+        body {
+            margin: 0; padding: 0;
+            background-color: #111; color: #eee;
+            font-family: Arial, Helvetica, sans-serif;
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+
+        /* === TOPBAR === */
+        #topbar {
+            background: #1b1b1b; padding: 12px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid #222; z-index: 20;
+        }
+        .topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+        .topbar-section.left { justify-content: flex-start; flex-wrap: nowrap; }
+        .topbar-section.center { justify-content: center; text-align: center; }
+        .topbar-section.right { justify-content: flex-end; }
+
+        #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+
+        button, select {
+            background: #333; color: #fff; border: none;
+            padding: 8px 15px; border-radius: 8px; cursor: pointer; transition: 0.15s;
+            font-family: inherit; font-size: 13px; font-weight: bold;
+        }
+        button:hover, select:hover { background: #00aa66; color: #000; }
+
+        select {
+            outline: none; min-width: 140px; max-width: 200px; border: 1px solid #444;
+            text-overflow: ellipsis; white-space: nowrap; overflow: hidden;
+        }
+
+        #filter-tag, #rename-input, #folder-search, #disk-path-input {
+            background: #111; color: #00ff99; border: 1px solid #444;
+            padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none;
+        }
+        #filter-tag { width: 140px; }
+        #filter-tag:focus, #rename-input:focus, #folder-search:focus, #disk-path-input:focus { border-color: #00aa66; }
+
+        #btn-remove { background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; padding: 8px 12px; }
+        #btn-remove:hover { background: #6a1822; color: #fff; }
+        #btn-refresh { background: #263b5a; color: #9ecfff; border: 1px solid #1a3a5c; padding: 8px 12px; }
+        #btn-refresh:hover { background: #4db8ff; color: #000; }
+
+        #workspace { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 0px; }
+
+        /* === FOLDERS SIDEBAR (replaces the tag galleries of Gallery Holder) === */
+        #folder-sidebar {
+            display: none; flex-direction: column; width: 280px; flex-shrink: 0;
+            background: #1b1b1b; border-radius: 12px; padding: 12px; margin-right: 15px;
+            overflow: hidden; gap: 8px;
+        }
+        #folder-sidebar.open { display: flex; }
+        #folder-sidebar-title {
+            font-size: 11px; color: #888; text-transform: uppercase; font-weight: bold;
+            letter-spacing: 0.5px; padding: 0 4px; display: flex; justify-content: space-between; align-items: center;
+        }
+        #folder-sidebar-actions { display: flex; gap: 5px; }
+        #folder-sidebar-actions button { padding: 3px 8px; font-size: 10px; border-radius: 6px; background: #262626; color: #aaa; }
+        #folder-sidebar-actions button:hover { background: #00aa66; color: #000; }
+        #folder-search { width: 100%; box-sizing: border-box; padding: 6px 10px; font-size: 12px; }
+        #folder-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1; min-height: 0; padding-right: 3px; }
+        .folder-item { flex-shrink: 0; }
+        #folder-summary { font-size: 11px; color: #666; text-align: center; padding-top: 4px; border-top: 1px solid #262626; }
+
+        .folder-item {
+            display: flex; justify-content: space-between; align-items: center; gap: 6px;
+            background: #0d0d0d; border: 1px solid #262626; border-radius: 8px;
+            padding: 7px 8px 7px 10px; cursor: pointer; font-size: 12px; color: #ccc; transition: 0.15s;
+        }
+        .folder-item:hover { border-color: #00ff99; }
+        .folder-item.active { background: #0d2a18; border-color: #00aa66; color: #00ff99; }
+        .folder-item.hidden-folder { opacity: 0.45; }
+        .hidden-group-header {
+            display: flex; align-items: center; gap: 6px; flex-shrink: 0; cursor: pointer; user-select: none;
+            padding: 7px 10px; border-radius: 8px; font-size: 12px; font-weight: bold; color: #ffb6c0;
+            background: #2a1216; border: 1px solid #5a2229;
+        }
+        .hidden-group-header:hover { border-color: #aa4450; }
+        .hidden-group { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; padding-bottom: 6px; border-bottom: 1px dashed #5a2229; }
+        .folder-item.child { border-left: 2px solid #1f6b47; border-radius: 4px 8px 8px 4px; }
+        .folder-item.hidden-by-parent .folder-name { text-decoration: none; }
+        .folder-caret { width: 12px; flex-shrink: 0; color: #888; font-size: 11px; text-align: center; cursor: pointer; user-select: none; }
+        .folder-caret:not(.empty):hover { color: #00ff99; }
+        .folder-hide-btn:disabled { cursor: default; opacity: 0.5; }
+        .folder-hide-btn:disabled:hover { background: none; color: #888; }
+        .folder-item.hidden-folder .folder-name { text-decoration: line-through; }
+        .folder-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+        .folder-name { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .folder-meta { font-size: 10px; color: #777; }
+        .folder-hide-btn {
+            background: none; border: none; color: #888; cursor: pointer; font-size: 13px;
+            padding: 3px 5px; border-radius: 4px; flex-shrink: 0;
+        }
+        .folder-hide-btn:hover { background: #1a3a5c; color: #9ecfff; }
+
+        #btn-folders { background: none; font-size: 13px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; }
+        #btn-folders:hover { color: #00ff99; border-color: #00ff99; }
+        #btn-folders.active { background: #00aa66; color: #000; border-color: #00cc88; }
+
+        #left-col {
+            flex: 1; display: flex; flex-direction: column; overflow: hidden;
+            background: #1b1b1b; border-radius: 12px; padding: 15px; position: relative; min-width: 0;
+        }
+
+        /* === TIMELINE === */
+        :root { --grid-thumb-size: 180px; }
+        #grid-view { overflow-y: auto; flex: 1; padding: 0 8px 70px 0; display: block; }
+
+        .tl-section { position: relative; padding-left: 30px; margin-bottom: 28px; }
+        .tl-section::before {
+            content: ''; position: absolute; left: 9px; top: 0; bottom: -28px;
+            width: 2px; background: #2a2a2a;
+        }
+        .tl-section:last-child { margin-bottom: 0; }
+        .tl-section:last-child::before { bottom: 0; }
+
+        .tl-header {
+            position: sticky; top: 0; z-index: 5; display: flex; align-items: baseline; gap: 10px;
+            background: rgba(27, 27, 27, 0.94); padding: 8px 0 8px 0; margin-bottom: 8px;
+            backdrop-filter: blur(3px); flex-wrap: wrap;
+        }
+        .tl-dot {
+            position: absolute; left: -29px; top: 50%; transform: translateY(-50%);
+            width: 12px; height: 12px; border-radius: 50%; background: #00ff99;
+            border: 3px solid #1b1b1b; box-shadow: 0 0 0 2px #00aa66; box-sizing: content-box;
+        }
+        .tl-date { color: #00ff99; font-weight: bold; font-size: 15px; white-space: nowrap; }
+        .tl-path { color: #ddd; font-size: 13px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+        .tl-count { color: #777; font-size: 11px; white-space: nowrap; }
+        .tl-cont { color: #ffb84d; font-size: 11px; font-weight: bold; }
+
+        .tl-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--grid-thumb-size), 1fr));
+            gap: 15px; align-content: start; align-items: start;
+        }
+
+        .grid-item-wrapper {
+            border-radius: 10px; cursor: pointer; border: 2px solid transparent;
+            transition: 0.1s; background-color: #0d0d0d; position: relative;
+            display: flex; flex-direction: column;
+        }
+        .grid-item-wrapper:hover { border-color: #00ff99; transform: scale(1.02); }
+        .grid-item { width: 100%; height: auto; display: block; border-radius: 8px; min-height: 60px; background: #151515; }
+
+        .grid-item-label {
+            font-size: 11px; color: #888; text-align: center; padding: 6px 4px;
+            background: #0d0d0d; border-radius: 0 0 8px 8px; border-top: 1px solid #222;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold;
+        }
+        .grid-item-wrapper:hover .grid-item-label { color: #00ff99; }
+        #grid-view.hide-filenames .grid-item-label { display: none; }
+        #grid-view:not(.hide-filenames) .grid-item { border-radius: 8px 8px 0 0; }
+
+        #empty-state { color: #666; text-align: center; margin-top: 80px; font-size: 14px; line-height: 1.8; }
+
+        /* === RESIZERS === */
+        .resizer { display: flex; align-items: center; justify-content: center; z-index: 10; flex-shrink: 0; cursor: pointer; }
+        .resizer::after { content: ''; background: #333; transition: 0.2s; border-radius: 2px; }
+        .resizer.vertical { width: 16px; cursor: col-resize; }
+        .resizer.vertical::after { width: 4px; height: 40px; }
+        .resizer:hover::after, .resizer.dragging::after { background: #00ff99; }
+        #resizer-right { width: 20px; }
+
+        /* === DETAIL VIEW & THUMBNAILS === */
+        #detail-view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+        #main-image-container {
+            flex: 1; display: flex; justify-content: center; align-items: center;
+            background-color: #0d0d0d; border-radius: 10px; margin: 0; margin-bottom: 15px;
+            position: relative; overflow: hidden; min-width: 0; min-height: 0;
+        }
+        #detail-view.thumb-left #main-image-container { margin-bottom: 0; margin-left: 15px; }
+
+        #main-image { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; user-select: none; -webkit-user-drag: none; }
+        #main-image-container.zoomed { cursor: grab; }
+        #main-image-container.dragging { cursor: grabbing; }
+        #image-zoom-controls {
+            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.7); border: 1px solid #555; border-radius: 8px;
+            padding: 5px 10px; display: flex; align-items: center; gap: 8px; z-index: 5;
+        }
+        #image-zoom-controls button {
+            background: transparent; border: none; color: #aaa; font-size: 15px;
+            width: 26px; height: 26px; padding: 0; border-radius: 6px; cursor: pointer;
+        }
+        #image-zoom-controls button:hover { background: #00aa66; color: #000; }
+        #zoom-level-display { color: #9ecfff; font-size: 12px; font-weight: bold; min-width: 40px; text-align: center; }
+
+        #btn-close {
+            position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7);
+            color: #aaa; border: 2px solid #555; border-radius: 50%;
+            width: 32px; height: 32px; font-weight: bold; font-size: 14px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer; padding: 0;
+        }
+        #btn-close:hover { background: #00aa66; border-color: #00cc88; color: #000; }
+
+        #btn-layout {
+            position: absolute; top: 10px; right: 50px; background: rgba(0,0,0,0.7);
+            color: #aaa; border: 2px solid #555; border-radius: 8px;
+            width: 32px; height: 32px; font-weight: bold; font-size: 16px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer; padding: 0;
+        }
+        #btn-layout:hover { background: #00aa66; border-color: #00cc88; color: #000; }
+
+        #thumbnail-strip { height: 80px; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; flex-shrink: 0; padding-bottom: 5px; }
+        .thumb { height: 100%; width: auto; border-radius: 6px; cursor: pointer; border: 2px solid transparent; opacity: 0.5; transition: 0.15s; object-fit: cover; aspect-ratio: 1/1;}
+        .thumb:hover, .thumb.active { border-color: #00ff99; opacity: 1; }
+
+        #detail-view.thumb-left { flex-direction: row-reverse; }
+        #detail-view.thumb-left #thumbnail-strip { width: 110px; height: 100%; flex-direction: column; overflow-x: hidden; overflow-y: auto; padding-bottom: 0; padding-right: 5px;}
+        #detail-view.thumb-left .thumb { width: 100%; height: auto; }
+
+        /* === RIGHT COLUMN === */
+        #right-col {
+            width: 380px; flex-shrink: 0; background: #1b1b1b; border-radius: 12px;
+            padding: 15px; display: none; flex-direction: column; gap: 15px; overflow-y: auto;
+            position: relative;
+        }
+
+        /* --- ALERTS --- */
+        #alertBar {
+            display: none; border-radius: 8px;
+            padding: 8px 16px; margin-bottom: 5px; font-size: 12px;
+            line-height: 1.5; text-align: center; font-weight: bold;
+        }
+        #alertBar.error   { background:#2a0000; border:1px solid #aa0000; color:#ff6060; }
+        #alertBar.warn    { background:#2a1a00; border:1px solid #aa6600; color:#ffcc66; }
+        #alertBar.info    { background:#001a2a; border:1px solid #0066aa; color:#66ccff; }
+        #alertBar.success { background:#0d2a18; border:1px solid #00aa66; color:#00ff99; }
+
+        #sourceBar {
+            display: none; border-radius: 8px; padding: 8px 16px; margin-bottom: -5px; font-size: 12px;
+            line-height: 1.5; text-align: center; font-weight: bold;
+            background:#001a2a; border:1px solid #0066aa; color:#66ccff;
+        }
+        #sourceBar.json-source { background: #0d2a18; border: 1px solid #00aa66; color: #00ff99; }
+
+        #btn-reset-json {
+            background: rgba(0, 0, 0, 0.3); border: 1px solid currentColor; color: inherit;
+            border-radius: 4px; padding: 2px 8px; margin-left: 10px; cursor: pointer;
+            font-size: 11px; font-weight: bold; transition: 0.15s; vertical-align: middle;
+        }
+        #btn-reset-json:hover { background: rgba(255, 255, 255, 0.2); }
+
+        .promptBlock { background: #0d0d0d; border-radius: 8px; padding: 12px; }
+        .promptTitle { display: flex; justify-content: space-between; align-items: center; color: #aaa; margin-bottom: 6px; font-size: 14px; font-weight: bold; }
+        .promptTitle-actions { display: flex; gap: 5px; align-items: center; }
+        .copy-btn, .collapse-btn { background: none; border: none; color: #555; cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 14px; transition: 0.15s; }
+        .collapse-btn { font-size: 12px; }
+        .copy-btn:hover, .collapse-btn:hover { color: #00cc88; background: #1a2a22; }
+        .copy-btn.copied { color: #00cc88; }
+
+        .note-title-input {
+            background: transparent; border: 1px dashed transparent; color: #aaa; font-weight: bold; font-size: 14px; outline: none; width: 60%; transition: 0.2s; font-family: inherit;
+        }
+        .note-title-input:not([readonly]) { border-bottom-color: #444; color: #eee; }
+        .note-title-input:not([readonly]):focus { border-bottom-color: #00aa66; }
+
+        .lora-item {
+            background: #111; border: 1px solid #222; border-radius: 6px; padding: 6px 10px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .lora-input {
+            background: transparent; border: none; color: #eee; width: 100%; outline: none; font-size: 12px; font-family: inherit;
+        }
+        .lora-input:not([readonly]) { border-bottom: 1px dashed #444; }
+        .lora-input:not([readonly]):focus { border-bottom-color: #00aa66; }
+
+        textarea, input.meta-input {
+            background: #0d0d0d; color: #00ff99; border: 1px solid #222;
+            border-radius: 8px; padding: 12px; width: 100%; box-sizing: border-box;
+            font-family: inherit; font-size: 13px; outline: none; transition: 0.15s;
+        }
+        textarea { resize: none; min-height: 60px; max-height: 380px; overflow-y: auto; }
+        input.meta-input { color: #eee; }
+        textarea:focus, input.meta-input:focus { border-color: #00aa66; }
+        textarea:not([readonly]), input.meta-input:not([readonly]) { background: #111; border-color: #00aa66; color: #fff; }
+        .meta-table { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        .meta-table-full { grid-column: span 2; }
+        .meta-label { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px; font-weight: bold; }
+        .meta-table input { padding: 8px; font-size: 12px; min-height: 0; }
+
+        .action-buttons { display: flex; gap: 10px; margin-top: auto; }
+        .btn-action {
+            background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;
+            padding: 12px; border-radius: 8px; cursor: pointer; transition: 0.15s; font-weight: bold; font-size: 12px;
+        }
+        .btn-action:hover { background: #1e4a78; }
+        #btn-manual.edit-mode { background: #00aa66; color: #000; border-color: #00cc88; }
+
+        #btn-save { background: #2f1a5c; color: #b890ff; border-color: #4a2a8c; }
+        #btn-save:hover { filter: brightness(1.2); }
+
+        #btn-delete-img { flex: 0.2; background: #4a1118; color: #ffb6c0; border-color: #7a222c; font-size: 16px; display: flex; justify-content: center; align-items: center; }
+        #btn-delete-img:hover { background: #6a1822; color: #fff; }
+
+        /* === FOOTER === */
+        .footerbar { margin-top: 20px; text-align: center; font-size: 13px; }
+        .footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
+        .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
+        .footer-copy { margin-bottom: 20px; text-align: center; font-size: 11px; color: #555; }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1b1b1b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00aa66; }
+
+        #btn-rename-top, #btn-settings, #btn-sort { background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px;}
+        #btn-sort { font-size: 14px; }
+        #btn-rename-top:hover, #btn-settings:hover, #btn-sort:hover { color: #00ff99; border-color:#00ff99; }
+
+        .settings-dropdown {
+            display: none; position: absolute; top: 55px; right: 20px; background: #111827; border: 1px solid #263b5a; border-radius: 8px;
+            padding: 14px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.6); min-width: 220px; flex-direction: column; gap: 10px;
+        }
+        .settings-dropdown.open { display: flex; }
+        .settings-dropdown label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
+        .settings-dropdown input[type="checkbox"] { width: auto; margin: 0; }
+        .settings-label { font-size: 11px; color: #888; font-weight: bold; text-transform: uppercase; }
+
+        /* === STATUS TOAST (grid mode — the alert bar lives in the hidden right column) === */
+        #tl-toast {
+            position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 30;
+            display: none; padding: 8px 18px; border-radius: 8px; font-size: 12px; font-weight: bold;
+            background: #001a2a; border: 1px solid #0066aa; color: #66ccff; box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        }
+        #tl-toast.warn { background:#2a1a00; border-color:#aa6600; color:#ffcc66; }
+        #tl-toast.success { background:#0d2a18; border-color:#00aa66; color:#00ff99; }
+        #tl-toast.error { background:#2a0000; border-color:#aa0000; color:#ff6060; }
+
+        .bottom-bar {
+            position: absolute; bottom: 15px; display: none; background: rgba(15, 15, 15, 0.9);
+            border: 1px solid #333; padding: 6px 14px; border-radius: 8px; z-index: 15; gap: 10px;
+            align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+        }
+        #page-input {
+            width: 56px; background: #111; color: #00ff99; border: 1px solid #444; border-radius: 6px;
+            padding: 4px 6px; font-size: 12px; text-align: center; outline: none; font-family: inherit; font-weight: bold;
+        }
+        #page-input:focus { border-color: #00aa66; }
+        #page-input::-webkit-inner-spin-button { display: none; }
+    </style>
+</head>
+<body>
+
+<div id="topbar">
+    <div class="topbar-section left">
+        <button onclick="addDirectory()">+ Add Directory</button>
+        <select id="dir-list" onchange="loadSelectedDirectory()">
+            <option value="">Select a directory...</option>
+        </select>
+        <button id="btn-refresh" onclick="refreshCurrentFolder()" style="display:none;" title="Rescan the selected directory">↻</button>
+        <button id="btn-remove" onclick="removeDirectory()" style="display:none;" title="Remove Root Path (your files are not touched)">Remove Path</button>
+        <input type="text" id="filter-tag" placeholder="Filter by name..." oninput="filterGallery()" style="display:none;" title="Type part of the filename to filter the timeline">
+    </div>
+
+    <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
+        <span id="app-title">🕒 Gallery Timeline 🕒</span>
+        <span id="path-display" style="color: #555; font-size: 11px; font-weight: bold; margin-top: 2px; min-height: 13px; display: block;"></span>
+    </div>
+
+    <div class="topbar-section right" id="topbar-right">
+        <div id="grid-zoom-toggle" style="display:none; align-items:center; gap:4px;" title="Adjust grid thumbnail size">
+            <span style="font-size: 11px; color: #666;">🔍</span>
+            <input type="range" id="grid-thumb-slider" min="100" max="400" step="10" value="180" style="width: 60px; accent-color: #00ff99;" oninput="updateGridThumbSize(this.value)">
+        </div>
+
+        <button id="btn-rename-top" onclick="toggleRenameBalloon()" title="Rename Current Image" style="display:none; font-size: 15px;">✏️</button>
+        <button id="btn-folders" class="active" onclick="toggleFolderSidebar()" title="Show / hide the folder list" style="display:none;">🗂️ Folders</button>
+        <button id="btn-sort" onclick="toggleSort()" title="Folder order on the timeline">⬇️ Newest</button>
+        <button id="btn-settings" onclick="toggleSettings()" title="Settings">⚙️</button>
+    </div>
+</div>
+
+<div id="rename-dropdown" class="settings-dropdown" style="right: 170px; width: 230px;">
+    <span style="color:#aaa; font-weight:bold; font-size: 13px;">Rename Image:</span>
+    <input type="text" id="rename-input" placeholder="New name..." onkeydown="if(event.key === 'Enter') renameCurrentImage()" style="width: 100%; box-sizing: border-box; margin-bottom: 5px;">
+    <div style="display: flex; gap: 5px;">
+        <button onclick="renameCurrentImage()" style="background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c; flex: 1;">Confirm</button>
+        <button onclick="document.getElementById('rename-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
+    </div>
+</div>
+
+<div id="settings-dropdown" class="settings-dropdown" style="width: 290px;">
+    <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField(); saveSettingsToDB();" checked> Show File Names</label>
+    <label title="Pages load and unload while you scroll, so you never need the page buttons"><input type="checkbox" id="toggle-dynamic-pages" onchange="tlOnDynamicToggle()" checked> Dynamic page change (infinite scroll)</label>
+    <div style="display:flex; flex-direction:column; gap:10px; padding-top: 8px; border-top: 1px solid #263b5a; margin-top: 2px;">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+            <span class="settings-label">Order folders by</span>
+            <select id="folder-date-mode" onchange="onFolderDateModeChange()" style="width:100%; min-width:0; max-width:none;">
+                <option value="created">Folder creation date (from disk)</option>
+                <option value="oldest" selected>Oldest image in the folder</option>
+                <option value="newest">Newest image in the folder</option>
+                <option value="name">Folder name</option>
+            </select>
+        </div>
+        <div id="disk-path-block" style="display:none; flex-direction:column; gap:4px;">
+            <span class="settings-label">Folder path on disk</span>
+            <div style="display:flex; gap:5px;">
+                <input type="text" id="disk-path-input" placeholder="e.g. D:\Photos" onkeydown="if(event.key==='Enter') applyFolderPath()" style="flex:1; min-width:0;" title="Real path of the directory you opened. The browser cannot tell it, and it is needed to read the creation date of the folders.">
+                <button onclick="applyFolderPath()" style="padding: 6px 12px; background: #1a3a5c; color: #4db8ff; border: 1px solid #2a5a8c;">Apply</button>
+            </div>
+            <span id="disk-path-status" style="font-size: 11px; line-height: 1.4;"></span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+            <span class="settings-label">Images inside a folder</span>
+            <select id="image-order-mode" onchange="onImageOrderChange()" style="width:100%; min-width:0; max-width:none;">
+                <option value="name-asc">Name A-Z</option>
+                <option value="name-desc">Name Z-A</option>
+                <option value="date-asc">Date (oldest first)</option>
+                <option value="date-desc">Date (newest first)</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<div id="workspace">
+    <div id="folder-sidebar">
+        <div id="folder-sidebar-title">
+            <span>🗂️ Folders</span>
+            <div id="folder-sidebar-actions">
+                <button onclick="setAllFoldersHidden(false)" title="Show every folder on the timeline">Show all</button>
+                <button onclick="setAllFoldersHidden(true)" title="Hide every folder from the timeline">Hide all</button>
+            </div>
+        </div>
+        <input type="text" id="folder-search" placeholder="Search folders..." oninput="renderFolderSidebar()">
+        <div id="folder-list"></div>
+        <div id="folder-summary"></div>
+    </div>
+
+    <div id="left-col">
+        <div id="tl-toast"></div>
+        <div id="grid-view"></div>
+        <div id="detail-view">
+            <div id="main-image-container">
+                <button id="btn-layout" onclick="toggleThumbPosition()" title="Toggle Thumbnail Layout">◧</button>
+                <button id="btn-close" onclick="backToGrid()">X</button>
+                <img id="main-image" src="">
+                <div id="image-zoom-controls">
+                    <button onclick="zoomImagePopout(-0.3)" title="Zoom Out">➖</button>
+                    <span id="zoom-level-display">100%</span>
+                    <button onclick="zoomImagePopout(0.3)" title="Zoom In">➕</button>
+                    <button onclick="resetImageZoom()" title="Reset Zoom">↺</button>
+                </div>
+            </div>
+            <div id="thumbnail-strip"></div>
+        </div>
+
+        <div id="page-size-toggle" class="bottom-bar" style="left: 25px;">
+            <button id="btn-page-size" onclick="toggleItemsPerPage()" style="padding: 5px 12px; font-size: 12px;" title="Toggle number of images per page">100 / page</button>
+        </div>
+
+        <div id="pagination-controls" class="bottom-bar" style="left: 50%; transform: translateX(-50%);">
+            <button id="btn-page-first" onclick="goToPage(1)" style="padding: 5px 10px; font-size: 12px;" title="First page">⏮</button>
+            <button id="btn-page-prev" onclick="changePage(-1)" style="padding: 5px 12px; font-size: 12px;">◀ </button>
+            <span id="page-info" style="color: #9ecfff; font-size: 13px; font-weight: bold; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;">
+                Page <input type="number" id="page-input" min="1" value="1" onchange="goToPage(this.value)" onkeydown="if(event.key==='Enter') this.blur()"> of <span id="page-total">1</span>
+            </span>
+            <button id="btn-page-next" onclick="changePage(1)" style="padding: 5px 12px; font-size: 12px;"> ▶</button>
+            <button id="btn-page-last" onclick="goToPage(Infinity)" style="padding: 5px 10px; font-size: 12px;" title="Last page">⏭</button>
+        </div>
+    </div>
+
+    <div class="resizer vertical" id="resizer-right" style="display:none;"></div>
+
+    <div id="right-col">
+        <div id="alertBar"></div>
+
+        <div id="sourceBar">
+            Source: <span id="source-text"></span>
+            <button id="btn-reset-json" onclick="resetPNGParameters()" style="display:none;" title="Rescan the image and reset the parameters">↺ Reset</button>
+        </div>
+
+        <div class="promptBlock" data-block-id="meta">
+            <div class="promptTitle"><span>Generation Data</span><button class="collapse-btn" onclick="toggleCollapse(this)">▼</button></div>
+            <div class="collapsible-content meta-table">
+                <div class="extra-field"><div class="meta-label">CFG Scale</div><input type="text" id="val-cfg" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Steps</div><input type="text" id="val-steps" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Seed</div><input type="text" id="val-seed" class="meta-input" readonly></div>
+                <div class="extra-field"><div class="meta-label">Sampler</div><input type="text" id="val-sampler" class="meta-input" readonly></div>
+                <div class="meta-table-full extra-field"><div class="meta-label">Size</div><input type="text" id="val-size" class="meta-input" readonly></div>
+                <div class="meta-table-full"><div class="meta-label">Checkpoint</div><input type="text" id="val-ckpt" class="meta-input" readonly></div>
+            </div>
+        </div>
+
+        <div class="promptBlock" id="loras-block" data-block-id="loras" style="display: none;">
+            <div class="promptTitle"><span>LoRAs</span>
+                <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+            </div>
+            <div class="collapsible-content">
+                <div id="loras-container"></div>
+            </div>
+        </div>
+
+        <div class="promptBlock" data-block-id="pos">
+            <div class="promptTitle"><span>Positive Prompt</span>
+                <div class="promptTitle-actions">
+                    <button class="copy-btn" onclick="copyText(this, 'val-pos')" title="Copy">⧉</button>
+                    <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+                </div>
+            </div>
+            <div class="collapsible-content"><textarea id="val-pos" readonly oninput="autoResize(this)"></textarea></div>
+        </div>
+
+        <div class="promptBlock" data-block-id="neg">
+            <div class="promptTitle"><span>Negative Prompt</span>
+                <div class="promptTitle-actions">
+                    <button class="copy-btn" onclick="copyText(this, 'val-neg')" title="Copy">⧉</button>
+                    <button class="collapse-btn" onclick="toggleCollapse(this)">▼</button>
+                </div>
+            </div>
+            <div class="collapsible-content"><textarea id="val-neg" readonly oninput="autoResize(this)"></textarea></div>
+        </div>
+
+        <!-- Notes were removed from the UI; the shared fillFields() still clears this container, so it stays (hidden and always empty) -->
+        <div id="notes-container" style="display:none;"></div>
+
+        <div id="edit-controls" style="display: none; justify-content: flex-end; gap: 10px; margin-bottom: 10px;">
+            <button class="btn-action" style="padding: 6px 12px; flex: none;" onclick="addLora()">+ LoRA</button>
+        </div>
+
+        <input type="hidden" id="file-name">
+
+        <div class="action-buttons">
+            <button id="btn-manual" class="btn-action" onclick="toggleManualEdit()">Edit</button>
+            <button id="btn-save" class="btn-action" onclick="saveSidecarFile()">Save JSON</button>
+            <button id="btn-delete-img" onclick="deleteCurrentImage()" title="Delete image and JSON">🗑️</button>
+        </div>
+    </div>
+</div>
+
+<div class="footerbar" style="margin-top:-10px;">
+    <a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a>
+</div>
+<div class="footer-copy">© 2026 shirosaki33</div>
+
+<!-- Same parsers and shared tools as Gallery Holder -->
+<script src="parsers/png-chunks.js"></script>
+<script src="parsers/stable-diffusion.js"></script>
+<script src="parsers/novelai.js"></script>
+<script src="parsers/comfy.js"></script>
+<script src="parsers/comfyui_novelai.js"></script>
+<script src="parsers/swarmui.js"></script>
+<script src="parsers/invokeai.js"></script>
+<script src="parsers/fooocus.js"></script>
+
+<script src="tools/thumb_loader.js"></script>
+<script src="tools/gallery_ui.js"></script>
+<script src="tools/gallery_core.js"></script>
+<!-- Must be loaded LAST: overrides the single-folder directory/grid logic of gallery_core.js -->
+<script src="tools/timeline_core.js"></script>
+</body>
+</html>

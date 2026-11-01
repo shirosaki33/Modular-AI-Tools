@@ -39,7 +39,7 @@ a{color:var(--ac);text-decoration:none}a:hover{color:#fff;text-decoration:underl
 .cat:hover{background:var(--cd)}.cat.on{background:#0d1f18;color:var(--ac);font-weight:600}.cat.dim{opacity:.5}
 .cat i{font-style:normal;color:var(--mu);font-size:11px}.rt{display:flex;align-items:center;gap:4px}.hide{opacity:.4;font-size:12px}.hide:hover{opacity:1}
 /* grid */
-#grid{flex:1;overflow:auto;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--sz,160px),1fr));gap:14px;align-content:start}
+#grid{flex:1;overflow:auto;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--sz,160px),1fr));grid-auto-rows:max-content;gap:14px;align-content:start}
 .card{background:var(--pn);border:1px solid var(--bd);border-radius:12px;overflow:hidden;cursor:pointer;position:relative;min-width:0}
 .card:hover{border-color:var(--ac)}
 .card img,.ph{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;background:#0d0d0d}
@@ -117,6 +117,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
   <input type="text" id="q" placeholder="Filter by name…" oninput="page=1;debRender()">
   <button onclick="asc=!asc;page=1;render()" title="Reverse order">⇅</button>
   <select id="so" onchange="page=1;render()"><option value="name">Name</option><option value="size">Size</option><option value="date">Date</option><option value="base">Base</option></select>
+  <label title="Pages load and unload while you scroll, so you never need the page buttons"><input type="checkbox" id="dyn" checked onchange="onDyn()"> Dynamic page change</label>
   <label>Card size <input type="range" min="110" max="320" value="160" oninput="$('grid').style.setProperty('--sz',this.value+'px')"></label>
   <button onclick="rescan()" title="Rescan folders">↻</button>
 </div>
@@ -289,14 +290,47 @@ const changePage=d=>{page+=d;$('grid').scrollTop=0;render()};
 const togglePer=()=>{per=SIZES[(SIZES.indexOf(per)+1)%SIZES.length];page=1;$('grid').scrollTop=0;render()};
 const empty=()=>`<div id="empty"><strong>${items.length?'No LoRAs in this filter.':'No folder loaded.'}</strong><p>${items.length?'Try another category, folder, or name.':'Click <b>Add folder</b> and choose the directory with your .safetensors files (Chrome or Edge, desktop). Civitai data is cached in <code>local/lora_evaluate_cache.json</code> on localhost, or in the library folder when opened from <code>file://</code>.'}</p></div>`;
 const card=(it,i)=>`<div class="card" data-i="${i}" data-k="${esc(it.key)}"><button class="star${isFav(it)?' on':''}" data-star="${i}" title="Favorite">★</button><span class="tg"><span class="dot ${st(it)}"></span>${esc(it.cls)}</span>${it.url?`<img alt="" data-thumb="${esc(it.url)}">`:'<div class="ph"></div>'}<div class="nm" title="${esc(it.name)}">${esc(it.name.replace(/\.safetensors$/i,''))}</div><div class="sb">${esc((trigger(it)||'—')+' · '+(dimAlpha(it.meta)||'—'))}</div></div>`;
+/* ---------- Dynamic page change (infinite scroll): previous + current + next page stay in the DOM ---------- */
+let dyn=true,wS=0,wE=0,focusIdx=-1,dynRAF=null;
+try{dyn=localStorage.getItem('loraEvalDynamic')!=='0'}catch{}
+$('dyn').checked=dyn;
+const flTxt=s=>`${items.length} LoRA${items.length===1?'':'s'}${roots.length?' · '+roots.map(r=>r.name).join(' · '):''} · showing ${all.length?`${s+1}–${s+view.length} / ${all.length}`:0} · ${cacheLabel()}`;
+function win(){const n=Math.max(1,Math.ceil(all.length/per)),lo=dyn?Math.max(1,page-1):page,hi=dyn?Math.min(n,page+1):page;return[(lo-1)*per,Math.min(all.length,hi*per)]}
+function cardsHtml(a,b){let h='';for(let i=a;i<b;i++)h+=card(all[i],i);return h}
+function cardNodes(a,b){const t=document.createElement('div');t.innerHTML=cardsHtml(a,b);window.ThumbLoader?ThumbLoader.scan(t):t.querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);return[...t.children]}
 function render(){all=filtered();pager();const s=(page-1)*per;view=all.slice(s,s+per);renderCats();
-  $('grid').innerHTML=view.length?view.map(card).join(''):empty();
-  window.ThumbLoader?ThumbLoader.scan($('grid')):$('grid').querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);
-  $('fl').textContent=`${items.length} LoRA${items.length===1?'':'s'}${roots.length?' · '+roots.map(r=>r.name).join(' · '):''} · showing ${all.length?`${s+1}–${s+view.length} / ${all.length}`:0} · ${cacheLabel()}`;window.ccAfter&&ccAfter()}
+  const[a,b]=win();wS=a;wE=b;const g=$('grid');
+  g.innerHTML=view.length?'':empty();g.scrollTop=0;
+  if(view.length){const t=document.createElement('div');t.innerHTML=cardsHtml(a,b);g.append(...t.children);
+    window.ThumbLoader?ThumbLoader.scan(g):g.querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);
+    const tgt=focusIdx>=0?focusIdx:s;                         // back from the detail: show the opened card; otherwise start of the page
+    const c=tgt>a||focusIdx>=0?g.querySelector(`.card[data-i="${tgt}"]`):null;
+    if(c){focusIdx>=0?c.scrollIntoView({block:'center'}):g.scrollTop+=c.getBoundingClientRect().top-g.getBoundingClientRect().top}}
+  focusIdx=-1;
+  $('fl').textContent=flTxt(s);window.ccAfter&&ccAfter()}
+function firstCard(g){const top=g.getBoundingClientRect().top+1;for(const c of g.children){if(c.classList.contains('card')&&c.getBoundingClientRect().bottom>top)return c}return null}
+function dropCards(from,to){$('grid').querySelectorAll('.card').forEach(c=>{const i=+c.dataset.i;if(i>=from&&i<to){const im=c.querySelector('img[data-thumb]');if(im&&window.ThumbLoader)ThumbLoader.forget(im.dataset.full||im.dataset.thumb);c.remove()}})}
+function dynStep(){dynRAF=null;const g=$('grid');
+  if(!dyn||g.style.display==='none'||!all.length||all.length<=per||!g.clientHeight)return;
+  const vh=g.clientHeight,total=all.length,anc=firstCard(g);if(!anc)return;const aI=+anc.dataset.i;
+  let last=anc;const t0=anc.getBoundingClientRect().top;for(let n=anc.nextElementSibling;n&&Math.abs(n.getBoundingClientRect().top-t0)<2;n=n.nextElementSibling)last=n;   // a page may start mid-row
+  let pg=Math.floor(+last.dataset.i/per)+1;if(wE>=total&&g.scrollTop+vh>=g.scrollHeight-2)pg=Math.ceil(total/per);
+  if(pg!==page){page=pg;const s=(page-1)*per;view=all.slice(s,s+per);pager();$('fl').textContent=flTxt(s)}
+  const nb=g.scrollTop+vh>g.scrollHeight-vh*1.5&&wE<total,nt=g.scrollTop<vh*1.5&&wS>0;if(!nb&&!nt)return;
+  const before=anc.getBoundingClientRect().top,canTrim=g.scrollHeight-g.scrollHeight/Math.max(1,wE-wS)*per>=vh*4;
+  if(nb){const to=Math.min(total,wE+per);g.append(...cardNodes(wE,to));wE=to;
+    if(canTrim&&wE-wS>3*per&&aI>=wS+per){dropCards(wS,wS+per);wS+=per}}
+  else{const from=Math.max(0,wS-per);g.prepend(...cardNodes(from,wS));wS=from;const bd=Math.floor((wE-1)/per)*per;
+    if(canTrim&&wE-wS>3*per&&aI<bd){dropCards(bd,wE);wE=bd}}
+  g.scrollTop+=anc.getBoundingClientRect().top-before;window.ccAfter&&ccAfter();dynSched()}
+const dynSched=()=>{if(dynRAF===null)dynRAF=requestAnimationFrame(dynStep)};
+$('grid').addEventListener('scroll',dynSched,{passive:true});
+function onDyn(){dyn=$('dyn').checked;try{localStorage.setItem('loraEvalDynamic',dyn?'1':'0')}catch{}
+  const g=$('grid');if(g.style.display!=='none'){const a=firstCard(g);if(a)page=Math.floor(+a.dataset.i/per)+1;render()}}
 function updCard(it){const el=[...document.querySelectorAll('.card')].find(c=>c.dataset.k===it.key);if(!el)return;
   el.querySelector('.dot').className='dot '+st(it);el.querySelector('.tg').lastChild.textContent=it.cls;if(!it.url)return;
   let i=el.querySelector('img');if(!i){i=document.createElement('img');i.alt='';el.querySelector('.ph').replaceWith(i)}if(window.ThumbLoader)ThumbLoader.attach(i,it.url);else if(i.src!==it.url)i.src=it.url}
-$('grid').onclick=e=>{const s=e.target.closest('[data-star]');if(s){const it=view[+s.dataset.star];it&&toggleFav(it,e);return}const c=e.target.closest('.card');if(c&&!(window.ccClick&&ccClick(c,e)))showDetail(+c.dataset.i)};
+$('grid').onclick=e=>{const s=e.target.closest('[data-star]');if(s){const it=all[+s.dataset.star];it&&toggleFav(it,e);return}const c=e.target.closest('.card');if(c&&!(window.ccClick&&ccClick(c,e))){const gi2=+c.dataset.i;page=Math.floor(gi2/per)+1;view=all.slice((page-1)*per,page*per);showDetail(gi2%per)}};
 
 /* ---------- Detalhe (campos via resolvers do lora_meta_reader.js) ---------- */
 const epoch=m=>{const a=fv(m,['ss_epoch']),b=fv(m,['ss_num_epochs','ss_num_train_epochs','num_train_epochs']);return a||b?(a||b)+' of '+(b||a):null};
@@ -356,7 +390,7 @@ function showDetail(i,keep){
 }
 $('dr').onclick=async e=>{const b=e.target.closest('[data-copy]');if(!b)return;try{await navigator.clipboard.writeText(b.dataset.copy);b.textContent='Copied'}catch{b.textContent='Fail'}setTimeout(()=>b.textContent='Copy',1200)};
 $('dl').onclick=e=>{const d=e.target.closest('.li');d&&showDetail(+d.dataset.j)};
-function closeDetail(){$('detail').style.display='none';$('detail').classList.remove('has-desc');$('grid').style.display='grid';$('side').style.display=$('bar').style.display='';cur=-1;render()}
+function closeDetail(){focusIdx=cur>=0?(page-1)*per+cur:-1;$('detail').style.display='none';$('detail').classList.remove('has-desc');$('grid').style.display='grid';$('side').style.display=$('bar').style.display='';cur=-1;render()}
 function step(d){if(cur<0)return;const n=(page-1)*per+cur+d;if(n<0||n>=all.length)return;const p=Math.floor(n/per)+1;
   if(p!==page){page=p;view=all.slice((p-1)*per,p*per)}showDetail(n%per)}
 
