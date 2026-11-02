@@ -13,3 +13,5 @@ Basically, it's a single hub to figure out how an image was made, check how a Lo
 🌐 Try it online: https://shirosaki33.github.io/Modular-AI-Tools/
 
 downloading the code allows using local way
+
+made with ai
