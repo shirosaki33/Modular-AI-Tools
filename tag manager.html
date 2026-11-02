@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en-US">
 <head>
+    <script src="tools/client_error_log.js"></script>
     <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -29,6 +30,11 @@
         .topbar-section.right { justify-content: flex-end; }
 
         #app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+        .run-mode-badge { display: inline-block; margin-top: 4px; font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: bold; cursor: help;
+            background: #1a1a1a; color: #666; border: 1px solid #333; letter-spacing: 0.3px; }
+        .run-mode-badge.local  { color: #00ff99; border-color: #00aa66; background: #0d2a18; }
+        .run-mode-badge.online { color: #ffd23f; border-color: #8c7a1f; background: #2a240a; }
+        .run-mode-badge.file   { color: #ff6b6b; border-color: #8c2a2a; background: #2a0d0d; }
 
         button, select, input[type="text"], input[type="password"], input[type="number"], textarea { background: #333; color: #fff; border: 1px solid #444; padding: 8px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; font-weight: bold; outline: none; transition: 0.15s; }
         button { cursor: pointer; border: none; }
@@ -221,6 +227,7 @@
 
     <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
         <div id="app-title">🏷️ Tag Manager 🏷️</div>
+        <span id="run-mode-badge" class="run-mode-badge">…</span>
         <span id="current-folder-display" style="display: none;"></span>
         <div id="last-edited-display" style="font-size: 10px; color: #666; display: block; margin-top: 4px; font-weight: bold; letter-spacing: 0.5px;">Last edited: Never</div>
     </div>
@@ -791,6 +798,31 @@ python -m pip install onnxruntime</pre>
 <script src="tools/tagmanager_removed_history.js"></script>
 <script src="tools/tagmanager_popout_size.js"></script>
 <script src="tools/tagmanager_evaluator.js"></script>
+<script src="tools/tagmanager_assistant.js"></script>
+<script>
+/* Run mode under the title: green = localhost (recommended), yellow = online, red = opened as a file. */
+(function () {
+    const el = document.getElementById('run-mode-badge');
+    if (!el) return;
+    const proto = location.protocol, host = location.hostname;
+    const local = typeof window.MAT_IS_LOCAL === 'boolean' ? window.MAT_IS_LOCAL : ['localhost', '127.0.0.1', '[::1]', '::1'].includes(host);
+    const why = 'Why localhost (server_max.py / the .bat): the Danbooru / e621 tag cache, settings and presets are saved as files in the "local" folder — they survive clearing the browser and are shared with the other tools; the AI tools, model downloads and the error log in the cmd window only work there.';
+    let cls, text, tip;
+    if (proto === 'file:') {
+        cls = 'file'; text = 'File mode — not recommended';
+        tip = 'Opened directly as a file: the local server is not used. Settings stay only inside this browser, the tag cache is not shared, and the server features (AI tools, models, cmd error log) do not work.\n\n' + why;
+    } else if (local) {
+        cls = 'local'; text = 'Localhost — local cache';
+        tip = 'Running on the local server. Tag cache saved to local/danbooru_cache.json and local/e621_cache.json; settings and presets to the local folder.\n\n' + why;
+    } else {
+        cls = 'online'; text = 'Online — browser storage';
+        tip = 'Running from a web address: everything is saved only in this browser (cleared with the browser data) and the local server features are not available.\n\n' + why;
+    }
+    el.className = 'run-mode-badge ' + cls;
+    el.textContent = text;
+    el.title = tip;
+})();
+</script>
 
 </body>
 </html>

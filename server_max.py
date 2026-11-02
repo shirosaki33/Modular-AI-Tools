@@ -7,6 +7,9 @@ from urllib.parse import quote, urlparse, parse_qs
 PORT = 8100
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOCAL_DIR = os.path.join(ROOT, 'local')
+BACKUP_DIR = os.path.join(LOCAL_DIR, 'backups')   # automatic daily copies (see daily_backup)
+BACKUP_FILES = ('user_config.json', 'user_presets.json')
+BACKUP_KEEP = 4                                    # 4 copies + the file in use = 5 versions
 MODELS_DIR = os.path.join(ROOT, 'models')  # model files (Prompt Helper / Florence-2)
 MODEL_ID_RE = re.compile(r'^[\w.\-]+/[\w.\-]+$')  # "org/name"
 LOCAL_HOSTS = ('localhost', '127.0.0.1', '::1')
@@ -17,9 +20,59 @@ CHROME = any(a.lower() == 'chrome' for a in args)
 PAGE = next((a for a in args if a.lower() != 'chrome'), 'index.html')
 
 
+def _enable_ansi():
+    """Windows cmd only shows colors after virtual-terminal mode is turned on."""
+    if os.name != 'nt':
+        return sys.stdout.isatty()
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.GetStdHandle(-11)                     # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if not k.GetConsoleMode(h, ctypes.byref(mode)):
+            return False
+        return bool(k.SetConsoleMode(h, mode.value | 0x0004))   # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    except Exception:
+        return False
+
+
+COLOR = _enable_ansi()
+C_RED, C_YEL, C_DIM, C_CYAN, C_OFF = ('\033[91m', '\033[93m', '\033[90m', '\033[96m', '\033[0m') if COLOR else ('', '', '', '', '')
+TAG_COLOR = {'BACKUP': C_CYAN, 'ERROR': C_RED, 'FAILED': C_RED, 'JS-ERR': C_RED, 'BLOCK': C_YEL, 'JS-WRN': C_YEL, 'JS': C_CYAN}
+_print_lock = threading.Lock()
+
+
 def log(tag, msg):
-    """Console log line: [HH:MM:SS] [TAG] message (ASCII only, safe for any cmd)."""
-    print('[{}] [{:<6}] {}'.format(time.strftime('%H:%M:%S'), tag, msg), flush=True)
+    """Console log line: [HH:MM:SS] [TAG] message. Errors in red, warnings in yellow."""
+    c = TAG_COLOR.get(tag, '')
+    line = '[{}] [{:<6}] {}'.format(time.strftime('%H:%M:%S'), tag, msg)
+    with _print_lock:
+        try:
+            print(c + line + (C_OFF if c else ''), flush=True)
+        except UnicodeEncodeError:                  # old cmd code pages: drop what it cannot show
+            print((c + line + (C_OFF if c else '')).encode(sys.stdout.encoding or 'ascii', 'replace').decode(sys.stdout.encoding or 'ascii'), flush=True)
+
+
+def daily_backup(target):
+    """Before the FIRST change of the day, copies the current file to local/backups/YYYY-MM-DD/.
+    Keeps only the newest BACKUP_KEEP days. Never blocks the save if it fails."""
+    name = os.path.basename(target)
+    if name not in BACKUP_FILES or not os.path.isfile(target):
+        return
+    try:
+        day_dir = os.path.join(BACKUP_DIR, time.strftime('%Y-%m-%d'))
+        dst = os.path.join(day_dir, name)
+        if os.path.exists(dst):
+            return
+        os.makedirs(day_dir, exist_ok=True)
+        shutil.copy2(target, dst)
+        log('BACKUP', 'Daily copy: local/backups/{}/{}'.format(os.path.basename(day_dir), name))
+        days = sorted(d for d in os.listdir(BACKUP_DIR) if re.match(r'^\d{4}-\d{2}-\d{2}$', d) and os.path.isdir(os.path.join(BACKUP_DIR, d)))
+        for old in days[:-BACKUP_KEEP]:
+            shutil.rmtree(os.path.join(BACKUP_DIR, old), ignore_errors=True)
+            log('BACKUP', 'Removed old copy: local/backups/{}'.format(old))
+    except Exception as e:
+        log('FAILED', 'Daily backup of {}: {}'.format(name, e))
 
 
 def human_size(n):
@@ -260,10 +313,84 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log('FAILED', 'Could not read folder dates: {}'.format(e))
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
 
+    def _read_json(self):
+        n = int(self.headers.get('Content-Length', 0))
+        return json.loads(self.rfile.read(n).decode('utf-8')) if n else {}
+
+    def _trash_file(self):
+        """Gallery Timeline: moves an image (and its .json sidecar) to the Recycle Bin."""
+        try:
+            _, target = _resolve_in_root(self._read_json(), True)
+            moved = []
+            base = os.path.splitext(target)[0]
+            for path in (target, base + '.json'):
+                if os.path.isfile(path):
+                    _trash_path(path)
+                    moved.append(os.path.basename(path))
+            log('OK', 'Moved to the Recycle Bin: {}'.format(', '.join(moved)))
+            self._reply(200, json.dumps({'status': 'success', 'moved': moved}).encode('utf-8'))
+        except Exception as e:
+            log('FAILED', 'Could not move to the Recycle Bin: {}'.format(e))
+            self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
+
+    def _open_folder(self):
+        """Gallery Timeline: opens the file manager on the image's folder (selecting the image when possible)."""
+        try:
+            data = self._read_json()
+            _, target = _resolve_in_root(data, False)
+            if os.path.isfile(target):
+                folder, select = os.path.dirname(target), target
+            else:
+                folder, select = target, None
+            if not os.path.isdir(folder):
+                raise ValueError('folder not found on disk: {}'.format(folder))
+            if os.name == 'nt':
+                subprocess.Popen('explorer /select,"{}"'.format(select) if select else 'explorer "{}"'.format(folder))
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', '-R', select] if select else ['open', folder])
+            else:
+                subprocess.Popen(['xdg-open', folder], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            log('OK', 'Opened folder: {}'.format(folder))
+            self._reply(200, b'{"status": "success"}')
+        except Exception as e:
+            log('FAILED', 'Could not open the folder: {}'.format(e))
+            self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
+
+    def _client_log(self):
+        """Errors of the open pages (tools/client_error_log.js) printed in the cmd."""
+        try:
+            n = int(self.headers.get('Content-Length', 0))
+            if n > 512 * 1024:
+                return self._reply(413, b'{"status": "error"}')
+            data = json.loads(self.rfile.read(n).decode('utf-8')) if n else {}
+            for it in (data.get('items') or [])[:100]:
+                level = str(it.get('level') or 'error')
+                msg = str(it.get('message') or '').strip()
+                page = str(it.get('page') or '')
+                tag = {'error': 'JS-ERR', 'warn': 'JS-WRN'}.get(level, 'JS')
+                where = ''
+                if it.get('source'):
+                    where = ' ({}{})'.format(it['source'], ':{}:{}'.format(it.get('line'), it.get('col')) if it.get('line') else '')
+                count = ' (x{})'.format(it['count']) if it.get('count') else ''
+                first, *rest = (msg.splitlines() or [''])
+                log(tag, '{} | {}{}{}'.format(page, first[:600], where, count))
+                extra = rest[:12]
+                stack = [l for l in str(it.get('stack') or '').splitlines() if l.strip() and l.strip() not in [r.strip() for r in rest]]
+                if level != 'info':
+                    for l in (extra + stack[:8]):
+                        with _print_lock:
+                            print('{}           {}{}'.format(C_DIM, l.strip()[:300], C_OFF), flush=True)
+            self._reply(200, b'{"status": "success"}')
+        except Exception as e:
+            log('FAILED', 'Bad client log: {}'.format(e))
+            self._reply(400, b'{"status": "error"}')
+
     def do_POST(self):
         route = self.path.split('?')[0]
         if not self._same_origin():
             return self._forbidden(route)
+        if route == '/api/client_log':
+            return self._client_log()
         if route.startswith('/api/florence/'):
             return self._florence('POST')
         if route == '/api/save_model_file':
@@ -272,6 +399,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._delete_model()
         if route == '/api/folder_dates':
             return self._folder_dates()
+        if route == '/api/trash_file':
+            return self._trash_file()
+        if route == '/api/open_folder':
+            return self._open_folder()
         if route != '/api/save_local_cache':
             log('FAILED', 'Unknown POST endpoint: {}'.format(self.path))
             return self._reply(404, b'{"status": "error", "message": "unknown endpoint"}')
@@ -292,6 +423,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             tmp = target + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(data.get('data'), f, ensure_ascii=False)
+            if existed:
+                daily_backup(target)
             os.replace(tmp, target)
             log('OK', '{} {} successfully ({})'.format(
                 rel.replace('\\', '/'), 'modified' if existed else 'created', human_size(os.path.getsize(target))))
@@ -304,6 +437,66 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 except OSError:
                     pass
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
+
+
+def _trash_path(path):
+    """Moves a file to the system Recycle Bin / Trash (never a permanent delete)."""
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _pack_ = 8 if ctypes.sizeof(ctypes.c_void_p) == 8 else 1
+            _fields_ = [('hwnd', wintypes.HWND), ('wFunc', wintypes.UINT), ('pFrom', wintypes.LPCWSTR),
+                        ('pTo', wintypes.LPCWSTR), ('fFlags', ctypes.c_ushort), ('fAnyOperationsAborted', wintypes.BOOL),
+                        ('hNameMappings', ctypes.c_void_p), ('lpszProgressTitle', wintypes.LPCWSTR)]
+        op = SHFILEOPSTRUCTW()
+        op.wFunc = 3                                    # FO_DELETE
+        op.pFrom = path + '\0'                          # the API wants a double-null terminated list
+        op.fFlags = 0x0040 | 0x0010 | 0x0004 | 0x0400   # ALLOWUNDO | NOCONFIRMATION | SILENT | NOERRORUI
+        rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        if rc or op.fAnyOperationsAborted:
+            raise OSError('Windows could not move the file to the Recycle Bin (code {})'.format(rc))
+        return
+    if sys.platform == 'darwin':
+        r = subprocess.run(['osascript', '-e', 'tell application "Finder" to delete POSIX file "{}"'.format(path.replace('"', '\\"'))],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if r.returncode:
+            raise OSError('Finder could not move the file to the Trash')
+        return
+    for cmd in (['gio', 'trash', path], ['trash-put', path]):
+        try:
+            if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                return
+        except OSError:
+            pass
+    base = os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'), 'Trash')   # freedesktop fallback
+    os.makedirs(os.path.join(base, 'files'), exist_ok=True)
+    os.makedirs(os.path.join(base, 'info'), exist_ok=True)
+    name, n = os.path.basename(path), 0
+    while os.path.exists(os.path.join(base, 'files', name)):
+        n += 1
+        name = '{}.{}'.format(os.path.basename(path), n)
+    with open(os.path.join(base, 'info', name + '.trashinfo'), 'w', encoding='utf-8') as f:
+        f.write('[Trash Info]\nPath={}\nDeletionDate={}\n'.format(quote(path), time.strftime('%Y-%m-%dT%H:%M:%S')))
+    shutil.move(path, os.path.join(base, 'files', name))
+
+
+def _resolve_in_root(data, need_file):
+    """root + folder (relative) + name -> absolute path, which must stay inside root."""
+    root = os.path.abspath(str(data.get('root', '')).strip().strip('"'))
+    if not os.path.isdir(root):
+        raise ValueError('folder not found on disk: {}'.format(root))
+    folder = str(data.get('folder', '')).replace('\\', '/').strip('/')
+    name = str(data.get('name', ''))
+    if '/' in name or '\\' in name:
+        raise ValueError('invalid file name')
+    target = os.path.abspath(os.path.join(root, *([p for p in folder.split('/') if p] + ([name] if name else []))))
+    if os.path.commonpath([target, root]) != root:
+        raise ValueError('path is outside the opened folder')
+    if need_file and not os.path.isfile(target):
+        raise ValueError('file not found on disk: {}'.format(target))
+    return root, target
 
 
 class Server(http.server.ThreadingHTTPServer):

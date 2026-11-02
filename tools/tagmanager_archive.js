@@ -59,6 +59,14 @@
     const LABEL_MAX = 40;
     const DEFAULT_LABEL = 'excluded';
 
+    /* ORIGINAL: a PRIMEIRA versão de cada nome de imagem que entra no Archive vira a
+       "original": vai para _archive/original/ com o rótulo fixo "original". Enquanto
+       existir _archive/original/<nome>, as próximas versões desse nome vão para o
+       Archive normal (_archive/). Ao restaurar a original, a pasta original/ fica sem
+       esse nome — e a próxima vez que a imagem for arquivada ela volta a ser a original. */
+    const ORIGINAL_DIR = 'original';
+    const ORIGINAL_LABEL = 'original';
+
     const esc = (v) => (typeof window.escHTML === 'function' ? window.escHTML(v) : String(v));
 
     /* ---------- INDEXEDDB ---------- */
@@ -202,6 +210,45 @@
         });
     }
 
+    /* ---------- HELPERS DE ARQUIVO ---------- */
+    async function fileExistsIn(dir, name) {
+        try { await dir.getFileHandle(name); return true; } catch (e) { return false; }
+    }
+
+    // Copia para o destino (sobrescrevendo se já existir) e só então remove da origem.
+    async function moveFileBetween(srcDir, destDir, name) {
+        const srcHandle = await srcDir.getFileHandle(name);
+        const file = await srcHandle.getFile();
+        const destHandle = await destDir.getFileHandle(name, { create: true });
+        const writable = await destHandle.createWritable();
+        await writable.write(await file.arrayBuffer());
+        await writable.close();
+        await srcDir.removeEntry(name);
+    }
+
+    // Registros "normais" (não-original) do Archive com este nome de imagem, nesta pasta de dataset.
+    async function findRootCopies(parent, imgName) {
+        const all = await getAllArchiveManifestEntries();
+        const out = [];
+        for (const e of all) {
+            if (e.isOriginal || e.archiveImageName !== imgName || !e.parentDirHandle) continue;
+            try { if (await e.parentDirHandle.isSameEntry(parent)) out.push(e); } catch (err) {}
+        }
+        return out;
+    }
+
+    // Uma cópia nova com o mesmo nome SOBRESCREVE a antiga: o registro velho some e as
+    // legendas antigas que a cópia nova não tem são removidas (senão ficariam órfãs).
+    async function cleanupSupersededCopies(olds, keepTextNames) {
+        for (const e of olds) {
+            for (const t of (e.archiveTextNames || [])) {
+                if (keepTextNames.includes(t)) continue;
+                try { await e.archiveDirHandle.removeEntry(t); } catch (err) {}
+            }
+            await deleteArchiveManifestEntry(e.id);
+        }
+    }
+
     /* ---------- MOVER PARA O ARQUIVO (chamado por window.archiveSelectedImages) ----------
        GARANTIA: a pasta "_archive" é SEMPRE criada dentro de
        img.parentDirHandle — a MESMA pasta de onde a imagem veio (o dataset
@@ -209,8 +256,14 @@
        ausente por qualquer motivo, a função agora avisa claramente em vez
        de falhar em silêncio.
 
+       ORIGINAL: se NÃO existe _archive/original/<nome da imagem>, esta versão vira a
+       original (vai para _archive/original/, rótulo "original", isOriginal = true).
+       Caso contrário vai para _archive/ normal, sobrescrevendo uma cópia antiga de
+       mesmo nome (se houver).
+
        label (opcional): rótulo interno; sem ele vale o da ferramenta em
-       andamento (window._archiveAutoLabel) ou "excluded". */
+       andamento (window._archiveAutoLabel) ou "excluded". Ignorado quando a
+       imagem vira a original. */
     window.moveToArchive = async function (img, label) {
         if (!img || !img.parentDirHandle) {
             console.error('moveToArchive: missing image or parentDirHandle', img);
@@ -222,17 +275,20 @@
                 if ((await img.parentDirHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
             }
 
-            const archiveDir = await img.parentDirHandle.getDirectoryHandle('_archive', { create: true });
+            const archiveRoot = await img.parentDirHandle.getDirectoryHandle('_archive', { create: true });
+
+            let originalDir = null;
+            try { originalDir = await archiveRoot.getDirectoryHandle(ORIGINAL_DIR); } catch (e) {}
+            const hasOriginal = !!originalDir && await fileExistsIn(originalDir, img.name);
+            const asOriginal = !hasOriginal;
+            if (asOriginal && !originalDir) originalDir = await archiveRoot.getDirectoryHandle(ORIGINAL_DIR, { create: true });
+
+            const archiveDir = asOriginal ? originalDir : archiveRoot;
+            const olds = asOriginal ? [] : await findRootCopies(img.parentDirHandle, img.name);
 
             const moveOne = async (fileName) => {
                 try {
-                    const srcHandle = await img.parentDirHandle.getFileHandle(fileName);
-                    const srcFile = await srcHandle.getFile();
-                    const destHandle = await archiveDir.getFileHandle(fileName, { create: true });
-                    const writable = await destHandle.createWritable();
-                    await writable.write(await srcFile.arrayBuffer());
-                    await writable.close();
-                    await img.parentDirHandle.removeEntry(fileName);
+                    await moveFileBetween(img.parentDirHandle, archiveDir, fileName);
                     return true;
                 } catch (e) {
                     return false; // arquivo pode não existir (ex: sem legenda ainda) — tudo bem
@@ -255,9 +311,12 @@
                 originalExt: img.ext,
                 parentDirHandle: img.parentDirHandle,
                 folderLabel: (img.parentDirHandle && img.parentDirHandle.name) || '',
-                label: cleanLabel(label) || cleanLabel(window._archiveAutoLabel) || DEFAULT_LABEL,
+                label: asOriginal ? ORIGINAL_LABEL : (cleanLabel(label) || cleanLabel(window._archiveAutoLabel) || DEFAULT_LABEL),
+                isOriginal: asOriginal,
                 archivedAt: Date.now()
             });
+
+            await cleanupSupersededCopies(olds, movedTextNames);
 
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
             return true;
@@ -266,6 +325,59 @@
             return false;
         }
     };
+
+    /* ---------- TROCA AO RESTAURAR A ORIGINAL ----------
+       Se já existe no dataset uma imagem com o nome da original (a versão modificada):
+         1) a versão modificada (imagem + .txt/.json) vai para o Archive normal (_archive/),
+            sobrescrevendo uma cópia antiga de mesmo nome;
+         2) a original (imagem + legendas) volta para o dataset;
+         3) o registro da original some — sem ela em original/, a próxima vez que a imagem
+            for arquivada ela volta a ser a original.
+       Retorna { partial: [legendas que não voltaram] }. */
+    async function swapOriginalIntoDataset(entry) {
+        const parent = entry.parentDirHandle;
+        const imgName = entry.archiveImageName;
+        const base = entry.originalBaseName;
+        const partial = [];
+
+        if (typeof window.saveAllImages === 'function') { try { await window.saveAllImages(true); } catch (e) {} }
+
+        const archiveRoot = await parent.getDirectoryHandle('_archive', { create: true });
+        const olds = await findRootCopies(parent, imgName);
+
+        // 1) modificada -> Archive normal
+        await moveFileBetween(parent, archiveRoot, imgName);
+        const modifiedTexts = [];
+        for (const ext of ['.txt', '.json']) {
+            const n = base + ext;
+            if (await fileExistsIn(parent, n)) { await moveFileBetween(parent, archiveRoot, n); modifiedTexts.push(n); }
+        }
+        await addArchiveManifestEntry({
+            archiveDirHandle: archiveRoot,
+            archiveImageName: imgName,
+            archiveTextNames: modifiedTexts,
+            originalName: imgName,
+            originalBaseName: base,
+            originalExt: entry.originalExt,
+            parentDirHandle: parent,
+            folderLabel: entry.folderLabel || (parent && parent.name) || '',
+            label: cleanLabel(window._archiveAutoLabel) || 'modified',
+            isOriginal: false,
+            archivedAt: Date.now()
+        });
+        await cleanupSupersededCopies(olds, modifiedTexts);
+
+        // 2) original -> dataset
+        await moveFileBetween(entry.archiveDirHandle, parent, imgName);
+        for (const t of (entry.archiveTextNames || [])) {
+            try { await moveFileBetween(entry.archiveDirHandle, parent, t); }
+            catch (e) { if (!e || e.name !== 'NotFoundError') { console.warn('caption not restored:', t, e); partial.push(t); } }
+        }
+
+        // 3) some o registro da original
+        await deleteArchiveManifestEntry(entry.id);
+        return { partial };
+    }
 
     /* ---------- ROTULAGEM AUTOMÁTICA DO FIX BUCKET ----------
        O tagmanager_bucket_check.js chama window.moveToArchive(img) sem rótulo.
@@ -288,7 +400,7 @@
     window.archiveSelectedImages = async function () {
         if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
 
-        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. They get the label "${DEFAULT_LABEL}". You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
+        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. The first version of each image becomes its "original" (kept in _archive/original); later versions get the label "${DEFAULT_LABEL}". You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
 
         const label = DEFAULT_LABEL;
 
@@ -315,7 +427,7 @@
         if (archivedCount > 0) {
             await window.markDatasetEdited();
             if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
-            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (label "${label}", kept in this same dataset folder).`, 'success');
+            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (kept in this same dataset folder).`, 'success');
             if (typeof window.refreshDataset === 'function') await window.refreshDataset();
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
         }
@@ -339,14 +451,21 @@
                 }
             }
 
+            // Original + já existe uma imagem com esse nome no dataset: TROCA (a modificada vai para o Archive).
+            if (entry.isOriginal && await fileExistsIn(parent, entry.archiveImageName)) {
+                const r = await swapOriginalIntoDataset(entry);
+                if (window.showAlert) {
+                    window.showAlert(`Restored the original "${entry.originalName}". The version that was in the dataset moved to the Archive.`, 'success');
+                    if (r.partial.length > 0) window.showAlert(`⚠️ Caption file(s) not restored: ${r.partial.join(', ')}`, 'error');
+                }
+                _selectedIds.delete(entry.id);
+                await renderArchiveList();
+                if (typeof window.refreshDataset === 'function') await window.refreshDataset();
+                return;
+            }
+
             const moveBack = async (fileName) => {
-                const srcHandle = await entry.archiveDirHandle.getFileHandle(fileName);
-                const file = await srcHandle.getFile();
-                const destHandle = await parent.getFileHandle(fileName, { create: true });
-                const writable = await destHandle.createWritable();
-                await writable.write(await file.arrayBuffer());
-                await writable.close();
-                await entry.archiveDirHandle.removeEntry(fileName);
+                await moveFileBetween(entry.archiveDirHandle, parent, fileName);
             };
 
             await moveBack(entry.archiveImageName);
@@ -359,6 +478,89 @@
         } catch (e) {
             console.error(e);
             if (window.showAlert) window.showAlert('Error restoring file — the original folder may no longer be accessible.', 'error');
+        }
+    };
+
+    /* ---------- RESTAURAR EM MASSA ----------
+       Restaura vários itens de uma vez (selecionados por checkbox no painel).
+       - Sequencial (um por vez) para não sobrecarregar o disco.
+       - Se já existir um arquivo com o MESMO nome da imagem na pasta de
+         destino, o item é PULADO (fica no Archive) em vez de sobrescrever.
+       - Uma única atualização da lista/dataset e um único resumo no final. */
+    const _selectedIds = new Set();
+    let _lastCheckedIdx = -1;
+
+    window.restoreArchiveEntries = async function (entries) {
+        if (!entries || entries.length === 0) return;
+        if (!confirm(`Restore ${entries.length} item(s) from the Archive back to the dataset folder?\n\nItems whose file name already exists in the folder will be skipped and stay in the Archive — except originals, which swap places with the version in the folder (that version moves to the Archive).`)) return;
+
+        const btn = document.getElementById('archive-restore-selected');
+        const restored = [];
+        const failed = [];
+        const partial = [];
+
+        const fileExists = async (dir, name) => {
+            try { await dir.getFileHandle(name); return true; } catch (e) { return false; }
+        };
+
+        for (let n = 0; n < entries.length; n++) {
+            const entry = entries[n];
+            if (btn) { btn.disabled = true; btn.textContent = `⏳ ${n + 1}/${entries.length}`; }
+            try {
+                const parent = entry.parentDirHandle;
+                if ((await parent.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                    if ((await parent.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                        failed.push(`${entry.originalName} (permission denied)`);
+                        continue;
+                    }
+                }
+                if (await fileExists(parent, entry.archiveImageName)) {
+                    if (entry.isOriginal) {
+                        // Original: troca com a versão que está no dataset (a modificada vai para o Archive).
+                        const r = await swapOriginalIntoDataset(entry);
+                        partial.push(...r.partial);
+                        _selectedIds.delete(entry.id);
+                        restored.push(entry.originalName);
+                        continue;
+                    }
+                    failed.push(`${entry.originalName} (name already exists in the folder)`);
+                    continue;
+                }
+
+                const moveBack = async (fileName) => {
+                    const srcHandle = await entry.archiveDirHandle.getFileHandle(fileName);
+                    const file = await srcHandle.getFile();
+                    const destHandle = await parent.getFileHandle(fileName, { create: true });
+                    const writable = await destHandle.createWritable();
+                    await writable.write(await file.arrayBuffer());
+                    await writable.close();
+                    await entry.archiveDirHandle.removeEntry(fileName);
+                };
+
+                await moveBack(entry.archiveImageName);
+                // A imagem já voltou: falha numa legenda NÃO pode deixar o registro órfão no manifesto.
+                for (const t of (entry.archiveTextNames || [])) {
+                    try { await moveBack(t); } catch (e) {
+                        if (!e || e.name !== 'NotFoundError') { console.warn('caption not restored:', t, e); partial.push(t); }
+                    }
+                }
+
+                await deleteArchiveManifestEntry(entry.id);
+                _selectedIds.delete(entry.id);
+                restored.push(entry.originalName);
+            } catch (e) {
+                console.error('restoreArchiveEntries failed for', entry && entry.originalName, e);
+                failed.push(`${entry ? entry.originalName : '?'} (error)`);
+            }
+        }
+
+        await renderArchiveList();
+        if (restored.length > 0 && typeof window.refreshDataset === 'function') await window.refreshDataset();
+
+        if (window.showAlert) {
+            if (restored.length > 0) window.showAlert(`Restored ${restored.length} item(s) from the Archive ♻️`, 'success');
+            if (partial.length > 0) window.showAlert(`⚠️ Image restored but ${partial.length} caption file(s) stayed in "_archive": ${partial.slice(0, 5).join(', ')}`, 'error');
+            if (failed.length > 0) window.showAlert(`⚠️ Could not restore ${failed.length} item(s): ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '...' : ''}`, 'error');
         }
     };
 
@@ -384,6 +586,54 @@
             if (window.showAlert) window.showAlert('Error deleting file from the Archive.', 'error');
         }
     };
+
+    /* ---------- LIMPEZA DE ENTRADAS FANTASMA ----------
+       Se o registro do manifesto existe mas a imagem NÃO está mais dentro de
+       "_archive" (ex.: foi restaurada/movida e algo falhou antes de apagar o
+       registro, ou o arquivo foi apagado/movido fora do app), o item aparecia
+       na lista como se ainda estivesse lá. Aqui removemos esses registros.
+       Só considera fantasma quando o erro é NotFoundError — erros de
+       permissão/handle inacessível NÃO apagam nada. */
+    async function pruneStaleArchiveEntries(items) {
+        const alive = [];
+        let removed = 0;
+        for (const entry of items) {
+            let stale = false;
+            const dir = entry && entry.archiveDirHandle;
+            const name = entry && entry.archiveImageName;
+            if (!dir || typeof dir.getFileHandle !== 'function' || !name) {
+                // Registro antigo/corrompido, sem handle ou nome utilizável.
+                stale = true;
+            } else {
+                let canCheck = true;
+                try {
+                    if (typeof dir.queryPermission === 'function' && (await dir.queryPermission({ mode: 'read' })) !== 'granted') canCheck = false;
+                } catch (e) { /* segue tentando ler */ }
+                if (canCheck) {
+                    try {
+                        const fh = await dir.getFileHandle(name);
+                        await fh.getFile(); // confirma que dá para LER o arquivo, não só achar o nome
+                    } catch (e) {
+                        // Permissão/segurança = não dá para verificar, mantém. Qualquer outro erro
+                        // (NotFound, TypeMismatch, InvalidState, handle quebrado...) = o arquivo não está lá.
+                        const n = e && e.name;
+                        if (n !== 'NotAllowedError' && n !== 'SecurityError') {
+                            stale = true;
+                            console.warn('[Archive] stale entry removed:', name, n, e);
+                        }
+                    }
+                }
+            }
+            if (stale) {
+                // Só apaga o REGISTRO no manifesto; nunca mexe em arquivo nenhum.
+                await deleteArchiveManifestEntry(entry.id);
+                _selectedIds.delete(entry.id);
+                removed++;
+            } else alive.push(entry);
+        }
+        if (removed > 0 && window.showAlert) window.showAlert(`Removed ${removed} stale Archive entr${removed === 1 ? 'y' : 'ies'} (file no longer in "_archive").`, 'info');
+        return alive;
+    }
 
     /* ---------- TAMANHO DE MINIATURA — ISOLADO DO DATASET ---------- */
     window.updateArchiveThumbSize = function (val, skipSave = false) {
@@ -432,6 +682,16 @@
         .archive-label-chip.empty { color: #666; background: transparent; border: 1px dashed #444; font-weight: normal; }
         .archive-label-chip.empty:hover { color: #ffcc66; border-color: #ffcc66; background: transparent; }
         .archive-item .archive-label-input { margin-top: 4px; font-size: 11px; padding: 3px 8px; width: 190px; max-width: 100%; box-sizing: border-box; }
+
+        /* Seleção em massa */
+        #archive-select-bar { display: none; align-items: center; gap: 10px; flex-shrink: 0; padding: 6px 2px; font-size: 11px; color: #aaa; }
+        #archive-select-bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+        #archive-select-count { color: #888; }
+        #archive-restore-selected { margin-left: auto; font-size: 11px; padding: 5px 10px; background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; }
+        #archive-restore-selected:hover:not(:disabled) { background: #00aa66; color: #000; }
+        #archive-restore-selected:disabled { opacity: 0.4; cursor: not-allowed; }
+        .archive-row-check { width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; accent-color: #00ff99; }
+        .archive-item.selected { border-color: #00aa66; background: #101b15; }
 
         .list-archive-btn { background:#151515; border-color:#555; color:#aaa; }
 
@@ -555,13 +815,19 @@
                     <button onclick="window.closeModal('modal-archive')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
                 <div style="font-size:11px; color:#888; margin: -4px 0 10px;">
-                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. Items are labeled automatically by the tool that archived them (excluded / grayscale / bucket); click a label to rename it. "Delete Permanently" removes the archived copy for good — this cannot be undone.
+                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. Items are labeled automatically by the tool that archived them (excluded / grayscale / bucket); click a label to rename it. The first version of each image is kept as its "original" (folder _archive/original); restoring it swaps it with the version currently in the dataset. "Delete Permanently" removes the archived copy for good — this cannot be undone.
                 </div>
                 <div id="archive-filter-bar">
                     <span style="font-size:13px;" title="Filter by label — click a label to show only it, click again to turn it off">🏷️</span>
                     <div id="archive-label-filter"></div>
                     <button id="archive-filter-clear" title="Turn off all label filters">✕ clear</button>
                     <span id="archive-filter-info"></span>
+                </div>
+                <div id="archive-select-bar">
+                    <label title="Select / unselect all shown items (Shift+click a checkbox to select a range)"><input type="checkbox" id="archive-select-all" class="archive-row-check"> Select all</label>
+                    <span id="archive-select-count"></span>
+                    <button id="archive-select-clear" style="font-size:11px; background:transparent; border:none; color:#888; cursor:pointer; padding:2px 4px; display:none;" title="Unselect everything">✕ clear</button>
+                    <button id="archive-restore-selected" disabled title="Restore all selected items to their original folder">♻️ Restore Selected</button>
                 </div>
                 <div id="archive-list"><div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div></div>
                 <div id="archive-thumb-bar">
@@ -637,6 +903,7 @@
 
     // Editor inline do rótulo (clique no chip).
     function startEditLabel(entry, chipEl) {
+        if (entry.isOriginal) return; // o rótulo "original" é fixo
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'archive-label-input';
@@ -652,7 +919,9 @@
             done = true;
             if (save) {
                 const next = cleanLabel(input.value);
-                if (next !== cleanLabel(entry.label)) {
+                if (next.toLowerCase() === ORIGINAL_LABEL) {
+                    if (window.showAlert) window.showAlert('The label "original" is reserved for original images.', 'error');
+                } else if (next !== cleanLabel(entry.label)) {
                     entry.label = next;
                     const ok = await updateArchiveManifestEntry(entry);
                     if (!ok && window.showAlert) window.showAlert('Could not save the label.', 'error');
@@ -690,7 +959,7 @@
         const list = document.getElementById('archive-list');
         list.innerHTML = '<div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div>';
 
-        const allItems = await getArchiveEntriesForCurrentDataset();
+        const allItems = await pruneStaleArchiveEntries(await getArchiveEntriesForCurrentDataset());
         allItems.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
         updateFilterUI(allItems);
 
@@ -702,14 +971,52 @@
 
         if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
+        // Seleção sempre limitada ao que está visível (evita restaurar item escondido por filtro).
+        const visibleIds = new Set(items.map(e => e.id));
+        Array.from(_selectedIds).forEach(id => { if (!visibleIds.has(id)) _selectedIds.delete(id); });
+        _lastCheckedIdx = -1;
+
+        const updateSelectBar = () => {
+            const bar = document.getElementById('archive-select-bar');
+            if (!bar) return;
+            bar.style.display = items.length > 0 ? 'flex' : 'none';
+            const total = items.length;
+            const sel = _selectedIds.size;
+            const master = document.getElementById('archive-select-all');
+            if (master) { master.checked = total > 0 && sel === total; master.indeterminate = sel > 0 && sel < total; }
+            const cnt = document.getElementById('archive-select-count');
+            if (cnt) cnt.textContent = sel > 0 ? `${sel} of ${total} selected` : '';
+            const clr = document.getElementById('archive-select-clear');
+            if (clr) clr.style.display = sel > 0 ? 'inline-block' : 'none';
+            const rb = document.getElementById('archive-restore-selected');
+            if (rb) { rb.disabled = sel === 0; rb.textContent = sel > 0 ? `♻️ Restore Selected (${sel})` : '♻️ Restore Selected'; }
+            list.querySelectorAll('.archive-item').forEach(r => {
+                const on = _selectedIds.has(Number(r.dataset.entryId));
+                r.classList.toggle('selected', on);
+                const cb = r.querySelector('.archive-row-check');
+                if (cb) cb.checked = on;
+            });
+        };
+        const master = document.getElementById('archive-select-all');
+        if (master) master.onchange = () => {
+            if (master.checked) items.forEach(e => _selectedIds.add(e.id)); else _selectedIds.clear();
+            updateSelectBar();
+        };
+        const clearBtn = document.getElementById('archive-select-clear');
+        if (clearBtn) clearBtn.onclick = () => { _selectedIds.clear(); updateSelectBar(); };
+        const restoreBtn = document.getElementById('archive-restore-selected');
+        if (restoreBtn) restoreBtn.onclick = () => window.restoreArchiveEntries(items.filter(e => _selectedIds.has(e.id)));
+
         if (items.length === 0) {
+            updateSelectBar();
             list.innerHTML = allItems.length === 0
                 ? '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>'
                 : '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">No archived images with this label.</div>';
             return;
         }
 
-        for (const entry of items) {
+        for (let idx = 0; idx < items.length; idx++) {
+            const entry = items[idx];
             let url = '';
             try {
                 const fh = await entry.archiveDirHandle.getFileHandle(entry.archiveImageName);
@@ -722,7 +1029,9 @@
 
             const row = document.createElement('div');
             row.className = 'archive-item';
+            row.dataset.entryId = entry.id;
             row.innerHTML = `
+                <input type="checkbox" class="archive-row-check" title="Select (Shift+click to select a range)">
                 <img title="Double-click to zoom" alt="">
                 <div class="archive-item-name">
                     <div>${esc(entry.originalName)}</div>
@@ -733,7 +1042,26 @@
                 <button class="btn-archive-restore" title="Restore to the original folder">♻️ Restore</button>
                 <button class="btn-archive-delete-perm" title="Permanently delete this archived file — cannot be undone">🗑️ Delete Permanently</button>
             `;
+            const rowCheck = row.querySelector('.archive-row-check');
+            rowCheck.onclick = (e) => {
+                e.stopPropagation();
+                const on = rowCheck.checked;
+                if (e.shiftKey && _lastCheckedIdx >= 0) {
+                    const [a, b] = [Math.min(_lastCheckedIdx, idx), Math.max(_lastCheckedIdx, idx)];
+                    for (let k = a; k <= b; k++) { if (on) _selectedIds.add(items[k].id); else _selectedIds.delete(items[k].id); }
+                } else if (on) _selectedIds.add(entry.id); else _selectedIds.delete(entry.id);
+                _lastCheckedIdx = idx;
+                updateSelectBar();
+            };
+            // Clicar no fundo do item também marca/desmarca (ignora botões, imagem, rótulo e inputs).
+            row.onclick = (e) => {
+                if (e.target.closest('button, input, img, .archive-label-chip')) return;
+                rowCheck.checked = !rowCheck.checked;
+                rowCheck.onclick(e);
+            };
+
             const chip = row.querySelector('.archive-label-chip');
+            if (chip && entry.isOriginal) chip.title = 'Original version — fixed label (restoring it swaps it with the current image in the dataset)';
             if (chip) chip.onclick = (e) => { e.stopPropagation(); startEditLabel(entry, chip); };
 
             const pinBtn = row.querySelector('.btn-archive-pin');
@@ -757,12 +1085,13 @@
 
             list.appendChild(row);
         }
+        updateSelectBar();
     }
 
     window.updateArchiveButtonState = async function () {
         const btn = document.getElementById('btn-open-archive');
         if (!btn) return;
-        const items = await getArchiveEntriesForCurrentDataset();
+        const items = await pruneStaleArchiveEntries(await getArchiveEntriesForCurrentDataset());
         btn.classList.toggle('has-items', items.length > 0);
         btn.title = items.length > 0
             ? `${items.length} item(s) archived in THIS dataset — click to view`

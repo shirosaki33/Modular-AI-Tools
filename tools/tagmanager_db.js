@@ -362,57 +362,236 @@ window.deletePresetTag = async function(tag, skipRender = false) {
 };
 
 // 4. SYSTEM BACKUP
+/* EXPORT: everything — presets, every setting and (on localhost) the tag cache files
+   of local/ — in one JSON named with the date.
+   IMPORT: opens a chooser: what to bring from the backup (groups, each one can be
+   opened to pick single items), merge or replace the presets. Then the data is
+   written, every other save is blocked and the page reloads — so no module can
+   write its old in-memory copy over what was just imported. */
+const BACKUP_CACHE_FILES = {                 // local/ file  <->  setting key used online
+    'danbooru_cache.json': 'danbooru_tag_cache',
+    'e621_cache.json': 'e621_tag_cache',
+    'unknown_tags.json': 'unknown_tags_cache'
+};
+const BACKUP_GROUPS = [
+    { id: 'presets',   label: '🏷️ Tag presets (tags + preset panel layout)', test: k => /^preset-/.test(k) },
+    { id: 'rules',     label: '⚖️ Rules (conflicts, merges, counters)',       test: k => /^(custom-conflict-rules|deleted-default-rules|rm_|enable-counter-)/.test(k) },
+    { id: 'evaluator', label: '🧐 Evaluator (settings, scores, reviews)',     test: k => /^(evaluator-|enable-evaluator$)/.test(k) },
+    { id: 'assistant', label: '💬 Assistant (settings, conversation)',        test: k => /^(assistant-|enable-assistant$)/.test(k) },
+    { id: 'caches',    label: '🌐 Danbooru / e621 tag cache',                 test: k => Object.values(BACKUP_CACHE_FILES).includes(k) },
+    { id: 'other',     label: '⚙️ Interface & other settings',                test: () => true }
+];
+function backupGroupOf(key) { return BACKUP_GROUPS.find(g => g.test(key)).id; }
+
 window.exportBackup = async function() {
     try {
         await loadSettingsToCache();
         await loadPresetsToCache();
+        if (typeof window._flushPendingLocalWrites === 'function') window._flushPendingLocalWrites(false);
+        const localFiles = {};
+        if (isLocalhost) {
+            for (const f of Object.keys(BACKUP_CACHE_FILES)) {
+                try {
+                    const res = await fetch('/local/' + f + '?t=' + Date.now(), { cache: 'no-store' });
+                    if (res.ok) localFiles[f] = await res.json();
+                } catch (e) { /* file not created yet */ }
+            }
+        }
         const backupData = {
-            version: 1,
+            app: 'Tag Manager',
+            version: 2,
             date: new Date().toISOString(),
+            mode: isLocalhost ? 'localhost' : 'browser',
             presets: Object.keys(window._presetsCache).map(tag => ({ tag: tag, category: window._presetsCache[tag] })),
-            settings: Object.keys(window._settingsCache).map(id => ({ id: id, value: window._settingsCache[id] }))
+            settings: Object.keys(window._settingsCache).map(id => ({ id: id, value: window._settingsCache[id] })),
+            localFiles
         };
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
-        const dlAnchorElem = document.createElement('a');
-        dlAnchorElem.setAttribute("href", dataStr);
-        dlAnchorElem.setAttribute("download", "tagmanager_backup.json");
-        document.body.appendChild(dlAnchorElem);
-        dlAnchorElem.click();
-        dlAnchorElem.remove();
-        if (window.showAlert) window.showAlert("Backup exported successfully!", "success");
+        // Blob (not a data: URL): works for big backups (scores, tag caches...).
+        const blob = new Blob([JSON.stringify(backupData)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const d = new Date(), pad = n => String(n).padStart(2, '0');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tagmanager_backup_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        const mb = (blob.size / 1048576).toFixed(blob.size > 1048576 ? 1 : 2);
+        if (window.showAlert) window.showAlert(`Backup exported (${backupData.presets.length} presets, ${backupData.settings.length} settings${Object.keys(localFiles).length ? ', tag caches' : ''} · ${mb} MB).`, "success");
     } catch(e) {
-        if (window.showAlert) window.showAlert("Error exporting backup.", "error");
+        console.error('[Backup] export failed', e);
+        if (window.showAlert) window.showAlert("Error exporting backup: " + (e.message || e), "error");
     }
 };
 
 window.importBackup = function() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json';
+    input.accept = '.json,application/json';
     input.onchange = e => {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.readAsText(file, 'UTF-8');
-        reader.onload = async readerEvent => {
-            try {
-                const content = JSON.parse(readerEvent.target.result);
-                if (content.presets) {
-                    for (let p of content.presets) await window.savePresetTag(p.tag, p.category, true);
-                    if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
-                }
-                if (content.settings) {
-                    for (let s of content.settings) await window.saveSetting(s.id, s.value);
-                    if (typeof window.loadSettings === 'function') await window.loadSettings();
-                }
-                if (window.showAlert) window.showAlert("Backup imported successfully! Your data is restored.", "success");
-            } catch(err) {
-                if (window.showAlert) window.showAlert("Invalid backup file.", "error");
+        reader.onload = ev => {
+            let content;
+            try { content = JSON.parse(ev.target.result); }
+            catch (err) { if (window.showAlert) window.showAlert("This file is not valid JSON — is it a Tag Manager backup?", "error"); return; }
+            if (!content || typeof content !== 'object' || (!Array.isArray(content.presets) && !Array.isArray(content.settings))) {
+                if (window.showAlert) window.showAlert("This file is not a Tag Manager backup (no presets / settings inside).", "error");
+                return;
             }
-        }
-    }
+            if (content.version && content.version > 2 && window.showAlert) window.showAlert("This backup was made by a newer version — unknown items are skipped.", "warn");
+            openImportChooser(content, file.name);
+        };
+    };
     input.click();
 };
+
+function openImportChooser(content, fileName) {
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const settings = Array.isArray(content.settings) ? content.settings.filter(s => s && typeof s.id === 'string') : [];
+    const presets = Array.isArray(content.presets) ? content.presets.filter(p => p && p.tag) : [];
+    const files = content.localFiles && typeof content.localFiles === 'object' ? content.localFiles : {};
+    // Items per group: settings + (presets list) + (cache files as pseudo-items).
+    const items = {};
+    BACKUP_GROUPS.forEach(g => { items[g.id] = []; });
+    if (presets.length) items.presets.push({ kind: 'presets', id: '__presets__', label: `${presets.length} preset tag(s)` });
+    settings.forEach(s => items[backupGroupOf(s.id)].push({ kind: 'setting', id: s.id, label: s.id, value: s.value }));
+    Object.keys(files).forEach(f => { if (BACKUP_CACHE_FILES[f]) items.caches.push({ kind: 'file', id: f, label: 'local/' + f, value: files[f] }); });
+    const size = v => { try { const n = JSON.stringify(v).length; return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n > 1024 ? Math.round(n / 1024) + ' KB' : n + ' B'; } catch (e) { return ''; } };
+
+    let overlay = document.getElementById('modal-backup-import');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'modal-backup-import';
+    overlay.className = 'modal-overlay';
+    const groupsHtml = BACKUP_GROUPS.filter(g => items[g.id].length).map(g => `
+        <div class="bk-group" data-g="${g.id}">
+            <div class="bk-ghead">
+                <label><input type="checkbox" class="bk-gcb" data-g="${g.id}" ${g.id === 'caches' ? '' : 'checked'}> <b>${esc(g.label)}</b></label>
+                <span class="bk-count">${items[g.id].length} item(s)</span>
+                <button class="bk-more" data-g="${g.id}" title="Choose single items">▸ items</button>
+            </div>
+            <div class="bk-items" data-g="${g.id}">
+                ${items[g.id].map((it, i) => `<label class="bk-item"><input type="checkbox" class="bk-icb" data-g="${g.id}" data-i="${i}" ${g.id === 'caches' ? '' : 'checked'}> <span>${esc(it.label)}</span><span class="bk-size">${it.kind === 'presets' ? '' : size(it.value)}</span></label>`).join('')}
+            </div>
+        </div>`).join('');
+    overlay.innerHTML = `
+        <div class="tool-modal" style="width:560px; max-width:94vw; max-height:88vh; overflow-y:auto;" onclick="event.stopPropagation()">
+            <style>
+                #modal-backup-import .bk-head { font-size:11px; color:#888; line-height:1.5; }
+                #modal-backup-import .bk-group { border:1px solid #2a2a2a; border-radius:8px; padding:6px 10px; margin-top:6px; background:#121212; }
+                #modal-backup-import .bk-ghead { display:flex; align-items:center; gap:8px; font-size:12px; }
+                #modal-backup-import .bk-ghead label { flex:1; display:flex; gap:6px; align-items:center; cursor:pointer; }
+                #modal-backup-import .bk-count { color:#777; font-size:11px; }
+                #modal-backup-import .bk-more { background:transparent; border:1px solid #444; color:#aaa; padding:1px 7px; font-size:10px; border-radius:4px; cursor:pointer; }
+                #modal-backup-import .bk-items { display:none; flex-direction:column; gap:2px; margin:6px 0 2px 20px; max-height:180px; overflow-y:auto; }
+                #modal-backup-import .bk-items.open { display:flex; }
+                #modal-backup-import .bk-item { display:flex; gap:6px; align-items:center; font-size:11px; color:#bbb; cursor:pointer; }
+                #modal-backup-import .bk-item span:first-of-type { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+                #modal-backup-import .bk-size { color:#666; font-size:10px; }
+                #modal-backup-import input[type=checkbox] { width:auto; margin:0; accent-color:#00ff99; }
+                #modal-backup-import .bk-mode { display:flex; gap:14px; font-size:12px; color:#ccc; margin-top:8px; }
+                #modal-backup-import .bk-mode label { display:flex; gap:5px; align-items:center; cursor:pointer; }
+                #modal-backup-import .bk-warn { font-size:11px; color:#ffcc66; background:#2a240a; border:1px solid #6b5a1f; border-radius:6px; padding:6px 8px; margin-top:8px; line-height:1.45; }
+            </style>
+            <h3 style="display:flex; justify-content:space-between; align-items:center; margin-top:0;">📂 Import backup
+                <button onclick="document.getElementById('modal-backup-import').remove()" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; padding:0;">&times;</button></h3>
+            <div class="bk-head">File: <b>${esc(fileName)}</b><br>Made: ${content.date ? esc(new Date(content.date).toLocaleString()) : 'unknown date'}${content.mode ? ' · from ' + esc(content.mode) + ' mode' : ''} · version ${esc(content.version || 1)}<br>
+                Choose what to bring back. Unchecked items keep their current value. The tag cache is off by default (it rebuilds itself).</div>
+            ${groupsHtml || '<div class="bk-head" style="margin-top:10px;">Nothing to import in this file.</div>'}
+            ${presets.length ? `<div class="bk-mode"><span style="color:#9ecfff; font-weight:bold;">Presets:</span>
+                <label><input type="radio" name="bk-pmode" value="merge" checked> Merge with the current ones</label>
+                <label><input type="radio" name="bk-pmode" value="replace"> Replace the current ones</label></div>` : ''}
+            <div class="bk-warn">After importing, the page reloads so every tool starts with the imported data.${isLocalhost ? ' The current files are kept in local/backups/ by the server (daily copies).' : ' Tip: export a backup of the current state first if you may want it back.'}</div>
+            <div class="modal-buttons" style="margin-top:10px;">
+                <button class="btn-cancel" onclick="document.getElementById('modal-backup-import').remove()">Cancel</button>
+                <button id="bk-do-import" style="background:#0d2a18; color:#00ff99; border:1px solid #00aa66;">📂 Import selected</button>
+            </div>
+        </div>`;
+    overlay.onclick = () => overlay.remove();
+    document.body.appendChild(overlay);
+    overlay.classList.add('active');
+
+    const q = sel => Array.from(overlay.querySelectorAll(sel));
+    q('.bk-more').forEach(b => b.onclick = () => {
+        const box = overlay.querySelector(`.bk-items[data-g="${b.dataset.g}"]`);
+        box.classList.toggle('open');
+        b.textContent = box.classList.contains('open') ? '▾ items' : '▸ items';
+    });
+    q('.bk-gcb').forEach(cb => cb.onchange = () => q(`.bk-icb[data-g="${cb.dataset.g}"]`).forEach(i => { i.checked = cb.checked; }));
+    q('.bk-icb').forEach(cb => cb.onchange = () => {
+        const all = q(`.bk-icb[data-g="${cb.dataset.g}"]`), on = all.filter(i => i.checked).length;
+        const g = overlay.querySelector(`.bk-gcb[data-g="${cb.dataset.g}"]`);
+        g.checked = on > 0; g.indeterminate = on > 0 && on < all.length;
+    });
+    overlay.querySelector('#bk-do-import').onclick = async () => {
+        const chosen = q('.bk-icb').filter(i => i.checked).map(i => items[i.dataset.g][+i.dataset.i]);
+        if (!chosen.length) { if (window.showAlert) window.showAlert('Nothing selected.', 'info'); return; }
+        const pmode = (overlay.querySelector('input[name="bk-pmode"]:checked') || {}).value || 'merge';
+        overlay.querySelector('#bk-do-import').disabled = true;
+        overlay.querySelector('#bk-do-import').textContent = '⏳ Importing…';
+        try {
+            await applyImport(chosen, presets, pmode);
+        } catch (err) {
+            console.error('[Backup] import failed', err);
+            if (window.showAlert) window.showAlert('Import failed: ' + (err.message || err), 'error');
+            overlay.querySelector('#bk-do-import').disabled = false;
+            overlay.querySelector('#bk-do-import').textContent = '📂 Import selected';
+        }
+    };
+}
+
+async function applyImport(chosen, presets, pmode) {
+    await loadSettingsToCache();
+    await loadPresetsToCache();
+    if (!window._settingsLoadedSuccessfully || !window._presetsLoadedSuccessfully) throw new Error('the current data did not load correctly — import aborted to avoid losing anything');
+    let nSet = 0, nPre = 0, nFiles = 0;
+    const cacheKeyToFile = {};
+    Object.entries(BACKUP_CACHE_FILES).forEach(([f, k]) => { cacheKeyToFile[k] = f; });
+    const fileWrites = {};                       // local file -> data
+    for (const it of chosen) {
+        if (it.kind === 'presets') {
+            if (pmode === 'replace') {
+                Object.keys(window._presetsCache).forEach(t => { window._deletedPresetKeys.add(t); });
+                window._presetsCache = {};
+            }
+            presets.forEach(p => { window._presetsCache[p.tag] = p.category || 'Uncategorized'; window._dirtyPresetKeys.add(p.tag); window._deletedPresetKeys.delete(p.tag); });
+            nPre = presets.length;
+        } else if (it.kind === 'file') {
+            if (isLocalhost) fileWrites[it.id] = it.value;
+            else { window._settingsCache[BACKUP_CACHE_FILES[it.id]] = it.value; window._dirtySettingsKeys.add(BACKUP_CACHE_FILES[it.id]); }
+            nFiles++;
+        } else {
+            // A tag cache saved as a setting (backup from browser mode) goes to its file on localhost.
+            if (isLocalhost && cacheKeyToFile[it.id]) { fileWrites[cacheKeyToFile[it.id]] = it.value; nFiles++; continue; }
+            window._settingsCache[it.id] = it.value;
+            window._dirtySettingsKeys.add(it.id);
+            nSet++;
+        }
+    }
+    // Write everything now (not debounced)...
+    if (typeof window._flushPendingLocalWrites === 'function') window._flushPendingLocalWrites(false);
+    await window._persistSettingsCache();
+    await window._persistPresetsCache();
+    for (const [f, data] of Object.entries(fileWrites)) {
+        const res = await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: 'local/' + f, data }) });
+        if (!res.ok) throw new Error('could not write local/' + f);
+    }
+    // ...then block every other save until the reload (tools would write their old copy back).
+    window._settingsLoadedSuccessfully = false;
+    window._presetsLoadedSuccessfully = false;
+    window._persistSettingsCache = async () => {};
+    window._persistPresetsCache = async () => {};
+    const origFetch = window.fetch;
+    window.fetch = function (url, opt) {
+        if (String(url).includes('/api/save_local_cache')) return Promise.resolve(new Response('{"status":"blocked"}', { status: 200 }));
+        return origFetch.apply(this, arguments);
+    };
+    if (navigator.sendBeacon) { const ob = navigator.sendBeacon.bind(navigator); navigator.sendBeacon = (u, d) => String(u).includes('/api/save_local_cache') ? true : ob(u, d); }
+    if (window.showAlert) window.showAlert(`Imported ${nPre ? nPre + ' presets, ' : ''}${nSet} setting(s)${nFiles ? ', ' + nFiles + ' tag cache file(s)' : ''}. Reloading…`, 'success', 4000);
+    setTimeout(() => window.location.reload(), 1200);
+}
 
 // 5. MANUAL WEB-TO-LOCAL IMPORT
 window.importOnlineDataToLocal = async function() {

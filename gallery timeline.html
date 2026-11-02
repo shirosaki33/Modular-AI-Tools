@@ -302,6 +302,9 @@
 
         #btn-delete-img { flex: 0.2; background: #4a1118; color: #ffb6c0; border-color: #7a222c; font-size: 16px; display: flex; justify-content: center; align-items: center; }
         #btn-delete-img:hover { background: #6a1822; color: #fff; }
+        .btn-delete-like { flex: 0.2; background: #1a2a3a; color: #9ecfff; border-color: #2a4a6a; font-size: 16px; display: flex; justify-content: center; align-items: center; }
+        .btn-delete-like:hover { background: #24405c; color: #fff; }
+        .btn-delete-like:disabled { opacity: 0.35; cursor: not-allowed; }
 
         /* === FOOTER === */
         .footerbar { margin-top: 20px; text-align: center; font-size: 13px; }
@@ -533,7 +536,9 @@
         <div class="action-buttons">
             <button id="btn-manual" class="btn-action" onclick="toggleManualEdit()">Edit</button>
             <button id="btn-save" class="btn-action" onclick="saveSidecarFile()">Save JSON</button>
-            <button id="btn-delete-img" onclick="deleteCurrentImage()" title="Delete image and JSON">🗑️</button>
+            <button id="btn-open-folder" class="btn-delete-like btn-local" onclick="tlOpenCurrentFolder()" title="Open the image's folder (localhost server only)">📂</button>
+            <button id="btn-trash-img" class="btn-delete-like btn-local" onclick="tlTrashCurrent()" title="Move image and JSON to the Recycle Bin (localhost server only)">♻️</button>
+            <button id="btn-delete-img" onclick="deleteCurrentImage()" title="Delete image and JSON permanently">🗑️</button>
         </div>
     </div>
 </div>

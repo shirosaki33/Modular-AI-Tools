@@ -257,6 +257,7 @@ function tlUpdateDiskStatus() {
     if (!el) return;
     el.textContent = tlDiskStatus;
     el.style.color = tlCreatedAvailable ? '#00ff99' : '#ffcc66';
+    if (typeof tlUpdateLocalButtons === 'function') tlUpdateLocalButtons();
 }
 
 /* Shows/hides everything that only makes sense once a directory is loaded */
@@ -1246,6 +1247,7 @@ function tlBuildStrip(item) {
 
 async function tlOpenItem(item) {
     const session = ++detailSessionId;
+    tlUpdateLocalButtons();
     if (isEditing) toggleManualEdit();
     if (!tlInDetail) tlSavedScroll = $tl('grid-view').scrollTop;
     tlInDetail = true;
@@ -1422,6 +1424,24 @@ function tlReleaseItemUrl(item) {
     }
 }
 
+/* Removes an image from the timeline after it was deleted (permanently or to the Recycle Bin) */
+function tlForgetDeletedItem(item, deleteMsg) {
+    const baseName = item.name.substring(0, item.name.lastIndexOf('.')) || item.name;
+    item.folder.jsonSet.delete(baseName + '.json');
+    tlReleaseItemUrl(item);
+    const folder = item.folder;
+    folder.images = folder.images.filter(i => i !== item);
+    tlUpdateFolderRange(folder);
+    tlStripDirty = true;
+    tlRecompute();
+    showAlert(deleteMsg, 'success');
+    backToGrid();
+    renderGrid();
+    renderFolderSidebar();
+    tlUpdateHeaderText();
+    tlToast('File deleted.', 'success', 2000);
+}
+
 async function deleteCurrentImage() {
     const item = tlCurrent;
     if (!item) return;
@@ -1432,24 +1452,57 @@ async function deleteCurrentImage() {
         await dir.removeEntry(item.name);
         const baseName = item.name.substring(0, item.name.lastIndexOf('.')) || item.name;
         try { await dir.removeEntry(baseName + '.json'); } catch (e) {}
-        item.folder.jsonSet.delete(baseName + '.json');
-
-        tlReleaseItemUrl(item);
-        const folder = item.folder;
-        folder.images = folder.images.filter(i => i !== item);
-        tlUpdateFolderRange(folder);
-        tlStripDirty = true;
-        tlRecompute();
-        showAlert('🗑️ File successfully deleted.', 'success');
-        backToGrid();
-        renderGrid();
-        renderFolderSidebar();
-        tlUpdateHeaderText();
-        tlToast('File deleted.', 'success', 2000);
+        tlForgetDeletedItem(item, '🗑️ File successfully deleted.');
     } catch (e) {
         console.error(e);
         showAlert('❌ Error deleting file. Check permissions.', 'error');
     }
+}
+
+/* ---- Localhost-only extras (server_max.py): Recycle Bin + "open folder" ---- */
+function tlLocalActionReady() {
+    if (!tlIsLocal()) { tlToast('This works only on the localhost server (server_max.py).', 'warn'); return false; }
+    if (!tlRootPath) { tlToast('Type this folder\'s real path in ⚙️ first (the same field used for creation dates).', 'warn', 5000); return false; }
+    return true;
+}
+async function tlLocalPost(url, item) {
+    const r = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: tlRootPath, folder: item.folder.relPath, name: item ? item.name : '' })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 404) throw new Error('This server does not have this API. Start it with the updated server_max.py.');
+    if (!r.ok || data.status === 'error') throw new Error(data.message || ('Server error ' + r.status));
+    return data;
+}
+
+async function tlTrashCurrent() {
+    const item = tlCurrent;
+    if (!item || !tlLocalActionReady()) return;
+    if (!confirm(`Move this file to the Recycle Bin?\n${item.folder.label}/${item.name}\n(its JSON goes too, if it exists)`)) return;
+    try {
+        await tlLocalPost('/api/trash_file', item);
+        tlForgetDeletedItem(item, '♻️ Moved to the Recycle Bin.');
+    } catch (e) {
+        console.error(e);
+        showAlert('❌ ' + e.message, 'error');
+    }
+}
+
+async function tlOpenCurrentFolder() {
+    const item = tlCurrent;
+    if (!item || !tlLocalActionReady()) return;
+    try { await tlLocalPost('/api/open_folder', item); }
+    catch (e) { console.error(e); showAlert('❌ ' + e.message, 'error'); }
+}
+
+/* The two localhost buttons are dimmed elsewhere */
+function tlUpdateLocalButtons() {
+    const ok = tlIsLocal();
+    document.querySelectorAll('.btn-local').forEach(b => {
+        b.disabled = !ok;
+        b.title = b.title.replace(/ \(.*\)$/, '') + (ok ? (tlRootPath ? '' : ' (set the real path in ⚙️ first)') : ' (needs the localhost server)');
+    });
 }
 
 function toggleRenameBalloon() {

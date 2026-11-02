@@ -69,12 +69,78 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
    - Largura gerada = degrau de 128 px ≥ tamanho do slider × devicePixelRatio
      (slider maior → gera de novo, maior). Imagem menor que isso: usa a original.
    - window.releaseImageThumbs(files): solta tudo de um dataset (troca de pasta).
+   - JANELA DINÂMICA (igual às galerias): só as linhas visíveis + PRELOAD linhas
+     acima e abaixo têm miniatura; o resto é solto (blob revogado, src removido)
+     e refeito quando a linha volta. Só solta com mais de KEEP_MIN vivas. A linha mantém a altura (aspect-ratio da resolução real),
+     então a lista não pula. Linhas fora da tela também não são pintadas
+     (content-visibility), o que deixa o scroll leve com milhares de imagens.
 ========================================================================= */
 ;(function () {
     const QUEUE_LIMIT = 4;               // decodificações simultâneas
+    const KEEP_MIN = 25;                 // abaixo disso nada é solto
+    const PRELOAD = 15;                  // linhas carregadas antes e depois das visíveis
     let running = 0;
     const queue = [];
-    let observer = null;
+    let syncRAF = null;
+    let hooked = false;
+    const live = new Set();              // imagens com miniatura gerada (blob vivo)
+
+    (function css() {
+        const st = document.createElement('style');
+        st.textContent = `#image-list > .list-item { content-visibility: auto; contain-intrinsic-size: auto calc(var(--thumb-size) + 18px); }`;
+        document.head.appendChild(st);
+    })();
+
+    // Mantém a altura da linha com ou sem src (sem isso a lista pula ao soltar).
+    function keepRatio(img, el) {
+        if (el && img._resolution && img._resolution.w && img._resolution.h) el.style.aspectRatio = img._resolution.w + ' / ' + img._resolution.h;
+    }
+
+    function releaseOne(img) {
+        live.delete(img);
+        const el = img._thumbEl;
+        if (img._thumbBlobUrl) { try { URL.revokeObjectURL(img._thumbBlobUrl); } catch (e) {} }
+        img._thumbBlobUrl = null; img._thumbBuiltFor = null; img._thumbWidth = 0;
+        if (el) { keepRatio(img, el); el.removeAttribute('src'); }
+    }
+
+    /* Linhas visíveis (busca binária pela posição) -> carrega [primeira-PRELOAD, última+PRELOAD]
+       e solta as miniaturas fora disso. Roda no scroll / resize / render / filtro. */
+    function visibleRows() {
+        if (typeof imageFiles === 'undefined') return [];
+        return imageFiles.filter(img => img._thumbEl && img.element && img.element.isConnected && img.element.style.display !== 'none' && img.element.offsetParent !== null);
+    }
+    function syncWindow() {
+        syncRAF = null;
+        const list = document.getElementById('image-list');
+        if (!list) return;
+        const rows = visibleRows();
+        if (!rows.length) return;
+        const top = list.scrollTop, bottom = top + list.clientHeight;
+        const y = img => img.element.offsetTop - list.offsetTop;
+        let lo = 0, hi = rows.length - 1;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (y(rows[m]) + rows[m].element.offsetHeight <= top) lo = m + 1; else hi = m; }
+        const first = lo;
+        let last = first;
+        while (last + 1 < rows.length && y(rows[last + 1]) < bottom) last++;
+        const a = Math.max(0, first - PRELOAD), b = Math.min(rows.length - 1, last + PRELOAD);
+        const want = new Set();
+        for (let i = a; i <= b; i++) { want.add(rows[i]); request(rows[i]); }
+        if (live.size > KEEP_MIN) Array.from(live).forEach(img => { if (!want.has(img)) releaseOne(img); });
+    }
+    function scheduleSync() {
+        if (!syncRAF) syncRAF = requestAnimationFrame(syncWindow);
+    }
+    function hook() {
+        if (hooked) return;
+        const list = document.getElementById('image-list');
+        if (!list) return;
+        hooked = true;
+        list.addEventListener('scroll', scheduleSync, { passive: true });
+        window.addEventListener('resize', scheduleSync);
+        // Filtros escondem / mostram linhas (style.display) -> recalcula.
+        new MutationObserver(scheduleSync).observe(list, { attributes: true, attributeFilter: ['style', 'class'], subtree: true, childList: true });
+    }
 
     function targetWidth() {
         const css = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--thumb-size'), 10) || 70;
@@ -83,7 +149,7 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
     }
 
     function setThumbSrc(img, el, url) {
-        if (el.src !== url) el.src = url;
+        if (el && el.src !== url) el.src = url;
     }
 
     async function makeThumb(img) {
@@ -96,7 +162,7 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
             const blob = file || await (await fetch(sourceUrl)).blob();
             const bmp = await createImageBitmap(blob);
             const w = bmp.width, h = bmp.height;
-            if (w > 0 && h > 0 && !img._resolution) img._resolution = { w, h };
+            if (w > 0 && h > 0 && (!img._resolution || img._resolution.w !== w || img._resolution.h !== h)) img._resolution = { w, h };
             let url = sourceUrl;
             if (w > width) {
                 const tw = width, th = Math.max(1, Math.round(h * width / w));
@@ -116,7 +182,9 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
             img._thumbBlobUrl = url !== sourceUrl ? url : null;
             img._thumbBuiltFor = sourceUrl;
             img._thumbWidth = width;
+            keepRatio(img, el);
             setThumbSrc(img, el, url);
+            if (img._thumbBlobUrl) { live.add(img); scheduleSync(); }
             if (img._onThumbSize) img._onThumbSize();
         } catch (e) {
             setThumbSrc(img, el, sourceUrl);   // formato que o createImageBitmap não lê: usa a original
@@ -136,43 +204,29 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
     function request(img) {
         const fresh = img._thumbBuiltFor === img.url && (img._thumbWidth || 0) >= targetWidth();
         if (fresh) { if (img._thumbBlobUrl) setThumbSrc(img, img._thumbEl, img._thumbBlobUrl); else setThumbSrc(img, img._thumbEl, img.url); return; }
-        if (img._thumbQueued) return;
+        if (img._thumbQueued || !img._thumbEl) return;
         img._thumbQueued = true;
         queue.push(img);
         pump();
     }
 
-    function getObserver() {
-        if (observer) return observer;
-        observer = new IntersectionObserver(entries => {
-            entries.forEach(en => {
-                if (!en.isIntersecting) return;
-                const img = en.target._tmImg;
-                observer.unobserve(en.target);
-                if (img) request(img);
-            });
-        }, { root: document.getElementById('image-list'), rootMargin: '400px 0px' });
-        return observer;
-    }
-
     window.attachImageThumb = function (img, el) {
         el._tmImg = img;
-        if (typeof IntersectionObserver !== 'function') { el.src = img.url; return; }
-        getObserver().observe(el);
+        keepRatio(img, el);
+        hook();
+        scheduleSync();
     };
+
+    window._thumbLiveCount = () => live.size;
 
     // Slider de tamanho: miniaturas visíveis menores que o novo tamanho são refeitas.
     window.refreshImageThumbsForSize = function () {
-        if (typeof imageFiles === 'undefined' || !observer) return;
-        const need = targetWidth();
-        imageFiles.forEach(img => {
-            if (img._thumbEl && img._thumbEl.isConnected && img._thumbBlobUrl && (img._thumbWidth || 0) < need) observer.observe(img._thumbEl);
-        });
+        scheduleSync();          // request() refaz as da janela que ficaram menores que o novo tamanho
     };
 
     window.releaseImageThumbs = function (files) {
         queue.length = 0;
-        if (observer) { observer.disconnect(); observer = null; }
+        live.clear();
         (files || []).forEach(img => {
             if (!img) return;
             if (img._thumbBlobUrl) { try { URL.revokeObjectURL(img._thumbBlobUrl); } catch (e) {} }
