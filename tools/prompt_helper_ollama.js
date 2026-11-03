@@ -70,6 +70,11 @@ let oCtl = null, oLastKey = '';
 
 // live=true: called while typing (cancels the previous request, never touches the source box)
 async function runOllama(fixOnly, live) {
+    // Prompt Enhancer with "Translate" off: the main action enhances, live typing does nothing
+    if (!fixOnly && window.PromptEnhancer && !window.PromptEnhancer.translateOn()) {
+        if (!live) window.PromptEnhancer.enhanceOnly();
+        return;
+    }
     const srcEl = document.getElementById('oSource');
     const resEl = document.getElementById('oResult');
     const status = document.getElementById('oStatus');
@@ -97,7 +102,7 @@ async function runOllama(fixOnly, live) {
     if (oCtl) oCtl.abort();
     oCtl = new AbortController();
     const signal = oCtl.signal;
-    const btns = ['oTranslateBtn', 'oTranslateTop', 'oFixBtn'].map(id => document.getElementById(id));
+    const btns = ['oTranslateBtn', 'oTranslateTop', 'oFixBtn', 'oEnhBtn'].map(id => document.getElementById(id));
     if (!live) { btns.forEach(b => b.disabled = true); resEl.value = ''; }
     status.textContent = 'Generating with ' + model + '...';
 
@@ -127,6 +132,10 @@ async function runOllama(fixOnly, live) {
             status.textContent = 'Done.';
         }
         oLastKey = key;
+        // Optional Prompt Enhancer step: only after a manual Translate, never while live-typing
+        if (!live && !justFix && window.PromptEnhancer && window.PromptEnhancer.auto()) {
+            await window.PromptEnhancer.afterTranslate(signal);
+        }
     } catch (e) {
         if (e.name === 'AbortError') return; // replaced by a newer request
         status.textContent = 'Error: ' + (e.message || e);

@@ -161,6 +161,14 @@
         /* Image → Prompt tab: label style for the .fl-row rows (the rest of its CSS lives in prompt_helper_florence.js) */
         .fl-row .lang-label { font-size: 11px; color: #888; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; }
         .fl-row input[type="text"] { min-width: 0; }
+
+        /* Ollama tab: inner sub-tabs (Translate + Fix / Writer) */
+        .o-subtabs { display: flex; gap: 6px; flex-shrink: 0; }
+        .o-subtab { flex: 1; background: #151515; color: #888; border: 1px solid #2a2a2a; padding: 7px 10px; }
+        .o-subtab:hover { background: #1a1a1a; color: #ccc; }
+        .o-subtab.active { background: #0d1f13; color: #00ff99; border-color: #00aa66; }
+        .o-subpane { display: none; flex: 1; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
+        .o-subpane.active { display: flex; }
         </style>
 </head>
 <body>
@@ -218,7 +226,7 @@
     <div class="panel" id="col-right">
         <div class="tabs">
             <button class="tab-btn active" data-tab="google">🌐 Google Translate</button>
-            <button class="tab-btn" data-tab="ollama">🦙 Ollama Translate</button>
+            <button class="tab-btn" data-tab="ollama">🦙 Ollama</button>
             <button class="tab-btn" data-tab="florence">🖼️ Image → Prompt</button>
         </div>
 
@@ -280,6 +288,11 @@
                     </select>
                 </div>
             </div>
+            <div class="o-subtabs">
+                <button class="o-subtab active" data-osub="translate">✨ Prompt Enhancer</button>
+                <button class="o-subtab" data-osub="writer">✍️ Writer</button>
+            </div>
+            <div class="o-subpane active" id="oSub-translate">
             <div class="lang-row">
                 <span class="lang-label">I type in</span>
                 <select id="oFrom">
@@ -313,6 +326,17 @@
             </div>
             <label class="opt-row" title="The model first corrects typos and wrong vocabulary in the language you type in, then translates"><input type="checkbox" id="oFix" checked> Fix vocabulary / spelling before translating</label>
             <label class="opt-row" title="Translates and fixes automatically while you type (each request cancels the previous one)"><input type="checkbox" id="oLive" checked> Live translate as I type</label>
+            <div class="lang-row" title="Improves the prompt with the same refiner the Shiro Video Director's assistant uses">
+                <label class="opt-row" title="After a manual Translate (button / Ctrl+Enter), the translation is enhanced too. Live typing only translates."><input type="checkbox" id="oEnhance"> ✨ Enhance after translating</label>
+                <span class="lang-label">Level</span>
+                <select id="oEnhLevel" style="min-width:0;" title="text_fix: spelling/grammar only · low: minimal · medium: light · large: full rewrite">
+                    <option value="text_fix">text fix</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="large" selected>large</option>
+                </select>
+                <button class="btn-fix" id="oEnhBtn" style="white-space:nowrap;" title="Enhance the text you typed, in its own language (no translation)">✨ Enhance</button>
+            </div>
             <div class="translate-area">
                 <textarea id="oSource" placeholder="Type in the language selected above... (Ctrl+Enter to translate)"></textarea>
                 <div class="action-row">
@@ -323,6 +347,9 @@
                 <textarea id="oResult" class="result-ta" placeholder="Result appears here..." readonly></textarea>
             </div>
             <div class="status-line" id="oStatus">Ollama must be running locally. Models that follow instructions work best (llama3, qwen2.5, mistral, gemma2...).</div>
+            </div>
+            <!-- Writer: filled by tools/prompt_helper_writer.js -->
+            <div class="o-subpane" id="oSub-writer"></div>
         </div>
 
         <!-- Image → Prompt. Everything below is driven by prompt_helper_florence.js (core)
@@ -417,6 +444,8 @@
 <script src="tools/prompt_helper_ui.js"></script>
 <script src="tools/prompt_helper_google.js"></script>
 <script src="tools/prompt_helper_ollama.js"></script>
+<script src="tools/prompt_helper_enhancer.js"></script>
+<script src="tools/prompt_helper_writer.js"></script>
 <!-- Image → Prompt: core first, then the engines (WebGPU + ONNX = any origin, PyTorch = localhost only) -->
 <script src="tools/prompt_helper_florence.js"></script>
 <script src="tools/prompt_helper_florence_webgpu.js"></script>
