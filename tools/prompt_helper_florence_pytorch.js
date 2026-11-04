@@ -201,7 +201,7 @@
     async function generate(ui, file) {
         const v = ui.values();
         const qs = new URLSearchParams({ task: v.task, max_tokens: String(v.maxTokens), beams: String(v.beams) });
-        if (familyOf(v.model) === 'vlm') qs.set('prompt', v.prompt);
+        if (familyOf(v.model) === 'vlm') { qs.set('prompt', v.prompt); if (v.extra) qs.set('extra', v.extra); }
         if (isTagger(v.model)) {
             qs.set('threshold', String(v.threshold));
             qs.set('exclude', v.exclude);

@@ -543,6 +543,19 @@
                 </div>
 
                 <div id="vlm-prompt-row" style="display:none; margin-bottom: 15px;">
+                    <div id="vlm-extra-box" style="background:#0a1a20; border:1px solid #1a5a78; border-radius:8px; padding:8px 12px; margin-bottom:10px;">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:#9ecfff; font-weight:bold; font-size:13px; user-select:none;">
+                            <input type="checkbox" id="vlm-extra-enable" style="width:auto; margin:0;"> Request additional details
+                        </label>
+                        <span style="font-size:11px; color:#888; display:block; margin-top:4px;">Adds an extra order to the model's instruct. It does <b>not</b> replace the default instruct. The result is saved as <code>master token, camera view, description</code>.</span>
+                        <div id="vlm-extra-fields" style="display:none; margin-top:8px;">
+                            <label class="meta-label">Master token (added first)</label>
+                            <input type="text" id="vlm-extra-token" placeholder="e.g. mychar_style" style="width:100%; box-sizing:border-box; margin-bottom:8px;">
+                            <label class="meta-label">Additional request</label>
+                            <textarea id="vlm-extra-text" style="width:100%; box-sizing:border-box; min-height:90px; font-size:13px; line-height:1.5; padding:10px; background:#06121a; border:1px solid #1a5a78; border-radius:8px; color:#9ecfff; resize:vertical;">Additional request: begin your answer with the camera view of the image as ONE Danbooru tag (pick the best fit, e.g. from above, from below, from side, from behind, front view, close-up, portrait, upper body, cowboy shot, full body, wide shot, dutch angle, pov), then a comma, then the description. Output only: camera view, description.</textarea>
+                            <button type="button" class="vlm-btn" id="vlm-extra-reset" style="margin-top:6px;" title="Restore the default additional request">↺ Reset text</button>
+                        </div>
+                    </div>
                     <details id="vlm-manual-instruct" style="background:#0a1a20; border:1px solid #1a5a78; border-radius:8px; padding:8px 12px;">
                         <summary style="cursor:pointer; color:#9ecfff; font-weight:bold; font-size:13px; user-select:none;">Manual instruct <span id="vlm-manual-badge" style="display:none; margin-left:6px; font-size:11px; color:#00ff99;">● custom</span></summary>
                         <span style="font-size: 11px; color: #888; display: block; margin: 8px 0;">Leave empty to use the model's built-in default instruct (recommended). Write something here only if you want to <b>override</b> the default with your own instruction (e.g., a different style, language, or output format).</span>

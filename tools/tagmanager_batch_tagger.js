@@ -261,6 +261,20 @@ function cleanLLMText(text) {
     return t.trim();
 }
 
+/* "camera view, description" -> { camera, description }. If the first chunk does not look like a
+   short tag (the model ignored the format), everything stays in the description. */
+function splitCameraView(text) {
+    const t = String(text || '').trim();
+    const i = t.indexOf(',');
+    if (i > 0) {
+        const first = t.slice(0, i).trim().replace(/^camera view\s*[:\-]\s*/i, '').replace(/[.:;]+$/, '').toLowerCase();
+        if (first && first.split(/\s+/).length <= 4 && first.length <= 30) {
+            return { camera: first, description: t.slice(i + 1).trim() };
+        }
+    }
+    return { camera: '', description: t };
+}
+
 function parseTagsFromLLM(text) {
     const raw = String(text || '').replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '')
         .replace(/^\s*(sure[!,.]?\s*)?(here('s| is| are)[^:\n]{0,80}:)\s*/i, '')
@@ -1316,6 +1330,16 @@ window.startBatchTagging = async function() {
                     continue;
                 }
 
+                // "Request additional details": the model answered "camera view, description".
+                // Final order: master token, camera view (real tags), then the description as NL.
+                let leadTags = [];
+                const extraCfg = (isEngineMode && window.TMVlm && window.TMVlm.extra) ? window.TMVlm.extra() : null;
+                if (extraCfg && extraCfg.enabled) {
+                    const parts = splitCameraView(finalContent);
+                    finalContent = parts.description;
+                    leadTags = [extraCfg.token, parts.camera].filter(Boolean);
+                }
+
                 // Linguagem natural: vira uma tag "NL:" (vírgulas reais viram "，"
                 // para não quebrar o split(',') das tags).
                 const nlTag = finalContent ? finalContent.replace(/\s*[\r\n]+\s*/g, ' ').replace(/,/g, '，').trim() : '';
@@ -1324,17 +1348,19 @@ window.startBatchTagging = async function() {
                 if (reviewModeActive) {
                     if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
                     const existingTagsList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()) : [];
-                    if (nlTag && !existingTagsList.includes(nlTag) && !imgObj.pendingAdd.includes(nlTag)) {
-                        imgObj.pendingAdd.push(nlTag);
-                        if (typeof pendingTagsStore !== 'undefined') pendingTagsStore[baseName] = imgObj.pendingAdd;
-                    }
+                    [...leadTags, nlTag].filter(Boolean).forEach(tg => {
+                        if (!existingTagsList.includes(tg) && !imgObj.pendingAdd.includes(tg)) imgObj.pendingAdd.push(tg);
+                    });
+                    if (typeof pendingTagsStore !== 'undefined' && imgObj.pendingAdd.length) pendingTagsStore[baseName] = imgObj.pendingAdd;
                     processed++; setProgress(processed);
                     continue;
                 }
 
                 const existingTags = imgObj.content ? imgObj.content.trim() : "";
                 imgObj.type = 'tags';
-                imgObj.content = nlTag ? (existingTags ? `${nlTag}, ${existingTags}` : nlTag) : existingTags;
+                const haveLower = new Set(existingTags.split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+                const lead = [...leadTags.filter(tg => !haveLower.has(tg.toLowerCase())), nlTag].filter(Boolean).join(', ');
+                imgObj.content = lead ? (existingTags ? `${lead}, ${existingTags}` : lead) : existingTags;
                 imgObj.hasFile = true;
                 imgObj.ext = format;
                 imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;

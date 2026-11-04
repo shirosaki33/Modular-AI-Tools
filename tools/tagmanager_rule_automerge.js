@@ -114,9 +114,8 @@
        Visual igual ao #unsaved-changes-alert já existente (mesma borda,
        mesmo estilo de barra), só que específico do Auto-Do — pra deixar
        claro que foi o Auto-Do (não uma edição manual) que alterou tags.
-       Diferente do #unsaved-changes-alert (que é fixo no HTML), este é
-       criado por JS e ancorado logo depois dele, mantendo a mesma posição/
-       ordem de leitura sem precisar tocar em tag_manager.html.
+       Renderizado pela pilha compartilhada TM.notice (tagmanager_notice.js),
+       logo abaixo do #unsaved-changes-alert (order 10 vs 0).
 
        CICLO DE VIDA:
        - Aparece assim que runAutoMergeOnDataset() modifica 1+ imagem(ns),
@@ -137,61 +136,32 @@
     window._autoDoAlertDismissed = window._autoDoAlertDismissed || false;
     window._autoDoTouched = window._autoDoTouched || new Set(); // images Auto-Do changed (balloon counts the ones still unsaved)
 
-    function ensureAutoDoAlertBar() {
-        let bar = document.getElementById('autodo-changes-alert');
-        if (bar) return bar;
-
-        bar = document.createElement('div');
-        bar.id = 'autodo-changes-alert';
-        bar.style.cssText = 'display:none; margin: 8px 20px 0 20px; padding: 10px 14px; border-left: 3px solid #00ff99; border-right: 3px solid #00ff99; background: #0d1f16; color: #f5f5f5; border-radius: 7px; font-size: 13.5px; line-height: 1.45; text-align: center; box-sizing: border-box; flex-shrink: 0; position: relative;';
-
-        const unsavedBar = document.getElementById('unsaved-changes-alert');
-        const workspace = document.getElementById('workspace');
-        if (unsavedBar && unsavedBar.parentNode) {
-            unsavedBar.insertAdjacentElement('afterend', bar);
-        } else if (workspace && workspace.parentNode) {
-            workspace.parentNode.insertBefore(bar, workspace);
-        } else {
-            document.body.appendChild(bar);
-        }
-        return bar;
-    }
-
+    // The bar itself is rendered by the shared notice stack (tagmanager_notice.js),
+    // so it looks the same as the "unsaved changes" bar and stacks right below it.
     window.updateAutoDoAlertUI = function () {
-        const bar = ensureAutoDoAlertBar();
-
         // The balloon counts only the images Auto-Do touched that are STILL
         // unsaved (img.dirty). Saved images drop out of the count by
         // themselves; when none is left the balloon hides and resets.
-        // (Before, this ran BEFORE markDirty(), saw nothing dirty and zeroed
-        // the counter, so the balloon almost never showed up.)
         let n = 0;
         window._autoDoTouched.forEach(img => { if (img && img.dirty) n++; });
         if (n === 0) {
             window._autoDoTouched.clear();
             window._autoDoChangedCount = 0;
             window._autoDoAlertDismissed = false;
-            bar.style.display = 'none';
+            if (window.TM && TM.notice) TM.notice.hide('autodo-changes-alert');
             return;
         }
         window._autoDoChangedCount = n;
-        if (window._autoDoAlertDismissed) { bar.style.display = 'none'; return; }
+        if (window._autoDoAlertDismissed) { if (window.TM && TM.notice) TM.notice.hide('autodo-changes-alert'); return; }
+        if (!(window.TM && TM.notice)) return;
 
-        bar.style.display = 'block';
-        const plural = n === 1 ? 'image' : 'images';
-        bar.innerHTML = `
-            <span style="color:#00ff99;margin:0 6px;font-size:14px;line-height:1;">⚡</span>
-            Auto-Do automatically modified tags in ${n} ${plural} — review and save when ready
-            <span style="color:#00ff99;margin:0 6px;font-size:14px;line-height:1;">⚡</span>
-            <button id="btn-dismiss-autodo-alert" title="Dismiss this notice" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:#88ffcc; font-size:16px; font-weight:bold; cursor:pointer; padding:0 6px; line-height:1;">&times;</button>
-        `;
-        const dismissBtn = document.getElementById('btn-dismiss-autodo-alert');
-        if (dismissBtn) {
-            dismissBtn.onclick = () => {
-                window._autoDoAlertDismissed = true;
-                window.updateAutoDoAlertUI();
-            };
-        }
+        TM.notice.show('autodo-changes-alert', {
+            theme: 'success',
+            order: 10,
+            dismissible: true,
+            text: `Auto-Do automatically modified tags in ${n} ${n === 1 ? 'image' : 'images'} — review and save when ready`,
+            onDismiss: () => { window._autoDoAlertDismissed = true; }
+        });
     };
 
     // Mantém o balão em sincronia com o estado de "salvo"/"não salvo":

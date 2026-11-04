@@ -545,7 +545,16 @@ def _make_tqdm():
     return T
 
 
-def _build(torch, tf, spec, dtype):
+def _free_cuda(torch):
+    gc.collect()
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _build(torch, tf, spec, dtype, device='cpu'):
     src = spec['src']
     # transformers >= 4.56 renamed torch_dtype -> dtype (the old name only prints a deprecation warning)
     new_name = _vkey(tf.__version__) >= _vkey('4.56.0')
@@ -564,8 +573,17 @@ def _build(torch, tf, spec, dtype):
             cls = getattr(tf, cls_name, None)
             if cls is None:
                 continue
+            if device == 'cuda':
+                # Fast path: weights go from disk straight to the GPU (no full copy in RAM, no slow .to()).
+                try:
+                    model = cls.from_pretrained(src, device_map='cuda', low_cpu_mem_usage=True, **kw)
+                    break
+                except Exception as e:  # noqa: BLE001  (no accelerate, wrong class, not enough VRAM...)
+                    last = e
+                    print('[florence] direct-to-GPU load failed ({}); trying the normal load'.format(str(e)[:160]), flush=True)
+                    _free_cuda(torch)
             try:
-                model = cls.from_pretrained(src, **kw)
+                model = cls.from_pretrained(src, low_cpu_mem_usage=True, **kw)
                 break
             except Exception as e:  # noqa: BLE001
                 last = e
@@ -667,7 +685,12 @@ def _load_worker(model_id, device_pref):
             return
 
         torch, tf = _deps()
-        if not spec['local']:
+        t_start = time.time()
+        # Already fully downloaded? Then skip every network call (size lookup + snapshot check).
+        blobs_dir = os.path.join(_model_dir(model_id), 'blobs') if not spec['local'] else ''
+        complete = bool(blobs_dir) and _is_cached(model_id) and os.path.isdir(blobs_dir) \
+            and not any(n.endswith('.incomplete') for n in os.listdir(blobs_dir))
+        if not spec['local'] and not complete:
             _set(message='Downloading model files...')
             from huggingface_hub import snapshot_download
             remote_total = _remote_size(model_id)
@@ -692,17 +715,21 @@ def _load_worker(model_id, device_pref):
         dtype = torch.float16 if device == 'cuda' else torch.float32
         if device == 'cuda' and spec['family'] == 'vlm' and torch.cuda.is_bf16_supported():
             dtype = torch.bfloat16   # Qwen-VL overflows in fp16; bf16 is what ai-toolkit uses
+        t_dl = time.time()
         _set(message='Loading model into memory ({})...'.format(device))
         try:
-            model, processor = _build(torch, tf, spec, dtype)
-            model.to(device)
+            model, processor = _build(torch, tf, spec, dtype, device)
+            if next(model.parameters()).device.type != device:
+                model.to(device)
+            print('[florence] {} loaded on {} in {:.1f}s (download/check {:.1f}s, dtype {})'.format(
+                model_id, device, time.time() - t_dl, t_dl - t_start, str(dtype).replace('torch.', '')), flush=True)
         except Exception as e:  # noqa: BLE001  (e.g. out of VRAM) -> CPU fallback
             if device == 'cpu':
                 raise
             print('[florence] {} failed ({}); falling back to CPU'.format(device, e), flush=True)
             _free()
             device, dtype = 'cpu', torch.float32
-            _set(message='GPU failed, falling back to CPU...')
+            _set(message='GPU failed (see console) — falling back to CPU, this will be slow...')
             model, processor = _build(torch, tf, spec, dtype)
             model.to('cpu')
         model.eval()
@@ -845,6 +872,9 @@ def generate(image_bytes, params):
 
         if spec['family'] == 'vlm':
             prompt = _clean(params.get('prompt', '')) or DEFAULT_VLM_PROMPT
+            extra = _clean(params.get('extra', ''))   # additional request: appended, never replaces the default instruct
+            if extra:
+                prompt = prompt + ' ' + extra
             # ai-toolkit behaviour: shrink to ~max_res^2 pixels (keeps aspect ratio) so
             # dynamic-resolution models do not produce thousands of vision tokens.
             try:

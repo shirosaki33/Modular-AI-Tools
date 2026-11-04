@@ -101,6 +101,13 @@
     function show(id, on) { const el = $(id); if (el) el.style.display = on ? '' : 'none'; }
     const feature = (f, ...args) => (typeof f === 'function' ? !!f(ui, ...args) : !!f);
 
+    const DEFAULT_EXTRA = 'Additional request: begin your answer with the camera view of the image as ONE Danbooru tag (pick the best fit, e.g. from above, from below, from side, from behind, front view, close-up, portrait, upper body, cowboy shot, full body, wide shot, dutch angle, pov), then a comma, then the description. Output only: camera view, description.';
+    function extraInfo() {
+        const on = !!($('vlm-extra-enable') && $('vlm-extra-enable').checked) && !!$('vlm-prompt-row') && $('vlm-prompt-row').style.display !== 'none';
+        const text = on ? $('vlm-extra-text').value.trim() : '';
+        return { enabled: on && !!text, text, token: on ? $('vlm-extra-token').value.trim() : '' };
+    }
+
     function values() {
         return {
             mode: curMode,
@@ -109,7 +116,11 @@
             task: $('vlm-task').value,
             // Empty = default instruct. PyTorch/vlm models fall back to the backend's own default
             // (the ai-toolkit caption prompt); other engines keep the generic one.
-            prompt: $('batch-vlm-prompt').value.trim() || (curMode === 'pytorch' ? '' : DEFAULT_PROMPT),
+            // Additional request: PyTorch sends it separately (the backend appends it to its default instruct);
+            // other engines get it appended to their prompt.
+            prompt: ($('batch-vlm-prompt').value.trim() || (curMode === 'pytorch' ? '' : DEFAULT_PROMPT))
+                + (curMode !== 'pytorch' && extraInfo().enabled ? ' ' + extraInfo().text : ''),
+            extra: curMode === 'pytorch' && extraInfo().enabled ? extraInfo().text : '',
             maxTokens: clamp($('vlm-max-tokens').value, 16, 1024, 256),
             beams: clamp($('vlm-beams').value, 1, 8, 3),
             storage: $('vlm-storage').value,
@@ -272,7 +283,7 @@
 
     /* ---------- Panel actions ---------- */
     const PANEL_IDS = ['vlm-model-select', 'vlm-unload', 'vlm-delete', 'vlm-storage', 'vlm-pick-folder', 'vlm-load',
-        'vlm-task', 'batch-vlm-prompt', 'vlm-max-tokens', 'vlm-beams', 'vlm-threshold', 'vlm-prefix', 'vlm-exclude', 'vlm-output-mode', 'hardware-select'];
+        'vlm-task', 'batch-vlm-prompt', 'vlm-extra-enable', 'vlm-extra-token', 'vlm-extra-text', 'vlm-extra-reset', 'vlm-max-tokens', 'vlm-beams', 'vlm-threshold', 'vlm-prefix', 'vlm-exclude', 'vlm-output-mode', 'hardware-select'];
 
     function setBusyUi() {
         const off = busy || batchBusy;
@@ -408,6 +419,19 @@
             if (id === 'batch-vlm-prompt' && $(id).value.trim() === DEFAULT_PROMPT) $(id).value = '';
             $(id).addEventListener('change', () => writePref('tm_' + id, $(id).value));
         });
+        // Request additional details (checkbox + master token + editable text, all remembered).
+        const exOn = $('vlm-extra-enable'), exTok = $('vlm-extra-token'), exTxt = $('vlm-extra-text');
+        try {
+            exOn.checked = readPref('tm_vlm-extra-enable', '0') === '1';
+            exTok.value = readPref('tm_vlm-extra-token', '');
+            exTxt.value = readPref('tm_vlm-extra-text', '') || DEFAULT_EXTRA;
+        } catch (e) { /* keep HTML defaults */ }
+        const syncExtra = () => show('vlm-extra-fields', exOn.checked);
+        exOn.addEventListener('change', () => { writePref('tm_vlm-extra-enable', exOn.checked ? '1' : '0'); syncExtra(); });
+        exTok.addEventListener('change', () => writePref('tm_vlm-extra-token', exTok.value.trim()));
+        exTxt.addEventListener('change', () => writePref('tm_vlm-extra-text', exTxt.value));
+        $('vlm-extra-reset').onclick = () => { exTxt.value = DEFAULT_EXTRA; writePref('tm_vlm-extra-text', ''); };
+        syncExtra();
         const manual = $('batch-vlm-prompt'), det = $('vlm-manual-instruct'), badge = $('vlm-manual-badge');
         const syncManual = () => { const on = !!manual.value.trim(); if (badge) badge.style.display = on ? '' : 'none'; if (on && det) det.open = true; };
         manual.addEventListener('input', syncManual);
@@ -455,6 +479,9 @@
         handles: mode => present() && !!MODE_ENGINE[mode] && !!engines[MODE_ENGINE[mode]],
 
         // Returns an error message (string) when the batch cannot start, otherwise ''.
+        // Additional-request settings for the batch loop ({enabled, token}).
+        extra() { const x = extraInfo(); return { enabled: x.enabled, token: x.token }; },
+
         validate() {
             if (!engine) return 'The model engine is not ready yet.';
             if (!$('vlm-model-select').value) return 'Select a model first.';

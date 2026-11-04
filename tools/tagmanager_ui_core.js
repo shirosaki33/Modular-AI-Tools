@@ -318,16 +318,23 @@ window.markClean = function(imgs) {
 };
 
 window.updateUnsavedChangesUI = function() {
-    const bar = document.getElementById('unsaved-changes-alert');
-    if (!bar) return;
+    if (!(window.TM && TM.notice)) return;
     const hasUnsaved = (typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty);
     if (!window.unsavedAlertEnabled || !hasUnsaved) {
-        bar.style.display = 'none';
+        TM.notice.hide('unsaved-changes-alert');
         return;
     }
-    bar.style.display = 'block';
-    bar.innerHTML = `<span style="color:#ffd040;margin:0 6px;font-size:14px;line-height:1;">⚠️</span> You have unsaved changes — remember to save <span style="color:#ffd040;margin:0 6px;font-size:14px;line-height:1;">⚠️</span>`;
+    TM.notice.show('unsaved-changes-alert', { theme: 'warn', order: 0, text: 'You have unsaved changes — remember to save' });
 };
+
+// Warn before closing/reloading the tab while there are unsaved captions
+// (follows the same "Show Unsaved Changes Alert" setting).
+window.addEventListener('beforeunload', (e) => {
+    if (!window.unsavedAlertEnabled) return;
+    if (!(typeof imageFiles !== 'undefined' ? imageFiles : []).some(img => img.dirty)) return;
+    e.preventDefault();
+    e.returnValue = '';
+});
 
 window.saveImageToDisk = async function(img) {
     if (!img || !img.parentDirHandle) {
