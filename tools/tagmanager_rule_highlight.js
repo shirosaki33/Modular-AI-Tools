@@ -110,7 +110,7 @@
         container.querySelectorAll('.is-preset').forEach(el => { el.style.setProperty('background-color', hexToRgba(presetColor, 0.14), 'important'); el.style.setProperty('border-left-color', presetColor, 'important'); });
         if (typeof window.checkIfNL === 'function') {
             const nlActiveColor = window.enableNLHighlight !== false ? nlColor : '#ddd';
-            container.querySelectorAll('.tag-name').forEach(el => { if (window.checkIfNL(el.textContent)) el.style.setProperty('color', nlActiveColor, 'important'); });
+            container.querySelectorAll('.tag-name').forEach(el => { if (window.checkIfNL(el.dataset.nlRaw != null ? el.dataset.nlRaw : el.textContent)) el.style.setProperty('color', nlActiveColor, 'important'); });
         }
         container.querySelectorAll('.selected-active, .selected-master').forEach(el => { el.style.setProperty('background-color', hexToRgba(selColor, 0.32), 'important'); el.style.setProperty('border-left-color', selColor, 'important'); });
     }

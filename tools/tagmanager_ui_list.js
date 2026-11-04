@@ -239,7 +239,22 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
 
 window.renderImageList = function() {
     const esc = (v) => (typeof window.escHTML === 'function' ? window.escHTML(v) : String(v));
-    const listDiv = document.getElementById('image-list'); listDiv.innerHTML = '';
+    const listDiv = document.getElementById('image-list');
+    // Mantém a posição da rolagem: limpar a lista zerava o scroll e ela voltava
+    // pro início a cada re-render (merge NL, bucket, B&W, ...).
+    const keepScroll = listDiv.scrollTop;
+    // Âncora: a 1ª imagem visível no topo e o quanto ela está deslocada.
+    let anchorImg = null, anchorOffset = 0;
+    if (keepScroll > 0) {
+        const listTop = listDiv.getBoundingClientRect().top;
+        for (const im of imageFiles) {
+            const el = im.element;
+            if (!el || !el.isConnected || el.style.display === 'none') continue;
+            const r = el.getBoundingClientRect();
+            if (r.bottom > listTop) { anchorImg = im; anchorOffset = r.top - listTop; break; }
+        }
+    }
+    listDiv.innerHTML = '';
     imageFiles.forEach((img, index) => {
         if (img.hidden) {
             if (img.element) img.element.style.display = 'none';
@@ -301,6 +316,18 @@ window.renderImageList = function() {
     window.updateListSelectionVisuals();
     if (typeof window.applyFilters === 'function') window.applyFilters();
     if (typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
+    if (keepScroll > 0) {
+        listDiv.scrollTop = keepScroll;
+        const restore = () => {
+            const el = anchorImg && anchorImg.element;
+            if (!el || !el.isConnected || el.style.display === 'none') return;
+            const delta = (el.getBoundingClientRect().top - listDiv.getBoundingClientRect().top) - anchorOffset;
+            if (Math.abs(delta) > 1) listDiv.scrollTop += delta;
+        };
+        restore();
+        // de novo após o layout (miniaturas com content-visibility mudam a altura)
+        requestAnimationFrame(() => { restore(); requestAnimationFrame(restore); });
+    }
 }
 
 window.filterImagesByName = function(val) {
@@ -619,9 +646,11 @@ window.confirmRename = async function() {
             // Legenda com o conteúdo ATUAL em memória (img.content), para não
             // perder edições ainda não salvas (img.dirty).
             if (img.hasFile) {
+                const _enc = window.NLCodec ? window.NLCodec.encode(img.content) : { text: img.content, map: [] };
+                p.nlMap = _enc.map;
                 const contentToWrite = textFormat === 'json'
-                    ? JSON.stringify({ tags: img.content }, null, 2)
-                    : img.content;
+                    ? JSON.stringify({ tags: _enc.text }, null, 2)
+                    : _enc.text;
                 const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, { create: true });
                 const writableText = await newTextHandle.createWritable();
                 await writableText.write(contentToWrite);
@@ -638,6 +667,10 @@ window.confirmRename = async function() {
             if (datasetConfig[img.baseName]) {
                 datasetConfig[finalBaseName] = datasetConfig[img.baseName];
                 if (img.baseName !== finalBaseName) delete datasetConfig[img.baseName];
+            }
+            if (p.nlMap && window.NLCodec) {
+                await window.NLCodec.moveEntries(img.parentDirHandle, img.baseName, finalBaseName, p.nlMap);
+                if (datasetConfig[finalBaseName]) delete datasetConfig[finalBaseName].nl;
             }
             // Renomear reorganiza a lista: limpa a ordem manual do Reorder Mode.
             if (datasetConfig[finalBaseName] && typeof datasetConfig[finalBaseName].order === 'number') {
@@ -719,9 +752,11 @@ window.confirmClone = async function() {
                     const newTextName = `${newBaseName}.${textFormat}`;
                     try {
                         // Conteúdo ATUAL em memória (inclui edições ainda não salvas).
+                        const _enc = window.NLCodec ? window.NLCodec.encode(img.content) : { text: img.content, map: [] };
+                        img._cloneNlMap = _enc.map;
                         const contentToWrite = textFormat === 'json'
-                            ? JSON.stringify({ tags: img.content }, null, 2)
-                            : img.content;
+                            ? JSON.stringify({ tags: _enc.text }, null, 2)
+                            : _enc.text;
                         const newTextHandle = await img.parentDirHandle.getFileHandle(newTextName, { create: true });
                         const writableText = await newTextHandle.createWritable();
                         await writableText.write(contentToWrite);
@@ -733,6 +768,11 @@ window.confirmClone = async function() {
                     datasetConfig[newBaseName] = { ...datasetConfig[img.baseName] };
                     delete datasetConfig[newBaseName].order; // clone entra na ordenação alfabética normal
                 }
+                if (img._cloneNlMap && img._cloneNlMap.length && window.NLCodec) {
+                    await window.NLCodec.setEntries(img.parentDirHandle, newBaseName, img._cloneNlMap);
+                }
+                if (datasetConfig[newBaseName]) delete datasetConfig[newBaseName].nl;
+                delete img._cloneNlMap;
                 clonedCount++;
             } catch (e) { console.error("Clone Error:", e); }
         }

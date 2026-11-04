@@ -67,6 +67,14 @@ function _aeSyncSelectionControls() {
         editNlBtn.style.display = (selArr.length === 1 && window.checkIfNL(selArr[0])) ? 'block' : 'none';
     }
 
+    // "🧬 Merge to NL": só com 2 ou mais tags selecionadas
+    const mergeBtn = document.getElementById('btn-merge-to-nl');
+    if (mergeBtn) {
+        const selArr = Array.from(activeSelectedTags);
+        mergeBtn.style.display = selArr.length >= 2 ? 'block' : 'none';
+        mergeBtn.title = `Merge the ${selArr.length} selected tags into ONE natural-language caption (in each image's tag order, at the position of the first one)`;
+    }
+
     const replaceBtn = document.querySelector('#active-selection-actions .btn-replace');
     if (replaceBtn) {
         const hasCustom = Array.from(activeSelectedTags).some(t => window.checkIfNL(t));
@@ -98,6 +106,7 @@ window.renderEditor = function() {
         if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
         const activeTagCountBadgeEmpty = document.getElementById('active-tag-count');
         if (activeTagCountBadgeEmpty) activeTagCountBadgeEmpty.textContent = '0';
+        window.updateActiveNLBadge();
 
         const tagListVerticalEmpty = document.getElementById('tag-list-vertical');
         if (tagListVerticalEmpty) tagListVerticalEmpty.innerHTML = '';
@@ -146,6 +155,7 @@ window.renderEditor = function() {
     window.sortedActiveTags = Array.from(fusedTags);
     const activeTagCountBadge = document.getElementById('active-tag-count');
     if (activeTagCountBadge) activeTagCountBadge.textContent = window.sortedActiveTags.length;
+    window.updateActiveNLBadge();
 
     // Temporary Edit Box for Hybrid NL tags
     if (window.nlEditTarget && window.nlEditTarget.scope === 'active') {
@@ -256,7 +266,7 @@ window.renderEditor = function() {
                 ${dsCountHtml}
                 ${presetIcon}
                 ${pencilIcon}
-                <span class="tag-name${aliasParts.nameClass}" style="color: ${textColor};"${aliasParts.nameAttrs}>${esc(tag)}</span>
+                <span class="tag-name${aliasParts.nameClass}" style="color: ${textColor};" data-nl-raw="${esc(tag)}"${aliasParts.nameAttrs}>${esc(window.nlDisplay(tag))}</span>
                 ${dbAliasArrowHtml}
                 ${reverseAliasHtmlActive}
                 ${statusHtml}
@@ -359,7 +369,7 @@ window.renderEditor = function() {
         Array.from(fusedPending).sort().forEach(tag => {
             const isCustomNL = window.checkIfNL(tag);
             const row = document.createElement('div'); row.className = 'tag-row ghost';
-            row.innerHTML = `<div class="tag-row-left"><span class="tag-name"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${esc(tag)}</span></div>
+            row.innerHTML = `<div class="tag-row-left"><span class="tag-name" data-nl-raw="${esc(tag)}"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${esc(window.nlDisplay(tag))}</span></div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span class="tag-ghost-accept" title="Accept suggestion">✓</span>
                 <span class="tag-ghost-reject" title="Reject suggestion" style="color: #ff4444; cursor: pointer; font-size: 1.2em; font-weight: bold;">&times;</span>
@@ -512,3 +522,167 @@ window.inlineAdd = function(source) {
     if (source === 'active' && window.activeSearchMode && typeof window.filterActiveTagsByName === 'function') window.filterActiveTagsByName('');
     if (source === 'master' && window.masterSearchMode && typeof window.filterMasterTagsByName === 'function') window.filterMasterTagsByName('');
 }
+
+;
+/* =========================================================================
+   NL BADGE (ao lado do contador da Active Image)
+   Selo roxo no mesmo estilo do selo de modo do título (run-mode-badge).
+   Aparece quando a imagem selecionada tem NL; o tooltip mostra a(s) NL(s).
+   Só informativo (sem clique).
+========================================================================= */
+(function () {
+    const st = document.createElement('style');
+    st.textContent = `
+        #active-nl-badge { display:none; margin-top:0; color:#b890ff; border-color:#4a2a8c; background:#1e1238; cursor:help; }
+        #btn-nl-clean-commas { display:none; margin-left:4px; font-size:10px; padding:1px 7px; border-radius:10px; font-weight:bold; cursor:pointer; background:#1e1238; color:#d4b8ff; border:1px solid #7a4ad8; }
+        #btn-nl-clean-commas:hover { background:#2f1a5c; color:#fff; }
+        #btn-merge-to-nl { background:#2f1a5c; border-color:#7a4ad8; color:#d4b8ff; }
+    `;
+    document.head.appendChild(st);
+})();
+
+function _aeNLText(tag) {
+    return String(tag || '').replace(/^NL:/i, '').replace(/，/g, ',').trim();
+}
+
+window.updateActiveNLBadge = function () {
+    let badge = document.getElementById('active-nl-badge');
+    const count = document.getElementById('active-tag-count');
+    if (!badge && count) {
+        badge = document.createElement('span');
+        badge.id = 'active-nl-badge';
+        badge.className = 'run-mode-badge';
+        count.insertAdjacentElement('afterend', badge);
+    }
+    if (!badge) return;
+    let cleanBtn = document.getElementById('btn-nl-clean-commas');
+    if (!cleanBtn) {
+        cleanBtn = document.createElement('button');
+        cleanBtn.id = 'btn-nl-clean-commas';
+        cleanBtn.textContent = '🧹 Clean ,';
+        cleanBtn.onclick = () => window.cleanCommasFromSelectedNL();
+        badge.insertAdjacentElement('afterend', cleanBtn);
+    }
+    const sel = (typeof selectedIndices !== 'undefined') ? Array.from(selectedIndices).map(i => imageFiles[i]).filter(Boolean) : [];
+    const perImage = sel.map(img => ({ img, nls: _aeSplitTags(img.content).filter(t => window.checkIfNL(t)) })).filter(x => x.nls.length);
+    if (!perImage.length) { badge.style.display = 'none'; cleanBtn.style.display = 'none'; return; }
+    const withCommas = perImage.reduce((n, x) => n + x.nls.filter(t => /[，,]/.test(t)).length, 0);
+    cleanBtn.style.display = withCommas ? 'inline-block' : 'none';
+    cleanBtn.title = `Remove the commas from ${withCommas} NL caption(s) of the selected image(s) — the sentence stays one NL, words are kept`;
+
+    const total = perImage.reduce((n, x) => n + x.nls.length, 0);
+    badge.style.display = 'inline-block';
+    badge.textContent = total > 1 ? `📝 NL ×${total}` : '📝 NL';
+    const cut = t => { const s = _aeNLText(t); return s.length > 140 ? s.slice(0, 140) + '…' : s; };
+    let tip;
+    if (sel.length === 1) {
+        const x = perImage[0];
+        tip = `This image contains ${x.nls.length} natural-language caption${x.nls.length > 1 ? 's' : ''} (NL):\n`
+            + x.nls.map((t, i) => `${i + 1}. "${cut(t)}" — ${_aeNLText(t).split(/\s+/).filter(Boolean).length} words`).join('\n');
+    } else {
+        tip = `${perImage.length} of ${sel.length} selected images contain NL (${total} total):\n`
+            + perImage.slice(0, 8).map(x => `• ${x.img.name}: "${cut(x.nls[0])}"${x.nls.length > 1 ? ` (+${x.nls.length - 1})` : ''}`).join('\n')
+            + (perImage.length > 8 ? `\n… and ${perImage.length - 8} more` : '');
+    }
+    badge.title = tip + '\n\nSaved as plain text on disk (no "NL:" marker).';
+};
+
+/* 🧹 Clean , — tira as vírgulas de dentro das NLs das imagens selecionadas
+   ("a girl standing， smiling" -> "a girl standing smiling"). */
+window.cleanCommasFromSelectedNL = function () {
+    const imgs = window.TM.tags.selectedImages();
+    if (typeof datasetConfig !== 'undefined' && !datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
+    let changed = 0;
+    const modified = [];
+    imgs.forEach(img => {
+        const tags = window.TM.tags.get(img);
+        let touched = false;
+        const next = tags.map(t => {
+            if (!window.checkIfNL(t) || !/[，,]/.test(t)) return t;
+            const clean = t.replace(/^\s*NL:\s*/i, '').replace(/\s*[，,]\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+            if (!clean || clean === t) return t;
+            if (typeof datasetConfig !== 'undefined') {
+                datasetConfig.manualNLRules[clean] = 'nl';
+            }
+            if (activeSelectedTags.has(t)) { activeSelectedTags.delete(t); activeSelectedTags.add(clean); }
+            touched = true; changed++;
+            return clean;
+        });
+        if (touched) { window.TM.tags.set(img, [...new Set(next)]); modified.push(img); }
+    });
+    if (!modified.length) return;
+    if (typeof window.markDirty === 'function') window.markDirty(modified);
+    if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+    if (typeof masterTagSet !== 'undefined') {
+        masterTagSet.clear();
+        imageFiles.forEach(img => _aeSplitTags(img.content).forEach(t => masterTagSet.add(t)));
+    }
+    _aeRefreshAfterTagChange();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.showAlert === 'function') window.showAlert(`🧹 Removed the commas from ${changed} NL caption(s) in ${modified.length} image(s). Remember to save.`, 'success');
+};
+
+/* =========================================================================
+   🧬 MERGE TO NL — funde as tags selecionadas numa NL só
+   Em cada imagem selecionada: pega as tags escolhidas NA ORDEM em que estão
+   naquela imagem, junta com ", " (vírgulas internas viram "，"), coloca a NL
+   no lugar da primeira e remove as outras. NLs já existentes entram com o
+   texto delas (sem duplicar o "NL:").
+========================================================================= */
+window.mergeSelectedToNL = function () {
+    const chosen = Array.from(activeSelectedTags);
+    if (chosen.length < 2) return;
+    const chosenSet = new Set(chosen);
+    const imgs = window.TM.tags.selectedImages().filter(img => img.hasFile || img.content);
+    if (typeof datasetConfig !== 'undefined' && !datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
+
+    const created = new Set();
+    const modified = [];
+    imgs.forEach(img => {
+        const tags = window.TM.tags.get(img);
+        const picked = tags.filter(t => chosenSet.has(t));
+        if (picked.length < 2) return; // nesta imagem só 1 das tags existe: nada pra fundir
+        const body = picked.map(t => t.replace(/^NL:/i, '').trim()).filter(Boolean).join(', ').replace(/,/g, '，');
+        if (!body) return;
+        const nlTag = body; // sem "NL:" — a NL é marcada pela regra manualNLRules
+        const firstIdx = tags.findIndex(t => chosenSet.has(t));
+        const next = [];
+        tags.forEach((t, i) => {
+            if (i === firstIdx) { if (!next.includes(nlTag)) next.push(nlTag); }
+            else if (!chosenSet.has(t) && t !== nlTag) next.push(t);
+        });
+        window.TM.tags.set(img, next);
+        if (typeof datasetConfig !== 'undefined') datasetConfig.manualNLRules[nlTag] = 'nl';
+        created.add(nlTag);
+        modified.push(img);
+    });
+    if (!modified.length) return;
+
+    if (typeof window.markDirty === 'function') window.markDirty(modified);
+    if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+    activeSelectedTags.clear();
+    created.forEach(t => activeSelectedTags.add(t));
+    if (typeof masterTagSet !== 'undefined') {
+        masterTagSet.clear();
+        imageFiles.forEach(img => _aeSplitTags(img.content).forEach(t => masterTagSet.add(t)));
+    }
+    _aeRefreshAfterTagChange();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.showAlert === 'function') {
+        window.showAlert(`🧬 Merged ${chosen.length} tag(s) into NL in ${modified.length} image(s)${created.size > 1 ? ` (${created.size} different results, by each image's tag order)` : ''}. Remember to save.`, 'success');
+    }
+};
+
+window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        const anchor = document.querySelector('#active-selection-actions .btn-nl-edit');
+        if (!anchor || document.getElementById('btn-merge-to-nl')) return;
+        const b = document.createElement('button');
+        b.id = 'btn-merge-to-nl';
+        b.className = 'btn-multi';
+        b.textContent = '🧬 Merge to NL';
+        b.style.display = 'none';
+        b.onclick = () => window.mergeSelectedToNL();
+        anchor.insertAdjacentElement('afterend', b);
+    }, 0);
+});

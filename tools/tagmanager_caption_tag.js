@@ -83,3 +83,273 @@ window.checkIfNL = function(tag) {
     if (tag.startsWith('NL:')) return true;
     return window.enableAutoNl !== false && tag.trim().split(/\s+/).length >= (window.nlWordThreshold || 6);
 };
+
+
+/* =========================================================================
+   NL MANAGER — legenda limpa no disco + mapa de NL por dataset
+   ---------------------------------------------------------------------
+   Em memória a NL continua sendo uma tag "NL:texto" (vírgulas reais
+   trocadas por "，", pra o split(',') do modo Tag não quebrar).
+   No .txt/.json vai SÓ o texto limpo (sem "NL:", vírgulas normais).
+
+   Onde está cada NL fica em "_nl_manager.json", dentro da PRÓPRIA pasta
+   do dataset (o trainer ignora: não tem o nome de nenhuma imagem):
+     { "version": 1, "images": { "<baseName>": [
+         { "raw": "NL:a girl standing， smiling", "text": "a girl standing, smiling",
+           "first": "a", "last": "smiling", "start": 0, "end": 1 } ] } }
+
+   Reconstrução ao carregar (decode), em camadas:
+     1) TEXTO exato entre vírgulas                       -> junta numa NL só.
+     2) ÂNCORAS (texto editado fora do app): um trecho que COMEÇA com a
+        primeira palavra (first) e TERMINA com a última (last); se houver
+        mais de um, fica o mais perto da posição gravada (start/end).
+        -> junta o texto ATUAL do arquivo numa NL e o mapa é regravado.
+     3) Reserva global (user_config 'nl-known-texts'), texto exato.
+   Legado: mapas antigos em _tagger_config.json (datasetConfig[base].nl)
+   ainda são lidos e migram pro _nl_manager.json no próximo save.
+========================================================================= */
+/* Texto de exibição de uma tag: NL nunca mostra o prefixo "NL:" na lista. */
+window.nlDisplay = function (tag) {
+    return String(tag == null ? '' : tag).replace(/^\s*NL:\s*/i, '');
+};
+
+window.NLCodec = (function () {
+    const FILE = '_nl_manager.json';
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const words = s => (String(s || '').toLowerCase().match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) || []);
+    const firstWord = s => words(s)[0] || '';
+    const lastWord = s => { const w = words(s); return w[w.length - 1] || ''; };
+    const segCount = s => String(s).split(',').length;
+
+    /* ---------- encode: memória -> disco ---------- */
+    function encode(content) {
+        const map = [];
+        const out = [];
+        let seg = 0; // índice do segmento (entre vírgulas) no texto do disco
+        String(content || '').split(',').map(t => t.trim()).filter(Boolean).forEach(tok => {
+            let text = tok;
+            if (/^NL:/i.test(text)) text = text.slice(3).trim();
+            text = text.replace(/，/g, ',').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+            if (!text) return;                       // "NL:" vazio não vai pro disco
+            const n = segCount(text);
+            if (text !== tok) map.push({ raw: tok, text, first: firstWord(text), last: lastWord(text), start: seg, end: seg + n - 1 });
+            out.push(text);
+            seg += n;
+        });
+        return { text: out.join(', '), map };
+    }
+
+    /* ---------- decode: disco -> memória ---------- */
+    // Tag interna SEM prefixo: a NL é marcada só pela regra manualNLRules
+    // (o "NL:" aparecia escrito na lista de tags).
+    const stripPrefix = t => String(t || '').replace(/^\s*NL:\s*/i, '');
+    function markNL(tag) {
+        if (!tag || typeof datasetConfig === 'undefined') return;
+        if (!datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
+        datasetConfig.manualNLRules[tag] = 'nl';
+    }
+    function toRaw(entry, diskText) {
+        return diskText.replace(/,/g, '，');
+    }
+
+    function decodeEx(text, map) {
+        let s = String(text || '');
+        const res = { text: s, recovered: [], lost: [] };
+        if (!s) return res;
+        const entries = (map || []).filter(e => e && e.text && e.raw);
+
+        // Reserva global: só o que não está no mapa e aparece no texto.
+        const inMap = new Set(entries.map(m => m.text));
+        const extra = Object.keys(known).filter(t => !inMap.has(t) && s.includes(t)).map(t => ({ raw: known[t], text: t, _global: true }));
+
+        // 1) texto exato (maiores primeiro)
+        const pending = [];
+        entries.concat(extra).sort((a, b) => b.text.length - a.text.length).forEach(e => {
+            const re = new RegExp('(^|,)(\\s*)' + esc(e.text) + '(\\s*)(?=,|$)');
+            const raw = stripPrefix(e.raw);
+            if (raw && re.test(s)) { s = s.replace(re, (m, a, b, c) => a + b + raw + c); markNL(raw); }
+            else if (!e._global) pending.push(e);
+        });
+
+        // 2) âncoras: primeira palavra … última palavra
+        pending.forEach(e => {
+            const first = e.first || firstWord(e.text), last = e.last || lastWord(e.text);
+            if (!first || !last) { res.lost.push(e.text); return; }
+            const segs = s.split(',');
+            const origLen = segCount(e.text);
+            const maxSpan = Math.max(origLen + 4, origLen * 2);
+            let best = null;
+            for (let i = 0; i < segs.length; i++) {
+                const isNLSeg = x => /^\s*NL:/i.test(x) || x.includes('，');
+                if (isNLSeg(segs[i]) || firstWord(segs[i]) !== first) continue;
+                for (let j = i; j < segs.length && j - i < maxSpan; j++) {
+                    if (j > i && isNLSeg(segs[j])) break;   // não engole outra NL
+                    if (lastWord(segs[j]) !== last) continue;
+                    if (j === i && origLen > 1 && segs[i].trim().split(/\s+/).length < 2) continue;
+                    const dist = Math.abs(i - (e.start || 0)) + Math.abs((j - i + 1) - origLen);
+                    if (!best || dist < best.dist) best = { i, j, dist };
+                    break; // menor trecho a partir de i
+                }
+            }
+            if (!best) { res.lost.push(e.text); return; }
+            const diskText = segs.slice(best.i, best.j + 1).map(x => x.trim()).join(', ');
+            const lead = (segs[best.i].match(/^\s*/) || [''])[0];
+            const tail = (segs[best.j].match(/\s*$/) || [''])[0];
+            const rawNew = toRaw(e, diskText);
+            segs.splice(best.i, best.j - best.i + 1, lead + rawNew + tail);
+            s = segs.join(',');
+            markNL(rawNew);
+            res.recovered.push(diskText);
+        });
+
+        // Legado: qualquer tag que ainda venha com "NL:" perde o prefixo (vira regra).
+        if (/(^|,)\s*NL:/i.test(s)) {
+            s = s.split(',').map(seg => {
+                if (!/^\s*NL:/i.test(seg)) return seg;
+                const lead = (seg.match(/^\s*/) || [''])[0];
+                const body = stripPrefix(seg).trim();
+                if (body) markNL(body);
+                return body ? lead + body : null;
+            }).filter(seg => seg !== null).join(',');
+        }
+        res.text = s;
+        return res;
+    }
+    const decode = (text, map) => decodeEx(text, map).text;
+
+    // Arquivo ainda no formato antigo (marcador no disco)?
+    const hasLegacyMarkers = text => /(^|,)\s*NL:/i.test(String(text || '')) || String(text || '').includes('，');
+
+    /* ---------- _nl_manager.json por pasta ---------- */
+    const cache = new Map();          // dirHandle -> Promise<data>
+    function blank() { return { version: 1, images: {} }; }
+    function loadFolder(dirHandle, fresh) {
+        if (!dirHandle) return Promise.resolve(blank());
+        if (!fresh && cache.has(dirHandle)) return cache.get(dirHandle);
+        const p = (async () => {
+            try {
+                const h = await dirHandle.getFileHandle(FILE);
+                const d = JSON.parse(await (await h.getFile()).text());
+                if (d && d.images) return d;
+            } catch (e) {}
+            return blank();
+        })();
+        cache.set(dirHandle, p);
+        return p;
+    }
+    async function entriesFor(dirHandle, baseName) {
+        const d = await loadFolder(dirHandle);
+        return (d.images && d.images[baseName]) || null;
+    }
+
+    let _chain = Promise.resolve();   // gravações em série (Promise.all de vários saves)
+    function writeFolder(dirHandle, mutate) {
+        _chain = _chain.then(async () => {
+            try {
+                const d = await loadFolder(dirHandle);
+                if (!mutate(d)) return;
+                const h = await dirHandle.getFileHandle(FILE, { create: true });
+                const w = await h.createWritable();
+                await w.write(JSON.stringify(d, null, 2));
+                await w.close();
+            } catch (e) { console.warn('[NL Manager] could not write ' + FILE, e); }
+        });
+        return _chain;
+    }
+    function setEntries(dirHandle, baseName, map) {
+        remember(map);
+        return writeFolder(dirHandle, d => {
+            const before = JSON.stringify(d.images[baseName] || []);
+            if (map && map.length) d.images[baseName] = map; else delete d.images[baseName];
+            return before !== JSON.stringify(map || []);
+        });
+    }
+    function moveEntries(dirHandle, oldBase, newBase, map) {
+        remember(map);
+        return writeFolder(dirHandle, d => {
+            if (oldBase !== newBase) delete d.images[oldBase];
+            if (map && map.length) d.images[newBase] = map; else delete d.images[newBase];
+            return true;
+        });
+    }
+
+    /* Chamado pelo saveImageToDisk depois de gravar a legenda. */
+    async function persistMap(img, map) {
+        if (!img || !img.baseName || !img.parentDirHandle) return;
+        await setEntries(img.parentDirHandle, img.baseName, map);
+        // Migração: o mapa antigo no _tagger_config.json sai de lá.
+        if (typeof datasetConfig !== 'undefined' && datasetConfig[img.baseName] && datasetConfig[img.baseName].nl) {
+            delete datasetConfig[img.baseName].nl;
+            if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+        }
+    }
+
+    /* Leitura completa p/ uma imagem: mapa da pasta (ou legado do config) + decode. */
+    async function decodeFor(dirHandle, baseName, text, legacyMap) {
+        await ready;
+        const map = (await entriesFor(dirHandle, baseName)) || legacyMap || null;
+        const r = decodeEx(text, map);
+        r.fromLegacy = !!(legacyMap && legacyMap.length && !(await entriesFor(dirHandle, baseName)));
+        return r;
+    }
+
+    /* ---------- reserva global (user_config) ---------- */
+    const KNOWN_KEY = 'nl-known-texts';
+    let known = {};
+    let knownTimer = null;
+    const ready = (async () => {
+        try {
+            if (typeof window.getSetting !== 'function') return;
+            const v = await window.getSetting(KNOWN_KEY, {});
+            known = (typeof v === 'string' ? JSON.parse(v || '{}') : v) || {};
+        } catch (e) { known = {}; }
+    })();
+    function remember(map) {
+        let changed = false;
+        (map || []).forEach(({ raw, text }) => {
+            if (text && raw && text.includes(',') && known[text] !== raw) { known[text] = raw; changed = true; }
+        });
+        if (!changed) return;
+        clearTimeout(knownTimer);
+        knownTimer = setTimeout(() => { if (typeof window.saveSetting === 'function') window.saveSetting(KNOWN_KEY, known); }, 300);
+    }
+
+    // Compat (modo recursivo antigo).
+    async function readFolderConfig(dirHandle) {
+        try {
+            const h = await dirHandle.getFileHandle('_tagger_config.json');
+            return JSON.parse(await (await h.getFile()).text()) || {};
+        } catch (e) { return {}; }
+    }
+
+    // Recarregar a pasta sempre relê o _nl_manager.json.
+    if (window.TM && typeof window.TM.on === 'function') window.TM.on('config:loaded', () => cache.clear());
+
+    return { FILE, stripPrefix, markNL, encode, decode, decodeEx, decodeFor, hasLegacyMarkers, loadFolder, entriesFor, setEntries, moveEntries, persistMap, readFolderConfig, ready, clearCache: () => cache.clear() };
+})();
+
+/* Ao carregar um dataset, regrava na hora toda legenda que:
+   - ainda tem "NL:" / "，" no disco (formato antigo), ou
+   - teve NL reconstruída pelas âncoras (texto editado fora do app), ou
+   - ainda usa o mapa antigo do _tagger_config.json (migração). */
+(function () {
+    async function cleanLegacyNL() {
+        if (typeof imageFiles === 'undefined' || typeof window.saveImageToDisk !== 'function') return;
+        const targets = imageFiles.filter(img => img && img._nlResave && img.hasFile);
+        const recovered = imageFiles.reduce((n, img) => n + ((img && img._nlRecovered) || 0), 0);
+        const lost = imageFiles.filter(img => img && img._nlLost && img._nlLost.length);
+        let ok = 0;
+        for (const img of targets) {
+            img._nlResave = false;
+            try { if (await window.saveImageToDisk(img)) ok++; } catch (e) { console.warn('[NL Manager] resave failed', img.name, e); }
+        }
+        imageFiles.forEach(img => { if (img) { img._nlRecovered = 0; } });
+        if (typeof window.showAlert !== 'function') return;
+        if (ok) window.showAlert(`🧹 NL Manager: ${ok} caption file(s) cleaned / updated on disk${recovered ? ` — ${recovered} NL(s) rebuilt from first/last-word anchors` : ''}.`, 'info');
+        if (lost.length) {
+            console.warn('[NL Manager] NL not found (edited outside the app?):', lost.map(i => ({ image: i.name, nl: i._nlLost })));
+            window.showAlert(`⚠️ NL Manager: ${lost.length} image(s) have an NL that could not be found anymore (first/last word changed). Check the console for the list.`, 'warn');
+        }
+    }
+    if (window.TM && typeof window.TM.on === 'function') window.TM.on('dataset:loaded', () => setTimeout(cleanLegacyNL, 300));
+})();

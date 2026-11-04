@@ -38,6 +38,13 @@
    chunks tEXt / iTXt / zTXt do original são copiados para o arquivo novo.
    JPEG/WebP: o modal avisa que os metadados não são mantidos (o original
    continua intacto no Archive).
+
+   AUTO BUCKET: quando há imagens fora do bucket, o ícone 🪣 ao lado do filtro
+   fica VERMELHO. Clicar nele abre uma confirmação e, ao aceitar, corrige TODAS
+   as imagens ruins de uma vez no bucket recomendado de cada uma (aspect ratio
+   mais próximo, corte centralizado, Lanczos-3). Cada original vai pro 📦 Archive.
+   COLAPSO: no popout, os blocos ▯ Vertical / ▭ Horizontal podem ser recolhidos
+   (clique no título do bloco, ou no botão da aba ativa). Estado salvo.
 ========================================================================= */
 
 (function () {
@@ -73,6 +80,10 @@
         hd:   { label: 'HD',   title: 'HD — 1.5× the SDXL resolutions (about 1536²)' }
     };
     const MODEL_SETTING = 'bucket-model';
+    const COLLAPSE_SETTING = 'bucket-collapsed';
+    const SCAN_BTN_TITLE = 'Scan dataset for images outside the training bucket resolutions (model: SD / SDXL / HD, chosen in the Bucket popout)';
+    let collapsedBlocks = { vertical: false, horizontal: false };
+    let _autoRunning = false;
 
     function buildBuckets(model) {
         if (model === 'hd') return SDXL_BUCKETS.map(([w, h]) => [w * 1.5, h * 1.5]);
@@ -107,7 +118,17 @@
             if (typeof window.getSetting !== 'function') return;
             const saved = await window.getSetting(MODEL_SETTING, 'sdxl');
             if (saved && saved !== bucketModel) setBucketModel(saved, false);
+            const col = String(await window.getSetting(COLLAPSE_SETTING, '') || '').split(',');
+            collapsedBlocks = { vertical: col.includes('vertical'), horizontal: col.includes('horizontal') };
         } catch (e) { /* SDXL */ }
+    }
+
+    function toggleBlock(key, force) {
+        collapsedBlocks[key] = typeof force === 'boolean' ? force : !collapsedBlocks[key];
+        if (typeof window.saveSetting === 'function') {
+            window.saveSetting(COLLAPSE_SETTING, Object.keys(collapsedBlocks).filter(k => collapsedBlocks[k]).join(','));
+        }
+        if (_fixState) renderCandidateChips();
     }
 
     /* ▭ paisagem, ▯ retrato, □ quadrado */
@@ -130,6 +151,13 @@
         #btn-bucket-issues { display:none; background:#330000; border:1px solid #ff4444; color:#ffaaaa; padding:2px 6px; font-size:11px; margin-left:6px; border-radius:4px; cursor:pointer; font-weight:bold; }
         #btn-scan-buckets { flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; }
         #btn-scan-buckets:hover { color:#00ff99; border-color:#00ff99; }
+        #btn-scan-buckets.has-bad { background:#330000; border-color:#ff4444; color:#ff5555; box-shadow:0 0 6px rgba(255,68,68,0.45); }
+        #btn-scan-buckets.has-bad:hover { background:#4a0000; border-color:#ff7777; color:#fff; }
+        #btn-scan-buckets:disabled { opacity:0.8; cursor:wait; }
+        #modal-auto-bucket .tool-modal { width: 440px; max-width: 92vw; }
+        #modal-auto-bucket .ab-line { font-size:12px; color:#ccc; margin:6px 0; line-height:1.5; }
+        #modal-auto-bucket .ab-note { font-size:11px; color:#888; margin-top:8px; }
+        #modal-auto-bucket .ab-warn { font-size:11px; color:#ffcc66; margin-top:6px; }
         #btn-fix-bucket { display:none; background:#2a0000; border-color:#aa0000; color:#ff8080; }
         #btn-fix-bucket.is-valid { background:#0d2a18; border-color:#00aa66; color:#00ff99; }
         #btn-fix-bucket.is-unknown { background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; }
@@ -144,6 +172,12 @@
         .bucket-candidate-list { display:flex; flex-wrap:wrap; gap:6px; margin: 8px 0; max-height: 300px; overflow-y: auto; flex-shrink: 0; align-content:flex-start; }
         .bucket-block-label { flex:0 0 100%; font-size:10px; font-weight:bold; color:#777; text-transform:uppercase; letter-spacing:.6px; border-top:1px solid #2c2c2c; padding-top:6px; margin-top:2px; }
         .bucket-block-label:first-child { border-top:none; padding-top:0; margin-top:0; }
+        .bucket-block-label.collapsible { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+        .bucket-block-label.collapsible:hover { color:#bbb; }
+        .bucket-block-label .bb-caret { display:inline-block; width:10px; transition:transform .15s; }
+        .bucket-block-label.collapsed .bb-caret { transform:rotate(-90deg); }
+        .bucket-block-label .bb-count { font-weight:normal; color:#666; }
+        .bucket-collapsed-note { flex:0 0 100%; font-size:11px; color:#666; font-style:italic; }
         .bucket-candidate-chip { background:#151515; border:1px solid #444; border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px; color:#ddd; text-align:center; transition:0.15s; }
         .bucket-candidate-chip.is-keep { border-color:#6a5a2a; color:#ffd27a; }
         .bucket-candidate-chip.is-keep.active { border-color:#ffcc44; background:#2a2208; color:#ffcc44; }
@@ -248,6 +282,14 @@
             });
         }
         window._bucketIssueIndices = badIndices;
+        const scanBtn = document.getElementById('btn-scan-buckets');
+        if (scanBtn && !_autoRunning) {
+            const has = badIndices.length > 0;
+            scanBtn.classList.toggle('has-bad', has);
+            scanBtn.title = has
+                ? `${badIndices.length} image(s) outside the ${modelLabel()} buckets — click to auto-fix ALL of them to their recommended bucket`
+                : SCAN_BTN_TITLE;
+        }
         if (badIndices.length > 0) {
             btn.style.display = 'inline-block';
             btn.textContent = `🪣 ${badIndices.length} Bad Bucket`;
@@ -294,7 +336,7 @@
             chunk.forEach((img, j) => markResult(img, sizes[j]));
         }
 
-        if (btn) { btn.disabled = false; btn.textContent = '🪣'; }
+        if (btn && !_autoRunning) { btn.disabled = false; btn.textContent = '🪣'; }
         if (aborted) return;
 
         applyBadgesToList();
@@ -327,8 +369,12 @@
         const btn = document.createElement('button');
         btn.id = 'btn-scan-buckets';
         btn.textContent = '🪣';
-        btn.title = 'Scan dataset for images outside the training bucket resolutions (model: SD / SDXL / HD, chosen in the Bucket popout)';
-        btn.onclick = () => window.scanDatasetBuckets(false);
+        btn.title = SCAN_BTN_TITLE;
+        btn.onclick = () => {
+            if (_autoRunning) return;
+            if ((window._bucketIssueIndices || []).length > 0) window.openAutoBucketModal();
+            else window.scanDatasetBuckets(false);
+        };
         anchor.insertAdjacentElement('afterend', btn);
     }
 
@@ -555,7 +601,14 @@
                 b.className = 'bucket-orient-btn' + (st.tab === key ? ' active' : '');
                 b.innerHTML = `${label}<span class="bo-count">${arr.length}</span>`;
                 b.title = `List only the ${key} resolutions`;
-                b.onclick = () => { st.tab = key; renderCandidateChips(); };
+                b.onclick = () => {
+                    if (st.tab === key) { toggleBlock(key); return; }   // aba ativa: recolhe / expande
+                    st.tab = key;
+                    collapsedBlocks[key] = false;
+                    renderCandidateChips();
+                };
+                b.title = st.tab === key ? `Click to ${collapsedBlocks[key] ? 'expand' : 'collapse'} the ${key} list` : `List only the ${key} resolutions`;
+                if (st.tab === key) b.innerHTML = `<span class="bb-caret">${collapsedBlocks[key] ? '▸' : '▾'}</span> ${label}<span class="bo-count">${arr.length}</span>`;
                 bar.appendChild(b);
             });
         }
@@ -564,22 +617,32 @@
             bar.appendChild(makeChip(st.keepCand, closest, true));
         }
 
-        const block = (label, arr) => {
+        const block = (key, label, arr) => {
             if (!arr.length) return;
+            const collapsed = !!collapsedBlocks[key];
             const head = document.createElement('div');
-            head.className = 'bucket-block-label';
-            head.textContent = label;
+            head.className = 'bucket-block-label collapsible' + (collapsed ? ' collapsed' : '');
+            head.innerHTML = `<span class="bb-caret">▾</span><span>${label}</span><span class="bb-count">${arr.length}</span>`;
+            head.title = collapsed ? 'Click to expand' : 'Click to collapse';
+            head.onclick = () => toggleBlock(key);
             list.appendChild(head);
-            arr.forEach(c => list.appendChild(makeChip(c, closest)));
+            if (!collapsed) arr.forEach(c => list.appendChild(makeChip(c, closest)));
         };
         if (st.fixMode) {
-            // Fix Bucket: os dois blocos visíveis; a orientação da imagem primeiro.
+            // Fix Bucket: os dois blocos visíveis (recolhíveis); a orientação da imagem primeiro.
             const vFirst = orientOf(st.w, st.h) !== 'horizontal';
-            if (vFirst) { block('▯ Vertical', vertical); block('▭ Horizontal', horizontal); }
-            else { block('▭ Horizontal', horizontal); block('▯ Vertical', vertical); }
+            if (vFirst) { block('vertical', '▯ Vertical', vertical); block('horizontal', '▭ Horizontal', horizontal); }
+            else { block('horizontal', '▭ Horizontal', horizontal); block('vertical', '▯ Vertical', vertical); }
         } else {
-            st.tab === 'horizontal' ? horizontal.forEach(c => list.appendChild(makeChip(c, closest)))
-                                    : vertical.forEach(c => list.appendChild(makeChip(c, closest)));
+            const key = st.tab === 'horizontal' ? 'horizontal' : 'vertical';
+            if (collapsedBlocks[key]) {
+                const note = document.createElement('div');
+                note.className = 'bucket-collapsed-note';
+                note.textContent = `${key === 'vertical' ? '▯ Vertical' : '▭ Horizontal'} list collapsed — click its button to expand.`;
+                list.appendChild(note);
+            } else {
+                (key === 'horizontal' ? horizontal : vertical).forEach(c => list.appendChild(makeChip(c, closest)));
+            }
         }
     }
 
@@ -947,6 +1010,172 @@
         return out;
     }
 
+    /* ---------- RENDER DO CORTE (compartilhado: popout + Auto Bucket) ---------- */
+    // sourceEl: <img> carregada em resolução natural; crop em px da imagem real.
+    async function renderCropBlob(sourceEl, candidate, crop, mime, onStatus) {
+        const cw = Math.max(1, Math.round(crop.w));
+        const ch = Math.max(1, Math.round(crop.h));
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cw;
+        cropCanvas.height = ch;
+        const cctx = cropCanvas.getContext('2d', { willReadFrequently: true });
+        cctx.imageSmoothingEnabled = true;
+        cctx.imageSmoothingQuality = 'high';
+        cctx.drawImage(sourceEl, crop.x, crop.y, crop.w, crop.h, 0, 0, cw, ch);
+
+        let outCanvas = cropCanvas;
+        const resizing = cw !== candidate.bw || ch !== candidate.bh;
+        const upscaled = candidate.bw > cw || candidate.bh > ch;
+        if (resizing) {
+            if (onStatus) onStatus(upscaled ? '⏳ Lanczos upscale...' : '⏳ Lanczos resize...');
+            const srcData = cctx.getImageData(0, 0, cw, ch);
+            const resized = await lanczosResizeRGBA(srcData.data, cw, ch, candidate.bw, candidate.bh);
+            outCanvas = document.createElement('canvas');
+            outCanvas.width = candidate.bw;
+            outCanvas.height = candidate.bh;
+            outCanvas.getContext('2d').putImageData(new ImageData(resized, candidate.bw, candidate.bh), 0, 0);
+        }
+        const blob = await new Promise(res => outCanvas.toBlob(res, mime, 0.95));
+        if (!blob) throw new Error('Failed to generate the cropped image.');
+        return { blob, resizing, upscaled };
+    }
+
+    /* Arquiva o original (+ legenda) e grava o novo arquivo com o MESMO nome. */
+    async function commitBucketFile(img, blob, candidate) {
+        if (typeof window.moveToArchive !== 'function') throw new Error('Archive module not loaded.');
+        const archived = await window.moveToArchive(img);
+        if (!archived) throw new Error('Could not archive the original image — aborting to avoid data loss.');
+
+        const fileHandle = await img.parentDirHandle.getFileHandle(img.name, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+
+        // A legenda também foi arquivada — regrava do conteúdo em memória.
+        if (img.hasFile && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
+
+        try { URL.revokeObjectURL(img.url); } catch (e) {}
+        img.url = URL.createObjectURL(blob);
+        img._resolution = { w: candidate.bw, h: candidate.bh };
+        markResult(img, { w: candidate.bw, h: candidate.bh });
+    }
+
+    /* ---------- AUTO BUCKET (todas as imagens ruins → bucket recomendado) ---------- */
+    function buildAutoModal() {
+        let overlay = document.getElementById('modal-auto-bucket');
+        if (overlay) overlay.remove();
+        overlay = document.createElement('div');
+        overlay.id = 'modal-auto-bucket';
+        overlay.className = 'modal-overlay';
+        overlay.onclick = () => window.closeModal('modal-auto-bucket');
+        overlay.innerHTML = `
+            <div class="tool-modal" onclick="event.stopPropagation()">
+                <h3 style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>🪣 Auto Bucket</span>
+                    <button onclick="window.closeModal('modal-auto-bucket')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
+                </h3>
+                <div class="ab-line" id="ab-summary"></div>
+                <div class="ab-line">Each image is cropped (centered) and resized with Lanczos-3 to its <b>recommended</b> bucket — the one with the closest aspect ratio.</div>
+                <div class="ab-note">Every original (and its caption) is moved to 📦 Archive first, so it is fully recoverable. PNG text metadata is kept; JPEG/WebP metadata is not.</div>
+                <div class="ab-warn" id="ab-upscale" style="display:none;"></div>
+                <div class="modal-buttons">
+                    <button class="btn-cancel" onclick="window.closeModal('modal-auto-bucket')">Cancel</button>
+                    <button id="btn-ab-rescan" style="background:transparent; border:1px solid #555; color:#aaa; padding:8px 12px; border-radius:6px; cursor:pointer;">🔍 Re-scan only</button>
+                    <button id="btn-ab-run" style="background:#aa2222; color:#fff; border:none; padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer;">🪣 Fix all</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    window.openAutoBucketModal = function () {
+        const targets = (window._bucketIssueIndices || []).map(i => imageFiles[i]).filter(img => { const r = window._bucketResults.get(img); return img && r && r.bad; });
+        if (targets.length === 0) { window.scanDatasetBuckets(false); return; }
+        buildAutoModal();
+        let up = 0;
+        targets.forEach(img => {
+            const r = window._bucketResults.get(img);
+            const c = suggestBuckets(r.w, r.h, 1)[0];
+            if (c && (c.bw > r.w || c.bh > r.h)) up++;
+        });
+        document.getElementById('ab-summary').innerHTML = `<b>${targets.length}</b> image(s) are outside the <b>${modelLabel()}</b> buckets.`;
+        const upEl = document.getElementById('ab-upscale');
+        if (up > 0) { upEl.style.display = 'block'; upEl.textContent = `⚠️ ${up} of them are smaller than their recommended bucket and will be upscaled.`; }
+        document.getElementById('btn-ab-run').textContent = `🪣 Fix all (${targets.length})`;
+        document.getElementById('btn-ab-run').onclick = () => { window.closeModal('modal-auto-bucket'); window.autoBucketAll(); };
+        document.getElementById('btn-ab-rescan').onclick = () => { window.closeModal('modal-auto-bucket'); window.scanDatasetBuckets(false); };
+        window.openModal('modal-auto-bucket');
+    };
+
+    function loadImageEl(url) {
+        return new Promise((resolve, reject) => {
+            const el = new Image();
+            el.onload = () => resolve(el);
+            el.onerror = () => reject(new Error('Could not load the image.'));
+            el.src = url;
+        });
+    }
+
+    window.autoBucketAll = async function () {
+        if (_autoRunning) return;
+        const resultsRef = window._bucketResults;
+        const targets = (window._bucketIssueIndices || []).map(i => imageFiles[i]).filter(img => { const r = resultsRef.get(img); return img && r && r.bad; });
+        if (targets.length === 0) return;
+
+        _autoRunning = true;
+        const btn = document.getElementById('btn-scan-buckets');
+        if (btn) btn.disabled = true;
+        let ok = 0, upscaledCount = 0, metaLost = 0, aborted = false;
+        const failed = [];
+
+        for (let i = 0; i < targets.length; i++) {
+            if (window._bucketResults !== resultsRef) { aborted = true; break; }   // dataset trocou
+            const img = targets[i];
+            if (btn) btn.textContent = `⏳ ${i + 1}/${targets.length}`;
+            try {
+                const r = resultsRef.get(img);
+                const cand = suggestBuckets(r.w, r.h, 1)[0];
+                const baseScale = Math.max(cand.bw / r.w, cand.bh / r.h);
+                const cropW = Math.min(r.w, cand.bw / baseScale), cropH = Math.min(r.h, cand.bh / baseScale);
+                const crop = { x: (r.w - cropW) / 2, y: (r.h - cropH) / 2, w: cropW, h: cropH };
+
+                let originalBlob = null;
+                try { originalBlob = await (await fetch(img.url)).blob(); } catch (e) {}
+                const el = await loadImageEl(img.url);
+                const ext = imageExt(img);
+                const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+                const rendered = await renderCropBlob(el, cand, crop, mime, null);
+                let blob = rendered.blob;
+                if (mime === 'image/png' && originalBlob) blob = (await copyPngTextChunks(originalBlob, blob)).blob;
+                else metaLost++;
+
+                await commitBucketFile(img, blob, cand);
+                if (rendered.upscaled) upscaledCount++;
+                ok++;
+            } catch (e) {
+                console.error('[Auto Bucket] failed for', img && img.name, e);
+                failed.push(img && img.name ? img.name : '?');
+            }
+            await new Promise(r => setTimeout(r, 0));
+        }
+
+        _autoRunning = false;
+        if (btn) { btn.disabled = false; btn.textContent = '🪣'; }
+        if (typeof window.renderImageList === 'function') window.renderImageList();
+        if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+        if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+        applyBadgesToList();
+        if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0) updateFixBucketButtonVisibility();
+
+        if (window.showAlert) {
+            let msg = `Auto Bucket: ${ok} image(s) fixed${upscaledCount ? ` (${upscaledCount} upscaled)` : ''}. Originals are in 📦 Archive.`;
+            if (metaLost) msg += ` ${metaLost} JPEG/WebP file(s) lost their metadata (kept in the Archive originals).`;
+            if (aborted) msg += ' Stopped: the dataset changed.';
+            if (failed.length) msg += ` ${failed.length} failed: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}`;
+            window.showAlert(msg, failed.length || aborted ? 'warn' : 'success');
+        }
+    };
+
     /* ---------- APLICA O CROP, ARQUIVA O ORIGINAL, SALVA O NOVO ---------- */
     window.applyFixBucket = async function () {
         if (!_fixState) return;
@@ -965,33 +1194,12 @@
             try { originalBlob = await (await fetch(img.url)).blob(); } catch (e) {}
 
             const sourceImgEl = document.getElementById('bucket-preview-img');
-            const cw = Math.max(1, Math.round(_fixState.cropW));
-            const ch = Math.max(1, Math.round(_fixState.cropH));
-            const cropCanvas = document.createElement('canvas');
-            cropCanvas.width = cw;
-            cropCanvas.height = ch;
-            const cctx = cropCanvas.getContext('2d', { willReadFrequently: true });
-            cctx.imageSmoothingEnabled = true;
-            cctx.imageSmoothingQuality = 'high';
-            cctx.drawImage(sourceImgEl, _fixState.offsetX, _fixState.offsetY, _fixState.cropW, _fixState.cropH, 0, 0, cw, ch);
-
-            let outCanvas = cropCanvas;
-            const resizing = cw !== candidate.bw || ch !== candidate.bh;
-            const upscaled = candidate.bw > cw || candidate.bh > ch;
-            if (resizing) {
-                btn.textContent = upscaled ? '⏳ Lanczos upscale...' : '⏳ Lanczos resize...';
-                const srcData = cctx.getImageData(0, 0, cw, ch);
-                const resized = await lanczosResizeRGBA(srcData.data, cw, ch, candidate.bw, candidate.bh);
-                outCanvas = document.createElement('canvas');
-                outCanvas.width = candidate.bw;
-                outCanvas.height = candidate.bh;
-                outCanvas.getContext('2d').putImageData(new ImageData(resized, candidate.bw, candidate.bh), 0, 0);
-            }
-
             const extLower = imageExt(img);
             const mime = extLower === 'png' ? 'image/png' : extLower === 'webp' ? 'image/webp' : 'image/jpeg';
-            let blob = await new Promise(res => outCanvas.toBlob(res, mime, 0.95));
-            if (!blob) throw new Error('Failed to generate the cropped image.');
+            const crop = { x: _fixState.offsetX, y: _fixState.offsetY, w: _fixState.cropW, h: _fixState.cropH };
+            const rendered = await renderCropBlob(sourceImgEl, candidate, crop, mime, (t) => { btn.textContent = t; });
+            let blob = rendered.blob;
+            const resizing = rendered.resizing, upscaled = rendered.upscaled;
 
             let copiedMeta = 0;
             if (mime === 'image/png' && originalBlob) {
@@ -1000,25 +1208,7 @@
                 copiedMeta = r.copied;
             }
 
-            // Backup automático: imagem + legenda originais vão pro 📦 Archive.
-            if (typeof window.moveToArchive !== 'function') throw new Error('Archive module not loaded.');
-            const archived = await window.moveToArchive(img);
-            if (!archived) throw new Error('Could not archive the original image — aborting to avoid data loss.');
-
-            // Grava o arquivo cortado com o MESMO nome (ficou livre com o archive).
-            const fileHandle = await img.parentDirHandle.getFileHandle(img.name, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(blob);
-            await writable.close();
-
-            // A legenda também foi arquivada — regrava do conteúdo em memória.
-            if (img.hasFile && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
-
-            try { URL.revokeObjectURL(img.url); } catch (e) {}
-            img.url = URL.createObjectURL(blob);
-            img._resolution = { w: candidate.bw, h: candidate.bh };
-
-            markResult(img, { w: candidate.bw, h: candidate.bh });
+            await commitBucketFile(img, blob, candidate);
 
             if (typeof window.renderImageList === 'function') window.renderImageList();
             if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();

@@ -245,7 +245,7 @@
     function captionText(content) {
         // The app keeps natural language as "NL:..." entries (real commas stored as "，").
         const tags = [], nl = [];
-        String(content || '').split(',').map(t => t.trim()).filter(Boolean).forEach(t => { if (/^NL:/i.test(t)) nl.push(t.slice(3).trim().replace(/，/g, ',')); else tags.push(t); });
+        String(content || '').split(',').map(t => t.trim()).filter(Boolean).forEach(t => { if (/^NL:/i.test(t) || (window.checkIfNL && window.checkIfNL(t))) nl.push(t.replace(/^NL:/i, '').trim().replace(/，/g, ',')); else tags.push(t); });
         return [tags.length ? 'tags: ' + tags.join(', ') : '', nl.length ? 'natural-language caption: ' + nl.join(' ') : ''].filter(Boolean).join('\n   ');
     }
     async function addFiles(files) {

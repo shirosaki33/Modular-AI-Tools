@@ -313,6 +313,9 @@
                 folderLabel: (img.parentDirHandle && img.parentDirHandle.name) || '',
                 label: asOriginal ? ORIGINAL_LABEL : (cleanLabel(label) || cleanLabel(window._archiveAutoLabel) || DEFAULT_LABEL),
                 isOriginal: asOriginal,
+                // Mapa NL (tags NL internas ↔ texto limpo do .txt) — volta pro config ao restaurar.
+                nlMap: (window.NLCodec ? await window.NLCodec.entriesFor(img.parentDirHandle, img.baseName) : null)
+                    || (typeof datasetConfig !== 'undefined' && datasetConfig[img.baseName] && datasetConfig[img.baseName].nl) || null,
                 archivedAt: Date.now()
             });
 
@@ -334,8 +337,14 @@
          3) o registro da original some — sem ela em original/, a próxima vez que a imagem
             for arquivada ela volta a ser a original.
        Retorna { partial: [legendas que não voltaram] }. */
+    async function restoreNLMap(entry) {
+        if (!entry || !entry.nlMap) return;
+        if (window.NLCodec && entry.parentDirHandle) await window.NLCodec.setEntries(entry.parentDirHandle, entry.originalBaseName, entry.nlMap);
+    }
+
     async function swapOriginalIntoDataset(entry) {
         const parent = entry.parentDirHandle;
+        await restoreNLMap(entry);
         const imgName = entry.archiveImageName;
         const base = entry.originalBaseName;
         const partial = [];
@@ -444,6 +453,7 @@
     window.restoreArchiveEntry = async function (entry) {
         try {
             const parent = entry.parentDirHandle;
+            await restoreNLMap(entry);
             if ((await parent.queryPermission({ mode: 'readwrite' })) !== 'granted') {
                 if ((await parent.requestPermission({ mode: 'readwrite' })) !== 'granted') {
                     if (window.showAlert) window.showAlert('Permission denied for the original folder.', 'error');
@@ -508,6 +518,7 @@
             if (btn) { btn.disabled = true; btn.textContent = `⏳ ${n + 1}/${entries.length}`; }
             try {
                 const parent = entry.parentDirHandle;
+                await restoreNLMap(entry);
                 if ((await parent.queryPermission({ mode: 'readwrite' })) !== 'granted') {
                     if ((await parent.requestPermission({ mode: 'readwrite' })) !== 'granted') {
                         failed.push(`${entry.originalName} (permission denied)`);
@@ -753,6 +764,9 @@
                 } else {
                     content = text;
                     ext = 'txt';
+                }
+                if (window.NLCodec && typeof datasetConfig !== 'undefined' && (entry.nlMap || (datasetConfig[entry.originalBaseName] && datasetConfig[entry.originalBaseName].nl))) {
+                    content = window.NLCodec.decode(content, entry.nlMap || datasetConfig[entry.originalBaseName].nl);
                 }
                 break;
             } catch (e) { /* essa legenda pode não existir — tenta a próxima */ }

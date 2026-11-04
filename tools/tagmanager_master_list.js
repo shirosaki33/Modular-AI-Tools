@@ -197,7 +197,7 @@ window.renderMasterTagList = function() {
                     <span class="tag-star" style="color: ${favTags.has(tag) ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${favTags.has(tag) ? '⭐' : '☆'}</span>
                     ${presetIconHtml}
                     <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
-                    <span class="tag-name${aliasParts.nameClass}" style="${isCustomNL ? 'color:#b890ff;' : ''}"${aliasParts.nameAttrs}>${esc(tag)}</span>
+                    <span class="tag-name${aliasParts.nameClass}" style="${isCustomNL ? 'color:#b890ff;' : ''}" data-nl-raw="${esc(tag)}"${aliasParts.nameAttrs}>${esc(window.nlDisplay(tag))}</span>
                     ${dbAliasArrowHtml}
                     ${reverseAliasHtmlMaster}
                     ${statusHtml}

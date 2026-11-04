@@ -55,7 +55,8 @@ function buildNLEditBox(tag, scope) {
         </div>
     `;
     const textarea = box.querySelector('.tag-nl-edit-textarea');
-    textarea.value = rawText;
+    // Edita o texto puro: sem "NL:" e com vírgulas normais (voltam a "，" ao salvar).
+    textarea.value = String(rawText || '').replace(/^\s*NL:\s*/i, '').replace(/，/g, ',');
 
     const btnCancel = box.querySelector('.btn-nl-edit-cancel');
     const btnSave = box.querySelector('.btn-nl-edit-save');
@@ -63,7 +64,7 @@ function buildNLEditBox(tag, scope) {
     btnSave.style.opacity = '0.5'; btnSave.disabled = true;
 
     textarea.oninput = () => {
-        if (textarea.value !== rawText) {
+        if (textarea.value !== String(rawText || '').replace(/^\s*NL:\s*/i, '').replace(/，/g, ',')) {
             btnSave.style.opacity = '1'; btnSave.disabled = false;
         } else {
             btnSave.style.opacity = '0.5'; btnSave.disabled = true;

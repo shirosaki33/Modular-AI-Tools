@@ -304,7 +304,7 @@
         if (fmt === 'nl' && !/(^|,)\s*NL:/.test(text)) return { tags: [], nl: [text.replace(/，/g, ',')] };
         const tags = [], nl = [];
         text.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
-            if (/^NL:/i.test(t)) nl.push(t.slice(3).trim().replace(/，/g, ','));
+            if (/^NL:/i.test(t) || (window.checkIfNL && window.checkIfNL(t))) nl.push(t.replace(/^NL:/i, '').trim().replace(/，/g, ','));
             else tags.push(t);
         });
         return { tags, nl };

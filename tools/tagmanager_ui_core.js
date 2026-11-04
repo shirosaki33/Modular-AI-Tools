@@ -344,7 +344,9 @@ window.saveImageToDisk = async function(img) {
         }
         const formatToUse = img.ext || 'txt';
         const fileName = formatToUse === 'json' ? img.baseName + '.json' : img.baseName + '.txt';
-        const contentToSave = formatToUse === 'json' ? JSON.stringify({ tags: img.content }, null, 2) : img.content;
+        // Disco sempre limpo: sem "NL:" nem "，" (ver NLCodec em tagmanager_caption_tag.js).
+        const enc = window.NLCodec ? window.NLCodec.encode(img.content) : { text: img.content, map: [] };
+        const contentToSave = formatToUse === 'json' ? JSON.stringify({ tags: enc.text }, null, 2) : enc.text;
 
         const fileHandle = await img.parentDirHandle.getFileHandle(fileName, { create: true });
         const writable = await fileHandle.createWritable();
@@ -352,6 +354,7 @@ window.saveImageToDisk = async function(img) {
         await writable.close();
 
         if (datasetConfig[img.baseName]) datasetConfig[img.baseName].type = 'tags';
+        if (window.NLCodec) await window.NLCodec.persistMap(img, enc.map);
         window.markClean(img);
         return true;
     } catch (e) {
@@ -849,6 +852,16 @@ window.processSingleImage = async function(entry, parentHandle, configNeedsSave)
     if (cfg && cfg.ext) ext = cfg.ext;
     if (!datasetConfig.manualNLRules) datasetConfig.manualNLRules = {};
 
+    // NL: o disco é limpo; o mapa do config devolve as tags NL internas.
+    // NL Manager: o disco é limpo; _nl_manager.json da pasta diz onde está cada NL.
+    const legacyMarkers = !!(window.NLCodec && hasFile && window.NLCodec.hasLegacyMarkers(content));
+    let nlRes = null;
+    if (window.NLCodec && content) {
+        nlRes = await window.NLCodec.decodeFor(parentHandle, baseName, content, cfg && cfg.nl);
+        content = nlRes.text;
+    }
+    const nlResave = legacyMarkers || !!(nlRes && (nlRes.recovered.length || nlRes.fromLegacy));
+
     // Legado: arquivos do antigo "modo NL" (parágrafo inteiro) viram UMA tag NL.
     // Vírgulas viram "，" para não quebrar o split(',') do modo Tag.
     const legacyNL = !!content.trim() && (
@@ -869,7 +882,7 @@ window.processSingleImage = async function(entry, parentHandle, configNeedsSave)
     if (content.trim()) content.split(',').forEach(t => { if (t.trim()) masterTagSet.add(t.trim()); });
 
     const isHidden = window.hiddenImagesStore.has(baseName);
-    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden, dirty: legacyNL });
+    imageFiles.push({ handle: entry, parentDirHandle: parentHandle, name: entry.name, baseName: baseName, url: URL.createObjectURL(file), content: content, type: type, hasFile: hasFile, ext: ext, pendingAdd: (pendingTagsStore[baseName] || []).slice(), hidden: isHidden, dirty: legacyNL || nlResave, _nlResave: nlResave, _nlRecovered: nlRes ? nlRes.recovered.length : 0, _nlLost: nlRes ? nlRes.lost : [] });
     return configNeedsSave;
 }
 

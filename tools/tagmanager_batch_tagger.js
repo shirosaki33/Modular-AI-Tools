@@ -337,6 +337,9 @@ async function collectImagesRecursively(dirHandle, list = [], stats = { folders:
         return list;
     }
 
+    const folderCfg = window.NLCodec ? await window.NLCodec.readFolderConfig(dirHandle) : {};
+    if (window.NLCodec) await window.NLCodec.loadFolder(dirHandle, true);
+
     for await (const entry of entries) {
         try {
             if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
@@ -356,6 +359,13 @@ async function collectImagesRecursively(dirHandle, list = [], stats = { folders:
                         if (jsonObj.tags) content = jsonObj.tags; else if (jsonObj.caption) content = jsonObj.caption;
                         hasFile = true; ext = "json";
                     } catch (e) {}
+                }
+
+                // NL limpa no disco → reconstrói as tags NL internas pelo mapa do config.
+                if (window.NLCodec && content) {
+                    const memCfg = (typeof datasetConfig !== 'undefined' && datasetConfig[baseName]) || null;
+                    const nlMap = (folderCfg[baseName] && folderCfg[baseName].nl) || (memCfg && memCfg.nl);
+                    content = (await window.NLCodec.decodeFor(dirHandle, baseName, content, nlMap)).text;
                 }
 
                 const file = await entry.getFile();
@@ -1073,7 +1083,7 @@ window.startBatchTagging = async function() {
                     if (typeof window.pendingRemoveStore === 'undefined') window.pendingRemoveStore = {};
                     const finalSet = new Set(finalTags);
                     imgObj.pendingRemove = existingTags.filter(t =>
-                        !finalSet.has(t) && !t.startsWith('NL:') && !excludeArray.includes(t.toLowerCase())
+                        !finalSet.has(t) && !t.startsWith('NL:') && !(window.checkIfNL && window.checkIfNL(t)) && !excludeArray.includes(t.toLowerCase())
                     );
                     if (imgObj.pendingRemove.length > 0) window.pendingRemoveStore[baseName] = imgObj.pendingRemove;
                     else delete window.pendingRemoveStore[baseName];
@@ -1218,7 +1228,8 @@ window.startBatchTagging = async function() {
 
                 // Linguagem natural: vira uma tag "NL:" (vírgulas reais viram "，"
                 // para não quebrar o split(',') das tags).
-                const nlTag = finalContent ? 'NL:' + finalContent.replace(/,/g, '，') : '';
+                const nlTag = finalContent ? finalContent.replace(/\s*[\r\n]+\s*/g, ' ').replace(/,/g, '，').trim() : '';
+                if (nlTag && window.NLCodec) window.NLCodec.markNL(nlTag); // NL marcada pela regra, sem "NL:" na lista
 
                 if (reviewModeActive) {
                     if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
