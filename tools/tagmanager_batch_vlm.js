@@ -107,7 +107,9 @@
             model: $('vlm-model-select').value,
             device: $('hardware-select').value,
             task: $('vlm-task').value,
-            prompt: $('batch-vlm-prompt').value.trim() || DEFAULT_PROMPT,
+            // Empty = default instruct. PyTorch/vlm models fall back to the backend's own default
+            // (the ai-toolkit caption prompt); other engines keep the generic one.
+            prompt: $('batch-vlm-prompt').value.trim() || (curMode === 'pytorch' ? '' : DEFAULT_PROMPT),
             maxTokens: clamp($('vlm-max-tokens').value, 16, 1024, 256),
             beams: clamp($('vlm-beams').value, 1, 8, 3),
             storage: $('vlm-storage').value,
@@ -136,6 +138,7 @@
             $('vlm-dl-bar').style.width = pct + '%';
             $('vlm-dl-percent').textContent = pct + '%';
             $('vlm-dl-file').textContent = text || '';
+            if (window.TMHeaderBatch) window.TMHeaderBatch.model(frac);   // header counter shows the model download while loading
         },
         indeterminate(text) {
             this.show();
@@ -187,6 +190,10 @@
         show('vlm-storage-label', !!engine.features.storage);
         show('vlm-storage', !!engine.features.storage);
         show('vlm-pick-folder', pickOn);
+        show('vlm-deps-row', curMode === 'pytorch');
+        show('vlm-hf-toggle', curMode === 'pytorch');
+        if (curMode !== 'pytorch') show('vlm-hf-row', false);
+        if (curMode === 'pytorch' && !hfLoaded) refreshHf();
         // Never hidden (the layout would jump): dimmed + disabled when this model is not stored by the app.
         const canDel = engine.features.canDelete === undefined ? true : feature(engine.features.canDelete, model);
         $('vlm-delete').disabled = !canDel || busy || batchBusy;
@@ -302,6 +309,85 @@
         }
     }
 
+    /* ---------- 🔧 pip dependencies (PyTorch engine, localhost only) ---------- */
+    let hfLoaded = false;
+    function paintHf(d) {
+        const el = $('vlm-hf-status');
+        const tg = $('vlm-hf-toggle');
+        if (tg) { tg.style.borderColor = d && d.set && d.valid !== false ? '#00ff99' : ''; tg.title = 'Hugging Face token' + (d && d.set ? (d.valid === false ? ' (invalid)' : ' — logged in as ' + (d.user || '?')) : ' — not set'); }
+        if (!d || !d.set) { el.style.color = '#888'; el.textContent = 'No token — downloads are unauthenticated (slower, lower limits).'; return; }
+        if (d.valid === false) { el.style.color = '#ff6b6b'; el.textContent = '⚠️ Saved token is not valid: ' + (d.error || ''); return; }
+        el.style.color = '#00ff99';
+        el.textContent = '✅ Logged in as ' + (d.user || '?') + (d.env ? ' (from HF_TOKEN)' : '');
+    }
+    async function refreshHf() {
+        hfLoaded = true;
+        try { paintHf(await depsFetch('hf_token')); } catch (e) { hfLoaded = false; }
+    }
+    let depsTodo = [];
+    async function depsFetch(path, opts) {
+        const res = await fetch('/api/florence/' + path, opts);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        return data;
+    }
+    function renderDeps(d) {
+        const rows = d.packages.map(p => {
+            let icon = '✅', note = '';
+            if (p.missing) { icon = '❌'; note = ' — not installed'; }
+            else if (p.below_min) { icon = '❌'; note = ` — needs ≥ ${p.min}`; }
+            else if (p.outdated) { icon = '⬆️'; note = ` — newer: ${p.latest}`; }
+            else if (!p.latest) { note = ' — (could not check PyPI)'; }
+            return `<div>${icon} <b>${esc(p.name)}</b> ${esc(p.installed || '-')}${esc(note)}</div>`;
+        });
+        const t = d.torch || {};
+        let torchLine = `<div>${t.cuda ? '✅' : '⚠️'} <b>torch</b> ${esc(t.installed || 'not installed')} — ${t.cuda ? 'CUDA available' : 'no CUDA'} <span style="color:#888;">(never updated automatically)</span></div>`;
+        if (t.hint) torchLine += `<div style="color:#ffb86b; word-break:break-all;">GPU fix: <code>${esc(t.hint)}</code></div>`;
+        $('vlm-deps-list').innerHTML = `<div style="color:#888;">Python ${esc(d.python)}</div>` + rows.join('') + torchLine;
+        depsTodo = d.needs_update || [];
+        show('vlm-deps-update', depsTodo.length > 0);
+        $('vlm-deps-update').textContent = depsTodo.length ? `⬆️ Update ${depsTodo.join(', ')} & restart server` : '';
+        show('vlm-deps-box', true);
+    }
+    function bindDeps() {
+        $('vlm-hf-toggle').onclick = () => {
+            const row = $('vlm-hf-row'), open = row.style.display === 'none';
+            show('vlm-hf-row', open);
+            if (open) { $('vlm-hf-token').focus(); refreshHf(); }
+        };
+        $('vlm-hf-save').onclick = async () => {
+            const b = $('vlm-hf-save'); b.disabled = true;
+            try {
+                paintHf(await depsFetch('hf_token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: $('vlm-hf-token').value.trim() }) }));
+                ui.alert($('vlm-hf-token').value.trim() ? 'Hugging Face token saved.' : 'Hugging Face token removed.', 'success');
+                $('vlm-hf-token').value = '';
+            } catch (e) { ui.alert('Token not saved: ' + e.message, 'error'); }
+            b.disabled = false;
+        };
+        $('vlm-deps-check').onclick = async () => {
+            const b = $('vlm-deps-check'); b.disabled = true; b.textContent = '⏳ Checking...';
+            try { renderDeps(await depsFetch('deps')); }
+            catch (e) { ui.alert('Dependency check failed: ' + e.message, 'error'); }
+            b.disabled = false; b.textContent = '🔧 Check dependencies (pip)';
+        };
+        $('vlm-deps-update').onclick = async () => {
+            if (!depsTodo.length) return;
+            if (!window.confirm('Update ' + depsTodo.join(', ') + '?\n\nA new console window will open to run pip, and the local server will restart. This page stays open and reconnects by itself.')) return;
+            try {
+                await depsFetch('deps_update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packages: depsTodo }) });
+            } catch (e) { ui.alert('Update failed: ' + e.message, 'error'); return; }
+            ui.alert('Updating... a console window opened. Waiting for the server to come back.', 'info');
+            $('vlm-deps-update').disabled = true;
+            await sleep(4000);
+            for (let i = 0; i < 150; i++) {          // up to ~5 min
+                try { await depsFetch('status'); break; } catch (e) { await sleep(2000); }
+            }
+            $('vlm-deps-update').disabled = false;
+            try { renderDeps(await depsFetch('deps')); ui.alert('Server is back. Reload the model to use the new versions.', 'success'); }
+            catch (e) { ui.alert('The server did not come back yet. Check the console window it opened.', 'warn'); }
+        };
+    }
+
     function bind() {
         $('vlm-model-select').onchange = () => { writePref(key('model'), $('vlm-model-select').value); applyVisibility(); refresh(); };
         $('vlm-task').onchange = () => writePref(key('task'), $('vlm-task').value);
@@ -318,8 +404,14 @@
         ['vlm-max-tokens', 'vlm-beams', 'vlm-threshold', 'vlm-prefix', 'vlm-exclude', 'batch-vlm-prompt', 'vlm-output-mode'].forEach(id => {
             const saved = readPref('tm_' + id, null);
             if (saved !== null) $(id).value = saved;
+            // The old box was pre-filled with the generic prompt: treat that as "no manual instruct".
+            if (id === 'batch-vlm-prompt' && $(id).value.trim() === DEFAULT_PROMPT) $(id).value = '';
             $(id).addEventListener('change', () => writePref('tm_' + id, $(id).value));
         });
+        const manual = $('batch-vlm-prompt'), det = $('vlm-manual-instruct'), badge = $('vlm-manual-badge');
+        const syncManual = () => { const on = !!manual.value.trim(); if (badge) badge.style.display = on ? '' : 'none'; if (on && det) det.open = true; };
+        manual.addEventListener('input', syncManual);
+        syncManual();
 
         $('vlm-load').onclick = () => run(async () => {
             ui.setStatus('Loading model...');
@@ -343,6 +435,7 @@
             const deleted = await engine.deleteModel(ui, id);
             ui.alert(deleted ? 'Model files deleted.' : 'Nothing to delete (already clean).', deleted ? 'success' : 'info');
         });
+        bindDeps();
         $('vlm-pick-folder').onclick = () => run(async () => { if (engine.pickFolder) await engine.pickFolder(ui); });
     }
 

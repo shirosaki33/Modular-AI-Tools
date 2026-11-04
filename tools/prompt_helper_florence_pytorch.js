@@ -34,7 +34,11 @@
         ['florence-community/Florence-2-base-ft', 'Florence-2 Base FT (native)'],
         ['florence-community/Florence-2-large-ft', 'Florence-2 Large FT (native)'],
         ['microsoft/Florence-2-base-ft', 'Florence-2 Base FT (microsoft, remote code)'],
-        ['microsoft/Florence-2-large-ft', 'Florence-2 Large FT (microsoft, remote code)']
+        ['microsoft/Florence-2-large-ft', 'Florence-2 Large FT (microsoft, remote code)'],
+        ['Qwen/Qwen3-VL-2B-Instruct', 'Qwen3-VL 2B Instruct (VLM)'],
+        ['Qwen/Qwen3-VL-4B-Instruct', 'Qwen3-VL 4B Instruct (VLM)'],
+        ['Qwen/Qwen3-VL-8B-Instruct', 'Qwen3-VL 8B Instruct (VLM)'],
+        ['huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated', 'Qwen3-VL 8B Instruct abliterated (huihui-ai, VLM)']
     ];
     const DEVICES = [
         ['auto', '🚀 Auto (CUDA if available)'],
@@ -59,14 +63,16 @@
         ['MIXED_CAPTION_PLUS', 'Mixed caption + (most detailed)']
     ];
     // Same rule as florence_backend.py (ALLOWED_PREFIXES) for models that get downloaded.
-    const ALLOWED = ['microsoft/Florence-2', 'florence-community/Florence-2', 'MiaoshouAI/Florence-2'];
+    const VLM_PREFIXES = ['Qwen/Qwen3-VL', 'Qwen/Qwen2.5-VL', 'huihui-ai/Huihui-Qwen3-VL'];
+    const ALLOWED = ['microsoft/Florence-2', 'florence-community/Florence-2', 'MiaoshouAI/Florence-2', ...VLM_PREFIXES];
+    const guessFamily = id => (VLM_PREFIXES.some(p => String(id).startsWith(p)) ? 'vlm' : (String(id).toLowerCase().includes('promptgen') ? 'promptgen' : 'florence'));
     const isAllowed = id => ALLOWED.some(p => id.startsWith(p));
     const isTagger = id => String(id).startsWith('tagger:');
     const isLocal = id => String(id).startsWith('local:');
 
     // id -> { family: 'florence'|'promptgen'|'vlm'|'tagger' } for everything listed or known
-    const meta = new Map(MODELS.map(([id]) => [id, { family: id.toLowerCase().includes('promptgen') ? 'promptgen' : 'florence' }]));
-    const familyOf = id => (isTagger(id) ? 'tagger' : ((meta.get(id) || {}).family || (String(id).toLowerCase().includes('promptgen') ? 'promptgen' : 'florence')));
+    const meta = new Map(MODELS.map(([id]) => [id, { family: guessFamily(id) }]));
+    const familyOf = id => (isTagger(id) ? 'tagger' : ((meta.get(id) || {}).family || guessFamily(id)));
 
     /* ---------- API ---------- */
     async function api(path, opts) {
@@ -101,7 +107,7 @@
         if (data) {
             (data.hub || []).forEach(m => {
                 if (!MODELS.some(x => x[0] === m.id) && isAllowed(m.id)) {
-                    meta.set(m.id, { family: m.id.toLowerCase().includes('promptgen') ? 'promptgen' : 'florence' });
+                    meta.set(m.id, { family: guessFamily(m.id) });
                     list.push([m.id, '✅ ' + m.id + ' (detected)']);
                 }
             });
@@ -111,11 +117,7 @@
                 list.push([m.id, `📁 ${m.name} (${what}${m.source === 'folder' ? ', added folder' : ''}${sz(m.size)})`]);
                 lastCount++;
             });
-            (data.taggers || []).forEach(m => {
-                meta.set(m.id, { family: 'tagger' });
-                list.push([m.id, `🏷️ ${m.name} (ONNX tagger${sz(m.size)})`]);
-                lastCount++;
-            });
+            // ONNX taggers are no longer offered here (use the 🏷️ Tagger (ONNX) mode).
         }
         return list;
     }
@@ -159,8 +161,13 @@
     function showProgress(ui, st) {
         const p = st.progress || {};
         if (p.total > 0 && p.loaded > 0) {
-            ui.progress.set(p.loaded / p.total,
-                `${st.message || 'Downloading...'} ${Math.min(100, Math.round(p.loaded / p.total * 100))}% (${mb(p.loaded)} / ${mb(p.total)} MB)`);
+            const size = n => (n >= 1073741824 ? (n / 1073741824).toFixed(2) + ' GB' : mb(n) + ' MB');
+            const dur = sec => { sec = Math.round(sec); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60; return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`; };
+            const pct = Math.min(100, p.loaded / p.total * 100);
+            let txt = `${st.message || 'Downloading...'} ${pct.toFixed(1)}% (${size(p.loaded)} / ${size(p.total)})`;
+            if (p.speed > 0) txt += ` · ${(p.speed / 1048576).toFixed(1)} MB/s`;
+            if (p.eta > 0) txt += ` · ${dur(p.eta)} left`;
+            ui.progress.set(p.loaded / p.total, txt);
         } else {
             ui.progress.indeterminate(st.message || 'Working...');
         }
@@ -243,7 +250,7 @@
 
     PH.registerEngine({
         id: 'pytorch',
-        label: '🔥 PyTorch / ONNX (local server)',
+        label: '🔥 PyTorch (local server)',
         order: 3,
         available: true,
         models: MODELS,

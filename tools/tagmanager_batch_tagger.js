@@ -12,6 +12,65 @@
    esses modelos.
 ========================================================================= */
 
+/* =========================================================================
+   HEADER COUNTER — while a batch runs, the Auto-Caption popout closes and the
+   "🤖 Auto-Caption" button in the header becomes the live counter "x / N".
+   Click it to reopen the window (progress bar, Cancel). Restored when done.
+   window.TMHeaderBatch is also fed by tagmanager_batch_vlm.js (model download %).
+========================================================================= */
+// Remember the "Skip captioned" checkbox between sessions.
+document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('skip-captioned-toggle');
+    const rv = document.getElementById('review-mode-toggle');
+    if (!el) return;
+    // Skip captioned and Review Mode exclude each other: turning one on switches the other off and locks it.
+    const sync = () => {
+        if (!rv) return;
+        const lock = (box, on, why) => {
+            box.disabled = on;
+            const row = box.parentElement;
+            if (row) { row.style.opacity = on ? '0.45' : ''; row.title = on ? why : ''; }
+        };
+        lock(rv, el.checked, 'Not available together with "Skip captioned".');
+        lock(el, rv.checked, 'Not available together with Review Mode.');
+    };
+    try { el.checked = localStorage.getItem('tm_skip_captioned') === '1' && !(rv && rv.checked); } catch (e) { /* private mode */ }
+    el.addEventListener('change', () => {
+        if (el.checked && rv) rv.checked = false;
+        try { localStorage.setItem('tm_skip_captioned', el.checked ? '1' : '0'); } catch (e) {}
+        sync();
+    });
+    if (rv) rv.addEventListener('change', () => {
+        if (rv.checked) { el.checked = false; try { localStorage.setItem('tm_skip_captioned', '0'); } catch (e) {} }
+        sync();
+    });
+    sync();
+});
+
+window.TMHeaderBatch = (function () {
+    let total = 0, active = false, loadingModel = false, orig = null;
+    const btn = () => document.getElementById('btn-mode-switch');
+    function paint(text) {
+        const b = btn(); if (!b) return;
+        if (orig === null) orig = { text: b.textContent, title: b.title };
+        b.textContent = text;
+        b.classList.add('active-mode');
+        b.title = 'Auto-Caption is running — click to reopen the window';
+    }
+    return {
+        start(n) { total = n; active = true; loadingModel = false; paint(`🤖 0 / ${n}`); },
+        progress(done, n) { if (!active) return; if (n) total = n; if (!loadingModel) paint(`🤖 ${done} / ${total}`); },
+        loading(on) { if (!active) return; loadingModel = !!on; if (on) paint('🤖 Loading model…'); },
+        model(frac) { if (active && loadingModel) paint(`🤖 Loading model ${Math.round(Math.min(1, Math.max(0, frac)) * 100)}%`); },
+        end() {
+            active = false; loadingModel = false;
+            const b = btn();
+            if (b && orig !== null) { b.textContent = orig.text; b.title = orig.title; b.classList.remove('active-mode'); }
+            orig = null;
+        }
+    };
+})();
+
 let taggersDirHandle = null;
 let onnxSession = null;
 let currentSessionModel = null;
@@ -701,7 +760,11 @@ function injectSecondModelReviewUI() {
         <div class="smr-sub">Run another ONNX tagger afterwards and add only the tags the first one missed.</div>
         <div id="second-model-panel"></div>
     `;
-    anchor.parentElement.insertBefore(wrap, anchor);
+    // Lives inside the ONNX Tagger settings, right under "Exclude Tags".
+    const excludeField = document.getElementById('exclude');
+    const excludeBox = excludeField && excludeField.parentElement;
+    if (excludeBox && excludeBox.parentElement && excludeBox.parentElement.id === 'batch-tag-settings') excludeBox.insertAdjacentElement('afterend', wrap);
+    else anchor.parentElement.insertBefore(wrap, anchor);   // fallback: old position
     document.getElementById('second-model-review-toggle').addEventListener('change', () => window.updateSecondModelReviewUI());
     window.updateSecondModelReviewUI();
     return true;
@@ -893,6 +956,24 @@ window.startBatchTagging = async function() {
         return;
     }
 
+    // "Skip captioned": leave images that already have caption text untouched (also keeps the counter honest).
+    const skipEl = document.getElementById('skip-captioned-toggle');
+    const reviewEl = document.getElementById('review-mode-toggle');
+    if (skipEl && skipEl.checked && reviewEl && reviewEl.checked) {
+        if(window.showAlert) window.showAlert('"Skip captioned" cannot be used together with Review Mode. Turn one of them off.', "error");
+        return;
+    }
+    if (skipEl && skipEl.checked) {
+        const before = targetFiles.length;
+        targetFiles = targetFiles.filter(f => f.hidden || !(f.content && String(f.content).trim()));
+        const skipped = before - targetFiles.length;
+        if (!targetFiles.some(f => !f.hidden)) {
+            if(window.showAlert) window.showAlert(`⏭️ Skip captioned: all ${before} image(s) already have a caption. Nothing to do.`, "info");
+            return;
+        }
+        if (skipped > 0 && window.showAlert) window.showAlert(`⏭️ Skipping ${skipped} captioned image(s). Processing ${targetFiles.length}.`, "info");
+    }
+
     const mode = document.getElementById('batch-mode-select').value;
     const hwMode = document.getElementById('hardware-select').value;
 
@@ -988,8 +1069,13 @@ window.startBatchTagging = async function() {
     const setProgress = (processed) => {
         progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
         progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
+        window.TMHeaderBatch.progress(processed, targetFiles.length);
     };
     window._batchFailedCaptions = 0;
+
+    // Leave the popout: the header button now shows x / N (click it to come back).
+    if (typeof window.closeModal === 'function') window.closeModal('view-auto');
+    window.TMHeaderBatch.start(targetFiles.length);
 
     try {
         if (mode === 'tags') {
@@ -1124,9 +1210,13 @@ window.startBatchTagging = async function() {
             if (isEngineMode) {
                 window.TMVlm.setBatchBusy(true);
                 if(window.showAlert) window.showAlert("Preparing the model... the first run may need a download.", "info");
+                window.TMHeaderBatch.loading(true);
                 try {
                     await window.TMVlm.prepare();
+                    window.TMHeaderBatch.loading(false);
+                    window.TMHeaderBatch.progress(0, targetFiles.length);
                 } catch (e) {
+                    window.TMHeaderBatch.loading(false);
                     engineReady = false;
                     window.isBatchCancelled = true;   // also hides the "complete" message at the end
                     if (e && e.cancelled) {
@@ -1270,6 +1360,7 @@ window.startBatchTagging = async function() {
         console.error(e);
         if(window.showAlert) window.showAlert("Critical error. Check the console.", 'error');
     } finally {
+        window.TMHeaderBatch.end();
         btn.disabled = false;
         if(cancelBtn) cancelBtn.style.display = 'none';
 

@@ -479,7 +479,7 @@
                     <option value="tags">🏷️ Tagger (ONNX)</option>
                     <option value="nl-vlm">🖥️ Natural Language (Offline VLMs)</option>
                     <option value="ollama-vision">🦙 Ollama (Auto-detected Vision Models)</option>
-                    <option value="pytorch">🔥 PyTorch / ONNX (local server)</option>
+                    <option value="pytorch">🔥 PyTorch (local server)</option>
                 </select>
             </div>
             <div style="flex:1;">
@@ -489,11 +489,6 @@
                     <option value="wasm">🐌 CPU (WASM Local)</option>
                 </select>
             </div>
-        </div>
-
-        <div id="recursive-mode-box" style="display:flex; align-items:center; gap:10px; background:#0d1f2a; border:1px solid #144a63; padding:10px 12px; border-radius:8px; margin-bottom: 20px;">
-            <input type="checkbox" id="recursive-mode-toggle" onchange="window.updateRecursiveModeUI && window.updateRecursiveModeUI()" style="width:auto; margin:0;">
-            <label for="recursive-mode-toggle" style="font-size:12px; color:#66ccff; font-weight:bold; cursor:pointer; user-select:none;">📁🔁 Recursive Mode — process images inside ALL subfolders too (e.g. a franchise folder with one subfolder per character). Ignores the folder dropdowns above and scans everything under the currently loaded root.</label>
         </div>
 
         <div id="batch-tag-settings">
@@ -517,7 +512,7 @@
             </div>
         </div>
 
-        <!-- Shared by "Natural Language (Offline VLMs)" and "PyTorch / ONNX". Driven by tagmanager_batch_vlm.js,
+        <!-- Shared by "Natural Language (Offline VLMs)" and "PyTorch". Driven by tagmanager_batch_vlm.js,
              which plugs the same engine files the Prompt Helper uses into this panel. -->
         <div id="batch-vlm-settings" style="display: none;">
             <div id="vlm-engine-ui">
@@ -532,7 +527,7 @@
                 <label class="meta-label">Model</label>
                 <div class="vlm-row vlm-model-row">
                     <select id="vlm-model-select"></select>
-                    <button type="button" class="vlm-btn" id="vlm-unload" title="Free the model from memory / VRAM (files stay on disk)">⏏ Unload from memory</button>
+                    <button type="button" class="vlm-btn" id="vlm-hf-toggle" style="display:none;" title="Hugging Face token (faster, authenticated downloads)">🔑</button>
                     <button type="button" class="vlm-btn vlm-btn-warn" id="vlm-delete" title="Delete the downloaded files of the selected model">🧹 Delete downloaded model</button>
                 </div>
 
@@ -548,9 +543,11 @@
                 </div>
 
                 <div id="vlm-prompt-row" style="display:none; margin-bottom: 15px;">
-                    <label class="meta-label">Task Prompt (Model Input)</label>
-                    <textarea id="batch-vlm-prompt" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 14px; font-weight: bold; line-height: 1.5; padding: 15px; background: #0a1a20; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: none; text-align: center;">Describe this image in detail.</textarea>
-                    <span style="font-size: 11px; color: #888; display: block; margin-top: 6px; text-align: center;">SmolVLM and other chat-style models: write the instruction in natural language (e.g., "Describe this image in detail.").</span>
+                    <details id="vlm-manual-instruct" style="background:#0a1a20; border:1px solid #1a5a78; border-radius:8px; padding:8px 12px;">
+                        <summary style="cursor:pointer; color:#9ecfff; font-weight:bold; font-size:13px; user-select:none;">Manual instruct <span id="vlm-manual-badge" style="display:none; margin-left:6px; font-size:11px; color:#00ff99;">● custom</span></summary>
+                        <span style="font-size: 11px; color: #888; display: block; margin: 8px 0;">Leave empty to use the model's built-in default instruct (recommended). Write something here only if you want to <b>override</b> the default with your own instruction (e.g., a different style, language, or output format).</span>
+                        <textarea id="batch-vlm-prompt" placeholder="Empty = default instruct" style="width: 100%; box-sizing: border-box; min-height: 90px; font-size: 13px; line-height: 1.5; padding: 12px; background: #06121a; border: 1px solid #1a5a78; border-radius: 8px; color: #9ecfff; resize: vertical;"></textarea>
+                    </details>
                 </div>
 
                 <div class="vlm-row" id="vlm-tokens-row">
@@ -594,7 +591,24 @@
 
                 <div style="display:flex; gap:10px; margin-bottom: 15px;">
                     <button type="button" class="vlm-btn" id="vlm-load" style="flex:1; padding:10px;" title="Only download / load the model now (the batch also does it automatically)">⬇️ Load model now</button>
+                    <button type="button" class="vlm-btn" id="vlm-unload" style="flex:0; padding:10px 14px;" title="Free the model from memory / VRAM (files stay on disk)">⏏ Unload from memory</button>
                     <button type="button" class="vlm-btn" id="vlm-cancel" style="flex:0; padding:10px 16px;">⏹ Cancel</button>
+                </div>
+
+                <div id="vlm-hf-row" style="display:none; margin-bottom: 12px;">
+                    <div style="display:flex; gap:6px;">
+                        <input type="password" id="vlm-hf-token" autocomplete="off" placeholder="Hugging Face token (hf_...)" style="flex:1; min-width:0;">
+                        <button type="button" class="vlm-btn" id="vlm-hf-save" title="Saves the token for faster, authenticated downloads. Empty + Save removes it.">🔑 Save</button>
+                    </div>
+                    <span id="vlm-hf-status" style="font-size:11px; color:#888; display:block; margin-top:4px;"></span>
+                </div>
+
+                <div id="vlm-deps-row" style="display:none; margin-bottom: 15px;">
+                    <button type="button" class="vlm-btn" id="vlm-deps-check" style="width:100%; padding:8px;" title="Checks the Python packages the PyTorch engine needs (transformers, huggingface_hub...) and whether newer versions exist">🔧 Check dependencies (pip)</button>
+                    <div id="vlm-deps-box" style="display:none; margin-top:8px; padding:10px 12px; background:#0a1a20; border:1px solid #1a5a78; border-radius:8px; font-size:12px; line-height:1.7; color:#9ecfff;">
+                        <div id="vlm-deps-list"></div>
+                        <button type="button" class="vlm-btn" id="vlm-deps-update" style="display:none; width:100%; margin-top:8px; padding:8px;" title="Runs pip install -U in a new console window, then restarts the local server">⬆️ Update &amp; restart server</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -638,9 +652,19 @@
 
         <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0 20px 0;">
 
+        <div style="display:flex; align-items:center; gap:10px; background:#1f1a0d; border:1px solid #5c4a1a; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
+            <input type="checkbox" id="skip-captioned-toggle" style="width:auto; margin:0;">
+            <label for="skip-captioned-toggle" style="font-size:12px; color:#ffd966; font-weight:bold; cursor:pointer; user-select:none;" title="Images that already have caption text (.txt / .json) are left untouched">⏭️ Skip captioned — don't process images that already have a caption</label>
+        </div>
+
         <div style="display:flex; align-items:center; gap:10px; background:#0d1f13; border:1px solid #1a5c3a; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
             <input type="checkbox" id="review-mode-toggle" style="width:auto; margin:0;">
             <label for="review-mode-toggle" style="font-size:12px; color:#66ffaa; font-weight:bold; cursor:pointer; user-select:none;">💡 Review Mode — only suggest text/tags (ghost), don't overwrite or save to disk</label>
+        </div>
+
+        <div id="recursive-mode-box" style="display:flex; align-items:center; gap:10px; background:#0d1f2a; border:1px solid #144a63; padding:10px 12px; border-radius:8px; margin-bottom: 15px;">
+            <input type="checkbox" id="recursive-mode-toggle" onchange="window.updateRecursiveModeUI && window.updateRecursiveModeUI()" style="width:auto; margin:0;">
+            <label for="recursive-mode-toggle" style="font-size:12px; color:#66ccff; font-weight:bold; cursor:pointer; user-select:none;">📁🔁 Recursive Mode — process images inside ALL subfolders too (e.g. a franchise folder with one subfolder per character). Ignores the folder dropdowns above and scans everything under the currently loaded root.</label>
         </div>
 
         <div style="margin-bottom: 15px;">
@@ -712,19 +736,17 @@
             <h4 style="color: #66ccff; margin-bottom: 5px; margin-top: 15px;">🦙 Ollama (Auto-detected Vision Models)</h4>
             <p style="margin-top: 0; margin-bottom: 10px;">It asks your local Ollama server which installed models support vision and lists only those, so you never have to type model names. Works with Qwen2.5-VL / Qwen3-VL, LLaVA, Gemma 3, Llama 3.2 Vision, MiniCPM-V, JoyCaption (<code>ollama pull user-v4/joycaption-beta</code>), etc. Choose <b>Natural Language</b> for a caption or <b>Booru-style tags</b> to get a comma-separated tag list merged into the existing tags. If the list is empty or the connection fails, make sure Ollama is running (and, if needed, started with <code>OLLAMA_ORIGINS=*</code>).</p>
 
-            <h4 style="color: #ff9966; margin-bottom: 5px; margin-top: 15px;">🔥 PyTorch / ONNX (local server)</h4>
+            <h4 style="color: #ff9966; margin-bottom: 5px; margin-top: 15px;">🔥 PyTorch (local server)</h4>
             <p style="margin-top: 0; margin-bottom: 10px;">The model runs in <b>Python</b> instead of the browser: the page talks to <code>server_max.py</code> (port 8100), which uses <code>florence_backend.py</code> and PyTorch (CUDA if you have an NVIDIA GPU, otherwise CPU). It can run bigger models, <b>Florence-2 PromptGen v2.0 (MiaoshouAI)</b>, any model saved in a folder on your PC (safetensors / <code>pytorch_model.bin</code>), other vision-language models, and ONNX taggers through Python. Start the app with the localhost <code>.bat</code> file; the mode is hidden on the online version.</p>
             <p style="margin-top: 0; margin-bottom: 6px;"><b>Install</b> (Python 3.10+, use the same Python that starts the server, then restart the server):</p>
             <pre style="background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; padding:8px 10px; margin:0 0 10px; overflow-x:auto; color:#b8f0d0; font-size:12px;">python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
 python -m pip install transformers pillow huggingface_hub
-python -m pip install einops timm
-python -m pip install onnxruntime</pre>
+python -m pip install einops timm</pre>
             <ul style="padding-left: 20px; margin-bottom: 15px;">
                 <li style="margin-bottom: 8px;">The first line is PyTorch with CUDA 12.4 — copy the exact command for your system from <a href="https://pytorch.org/get-started/locally/" target="_blank" style="color:#4db8ff; text-decoration:none;">pytorch.org</a>. CPU only: <code>python -m pip install torch</code>.</li>
                 <li style="margin-bottom: 8px;"><code>einops timm</code> are needed by PromptGen and the <code>microsoft/</code> Florence models. For the newest native Florence-2 (<code>florence-community/</code>) update with <code>python -m pip install -U transformers</code>.</li>
-                <li style="margin-bottom: 8px;">ONNX taggers through Python need <code>onnxruntime</code> (or <code>onnxruntime-gpu</code> for CUDA — install only one of the two).</li>
                 <li style="margin-bottom: 8px;">Check the GPU: <code>python -c "import torch; print(torch.cuda.is_available())"</code> should print <code>True</code>. The badge at the top of the panel shows <b>🔥 CUDA</b>, <b>🖥️ CPU only</b>, or what is missing.</li>
-                <li style="margin-bottom: 8px;"><b>Models:</b> PromptGen v2.0 (tasks: Generate tags, Caption, Detailed, More detailed, Analyze, Mixed, Mixed +), Florence-2 Base / Large, plus everything found in <code>models/</code> and in folders added with <b>📁 Add model folder</b> (<code>🏷️</code> ONNX taggers, <code>📁</code> local models). Downloads go to <code>models/</code> and then work offline. Raise <b>Max tokens</b> (512–1024) for the long PromptGen tasks.</li>
+                <li style="margin-bottom: 8px;"><b>Models:</b> PromptGen v2.0 (tasks: Generate tags, Caption, Detailed, More detailed, Analyze, Mixed, Mixed +), Florence-2 Base / Large, plus everything found in <code>models/</code> and in folders added with <b>📁 Add model folder</b> (<code>📁</code> local models). Downloads go to <code>models/</code> and then work offline. Raise <b>Max tokens</b> (512–1024) for the long PromptGen tasks.</li>
                 <li style="margin-bottom: 8px;">Only Hugging Face repositories <code>microsoft/Florence-2*</code>, <code>florence-community/Florence-2*</code> and <code>MiaoshouAI/Florence-2*</code> are downloaded automatically (they need remote code). Local Florence-2 folders that ship their own Python code (<code>auto_map</code> in <code>config.json</code>) run that code too — <b>only add folders you trust</b>.</li>
                 <li style="margin-bottom: 8px;">The local server only accepts requests from pages it serves itself (<code>localhost</code> / <code>127.0.0.1</code>); other websites open in the browser cannot use it.</li>
             </ul>

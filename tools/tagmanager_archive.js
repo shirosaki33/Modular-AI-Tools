@@ -1,10 +1,19 @@
 /* =========================================================================
    ARCHIVE MODULE (Standalone — não mexe nos outros arquivos)
    ---------------------------------------------------------------------
-   O Arquivo é SEMPRE local: cria/usa uma subpasta "_archive" dentro da
+   O Arquivo é LOCAL por padrão: cria/usa uma subpasta "_archive" dentro da
    MESMA pasta de onde a imagem veio (img.parentDirHandle). Ou seja, o
-   arquivo fica sempre dentro do próprio dataset, só que separado do
+   arquivo fica dentro do próprio dataset, só que separado do
    conjunto principal (não aparece mais na lista, igual a "hidden").
+
+   NOVO (modo GLOBAL): quando a pasta adicionada tem datasets (subpastas) dentro
+   dela, o painel mostra "🌐 Convert to Global". No modo Global existe UM
+   "_archive" na raiz, com uma subpasta por dataset usado
+   (<root>/_archive/<dataset>/ e <root>/_archive/<dataset>/original/). Ao converter,
+   todos os datasets são vasculhados e os arquivos dos "_archive" locais são MOVIDOS
+   para o global; o manifesto é atualizado. O modo fica gravado em
+   <root>/_archive/.archive_global.json. No modo Global o painel lista os itens de
+   TODOS os datasets da raiz.
 
    NOVO (rótulo automático + micro filtro):
    - Todo item arquivado recebe um RÓTULO AUTOMÁTICO conforme a ferramenta
@@ -140,6 +149,16 @@
         const currentHandle = window.currentImagesHandle || window.rootHandle;
         if (!currentHandle) return [];
 
+        // GLOBAL MODE: o Archive pertence à pasta raiz — mostra TODOS os itens de
+        // qualquer dataset que esteja dentro dela (não só o dataset aberto).
+        if (window.rootHandle && await isGlobalMode(window.rootHandle)) {
+            const root = window.rootHandle;
+            const inRoot = await Promise.all(allItems.map(async (entry) => {
+                try { return !!(entry.parentDirHandle && await root.resolve(entry.parentDirHandle)); } catch (e) { return false; }
+            }));
+            return allItems.filter((_, i) => inRoot[i]);
+        }
+
         const matches = await Promise.all(allItems.map(async (entry) => {
             try {
                 if (entry.parentDirHandle && typeof entry.parentDirHandle.isSameEntry === 'function') {
@@ -226,6 +245,459 @@
         await srcDir.removeEntry(name);
     }
 
+    /* ---------- MODO GLOBAL ----------
+       Quando a pasta adicionada (window.rootHandle) tem datasets (subpastas) dentro
+       dela, o Archive pode virar GLOBAL: em vez de um "_archive" dentro de cada
+       dataset, existe UM "_archive" na raiz, com uma subpasta por dataset:
+           <root>/_archive/<dataset>/            (versões normais)
+           <root>/_archive/<dataset>/original/   (originais)
+           <root>/_archive/<dataset>/<sub>/...   (sub-datasets espelham o caminho)
+           <root>/_archive/_root/                (imagens que estão direto na raiz)
+       O modo é gravado em disco por um arquivo-marcador dentro de <root>/_archive,
+       então sobrevive a recarregar a página / trocar de navegador. */
+    const GLOBAL_MARKER = '.archive_global.json';
+    const GLOBAL_ROOT_FOLDER = '_root';
+    const _globalCache = new WeakMap();
+    let _converting = false;
+
+    const isSysDir = (name) => (typeof window.isSystemDirName === 'function' ? window.isSystemDirName(name) : ['_trash', '_archive', '_rename_cache'].includes(name));
+
+    async function rootHasDatasets(root) {
+        if (!root) return false;
+        try {
+            for await (const e of root.values()) {
+                if (e.kind === 'directory' && !isSysDir(e.name)) return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    async function isGlobalMode(root) {
+        root = root || window.rootHandle;
+        if (!root) return false;
+        if (_globalCache.has(root)) return _globalCache.get(root);
+        let on = false;
+        try {
+            const a = await root.getDirectoryHandle('_archive');
+            await a.getFileHandle(GLOBAL_MARKER);
+            on = true;
+        } catch (e) {}
+        _globalCache.set(root, on);
+        return on;
+    }
+
+    // Caminho (array de nomes) de `dir` a partir de `root`; [] = a própria raiz; null = fora da raiz.
+    async function relPathFromRoot(root, dir) {
+        try { return await root.resolve(dir); } catch (e) { return null; }
+    }
+
+    async function ensureGlobalDir(root, rel, create) {
+        let dir = await root.getDirectoryHandle('_archive', { create });
+        for (const seg of (rel.length ? rel : [GLOBAL_ROOT_FOLDER])) dir = await dir.getDirectoryHandle(seg, { create });
+        return dir;
+    }
+
+    // Pasta que contém os arquivos arquivados (e a subpasta "original") deste dataset.
+    async function getArchiveRootFor(parent, create = true) {
+        const root = window.rootHandle;
+        if (root && await isGlobalMode(root)) {
+            const rel = await relPathFromRoot(root, parent);
+            if (rel) return ensureGlobalDir(root, rel, create);
+        }
+        return parent.getDirectoryHandle('_archive', { create });
+    }
+
+    async function folderLabelFor(parent) {
+        const root = window.rootHandle;
+        if (root && await isGlobalMode(root)) {
+            const rel = await relPathFromRoot(root, parent);
+            if (rel) return rel.length ? rel.join('/') : (root.name || '(root)');
+        }
+        return (parent && parent.name) || '';
+    }
+
+    // Todas as pastas (raiz + até 3 níveis, igual ao seletor do app) que têm um "_archive" próprio.
+    async function collectLocalArchives(root) {
+        const out = [];
+        const walk = async (dir, rel, level) => {
+            let arch = null;
+            try { arch = await dir.getDirectoryHandle('_archive'); } catch (e) {}
+            if (arch) out.push({ dir, rel, archive: arch });
+            if (level >= 3) return;
+            const kids = [];
+            for await (const e of dir.values()) {
+                if (e.kind === 'directory' && !isSysDir(e.name)) kids.push(e);
+            }
+            for (const k of kids) await walk(k, [...rel, k.name], level + 1);
+        };
+        await walk(root, [], 0);
+        return out;
+    }
+
+    async function isDirEmpty(dir) {
+        for await (const _ of dir.values()) return false;
+        return true;
+    }
+
+    // Move TUDO de srcDir (arquivos e subpastas, recursivo) para destDir, sem sobrescrever.
+    // onlyDirs (opcional): só entra nessas subpastas (usado na raiz, onde o destino fica dentro da origem).
+    async function moveTree(srcDir, destDir, stats, onlyDirs) {
+        const files = [], dirs = [];
+        for await (const e of srcDir.values()) {
+            if (e.kind === 'file') { if (e.name !== GLOBAL_MARKER) files.push(e.name); }
+            else if (!onlyDirs || onlyDirs.includes(e.name)) dirs.push(e);
+        }
+        for (const n of files) {
+            try {
+                if (await fileExistsIn(destDir, n)) {
+                    // Mesmo tamanho = cópia de uma execução interrompida: só limpa a origem.
+                    const a = await (await srcDir.getFileHandle(n)).getFile();
+                    const b = await (await destDir.getFileHandle(n)).getFile();
+                    if (a.size === b.size) { await srcDir.removeEntry(n); stats.moved++; } else stats.skipped++;
+                    continue;
+                }
+                await moveFileBetween(srcDir, destDir, n);
+                stats.moved++;
+            } catch (err) {
+                stats.failed++;
+                console.warn('[Archive] could not move to global:', n, err);
+            }
+        }
+        for (const d of dirs) {
+            const dd = await destDir.getDirectoryHandle(d.name, { create: true });
+            await moveTree(d, dd, stats);
+        }
+    }
+
+    // Remove subpastas vazias (recursivo); não remove a própria `dir`.
+    async function pruneEmptyDirs(dir) {
+        const subs = [];
+        for await (const e of dir.values()) if (e.kind === 'directory') subs.push(e);
+        for (const s of subs) {
+            await pruneEmptyDirs(s);
+            try { if (await isDirEmpty(s)) await dir.removeEntry(s.name); } catch (e) {}
+        }
+    }
+
+    // Imagens que estão na pasta global mas NÃO têm registro no manifesto (ex.: arquivadas por outro
+    // navegador/versão) ganham um registro — assim passam a ser controladas pelo Archive global.
+    async function adoptOrphans(dir, isOriginal, parentDir, label, manifest, stats) {
+        const names = [];
+        for await (const e of dir.values()) if (e.kind === 'file') names.push(e.name);
+        for (const n of names) {
+            if (!/\.(png|jpe?g|webp)$/i.test(n)) continue;
+            let known = false;
+            for (const m of manifest) {
+                if (m.archiveImageName !== n || !m.archiveDirHandle) continue;
+                try { if (await m.archiveDirHandle.isSameEntry(dir)) { known = true; break; } } catch (e) {}
+            }
+            if (known) continue;
+            const base = n.replace(/\.[^.]+$/, '');
+            const texts = names.filter(t => t === base + '.txt' || t === base + '.json');
+            let archivedAt = Date.now();
+            try { archivedAt = (await (await dir.getFileHandle(n)).getFile()).lastModified || archivedAt; } catch (e) {}
+            const entry = {
+                archiveDirHandle: dir,
+                archiveImageName: n,
+                archiveTextNames: texts,
+                originalName: n,
+                originalBaseName: base,
+                originalExt: texts.length ? texts[0].slice(texts[0].lastIndexOf('.') + 1) : 'txt',
+                parentDirHandle: parentDir,
+                folderLabel: label,
+                label: isOriginal ? ORIGINAL_LABEL : '',
+                isOriginal: !!isOriginal,
+                nlMap: null,
+                archivedAt
+            };
+            const id = await addArchiveManifestEntry(entry);
+            if (id != null) { entry.id = id; manifest.push(entry); stats.adopted++; }
+        }
+    }
+
+    /* Move TUDO do "_archive" local de um dataset (s) para o global, atualiza o manifesto,
+       adota fotos sem registro e apaga o "_archive" local. */
+    async function sweepSource(root, s, manifest, stats) {
+        const dest = await ensureGlobalDir(root, s.rel, true);
+        let srcOriginal = null;
+        try { srcOriginal = await s.archive.getDirectoryHandle(ORIGINAL_DIR); } catch (e) {}
+        const destOriginal = srcOriginal ? await dest.getDirectoryHandle(ORIGINAL_DIR, { create: true }) : null;
+
+        // Dataset: move TUDO que há no "_archive" local. Raiz: o destino fica dentro da própria
+        // origem, então só entra em "original" (o resto já é a estrutura global).
+        await moveTree(s.archive, dest, stats, s.rel.length ? null : [ORIGINAL_DIR]);
+
+        // Aponta os registros do manifesto para o novo local (só se o arquivo realmente está lá).
+        const label = s.rel.length ? s.rel.join('/') : (root.name || '(root)');
+        for (const entry of manifest) {
+            try {
+                let target = null;
+                if (entry.archiveDirHandle && await entry.archiveDirHandle.isSameEntry(s.archive)) target = dest;
+                else if (srcOriginal && entry.archiveDirHandle && await entry.archiveDirHandle.isSameEntry(srcOriginal)) target = destOriginal;
+                if (!target || !(await fileExistsIn(target, entry.archiveImageName))) continue;
+                entry.archiveDirHandle = target;
+                entry.folderLabel = label;
+                await updateArchiveManifestEntry(entry);
+            } catch (e) { /* handle inválido: deixa o registro como está */ }
+        }
+
+        // Fotos/legendas sem registro no manifesto passam a ser controladas pelo global.
+        await adoptOrphans(dest, false, s.dir, label, manifest, stats);
+        if (destOriginal) await adoptOrphans(destOriginal, true, s.dir, label, manifest, stats);
+
+        // Nada fica no dataset: o "_archive" local some (a raiz mantém o seu: agora é o global).
+        if (s.rel.length > 0) {
+            try {
+                await pruneEmptyDirs(s.archive);
+                if (await isDirEmpty(s.archive)) await s.dir.removeEntry('_archive');
+                else stats.leftover++;
+            } catch (e) { stats.leftover++; }
+        }
+    }
+
+    // Percorre a árvore global: devolve { dir, rel } de cada pasta de dataset (sem as pastas "original").
+    // A pasta "_root" representa a própria raiz (rel = []).
+    async function collectGlobalNodes(globalDir) {
+        const out = [];
+        const walk = async (dir, rel, isTop) => {
+            const kids = [];
+            for await (const e of dir.values()) if (e.kind === 'directory' && e.name !== ORIGINAL_DIR) kids.push(e);
+            for (const k of kids) {
+                if (isTop && k.name === GLOBAL_ROOT_FOLDER) { out.push({ dir: k, rel: [] }); continue; }
+                const r = [...rel, k.name];
+                out.push({ dir: k, rel: r });
+                await walk(k, r, false);
+            }
+        };
+        await walk(globalDir, [], true);
+        return out;
+    }
+
+    async function datasetHandleForRel(root, rel) {
+        let d = root;
+        for (const seg of rel) d = await d.getDirectoryHandle(seg);
+        return d;
+    }
+
+    /* RESCAN: roda a varredura de novo no modo Global — traz para o global qualquer "_archive"
+       local que tenha reaparecido nos datasets e adota fotos sem registro. */
+    window.rescanArchiveGlobal = async function () {
+        const root = window.rootHandle;
+        if (!root || _converting || !(await isGlobalMode(root))) return;
+        const btn = document.getElementById('archive-rescan-global');
+        const setBtn = (t, dis) => { if (btn) { btn.textContent = t; btn.disabled = !!dis; } };
+        _converting = true;
+        setBtn('⏳ Rescanning...', true);
+        const stats = { moved: 0, skipped: 0, failed: 0, adopted: 0, leftover: 0 };
+        let found = 0;
+        try {
+            if ((await root.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                if ((await root.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                    if (window.showAlert) window.showAlert('Permission denied for the root folder.', 'error');
+                    return;
+                }
+            }
+            if (typeof window.saveAllImages === 'function') { try { await window.saveAllImages(true); } catch (e) {} }
+
+            // "_archive" locais de datasets (o da raiz É o global, então fica de fora).
+            const sources = (await collectLocalArchives(root)).filter(s => s.rel.length > 0);
+            found = sources.length;
+            const manifest = await getAllArchiveManifestEntries();
+            for (let n = 0; n < sources.length; n++) {
+                setBtn(`⏳ ${n + 1}/${sources.length}`, true);
+                await sweepSource(root, sources[n], manifest, stats);
+            }
+
+            // Fotos dentro do global sem registro (ex.: arquivadas por outra versão/navegador).
+            const globalDir = await root.getDirectoryHandle('_archive');
+            for (const node of await collectGlobalNodes(globalDir)) {
+                let ds = null;
+                try { ds = await datasetHandleForRel(root, node.rel); } catch (e) { continue; }
+                const label = node.rel.length ? node.rel.join('/') : (root.name || '(root)');
+                await adoptOrphans(node.dir, false, ds, label, manifest, stats);
+                let orig = null;
+                try { orig = await node.dir.getDirectoryHandle(ORIGINAL_DIR); } catch (e) {}
+                if (orig) await adoptOrphans(orig, true, ds, label, manifest, stats);
+            }
+            // Raiz: imagens soltas direto em _archive (sem passar por _root) também entram.
+            await pruneEmptyDirs(globalDir);
+
+            if (window.showAlert) {
+                window.showAlert(`Rescan done 🔄 — moved ${stats.moved} file(s) from ${found} dataset archive folder(s), ${stats.adopted} image(s) newly managed.`, 'success');
+                if (stats.skipped > 0 || stats.leftover > 0) window.showAlert(`⚠️ ${stats.skipped} file(s) were left in a dataset's "_archive" because a different file with the same name already exists in the global folder.`, 'error');
+                if (stats.failed > 0) window.showAlert(`⚠️ ${stats.failed} file(s) could not be moved (see console).`, 'error');
+            }
+        } catch (e) {
+            console.error('rescanArchiveGlobal failed:', e);
+            if (window.showAlert) window.showAlert('Error rescanning the global Archive: ' + (e.message || e), 'error');
+        } finally {
+            _converting = false;
+            await renderArchiveList();
+            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+        }
+    };
+
+    /* CONVERT TO LOCAL: desfaz o Global. Cada pasta <root>/_archive/<dataset>/ volta para o
+       "_archive" do próprio dataset (a pasta "_root" volta para <root>/_archive), o manifesto é
+       atualizado e o marcador sai. Se algo não puder voltar, o modo continua Global. */
+    window.convertArchiveToLocal = async function () {
+        const root = window.rootHandle;
+        if (!root || _converting || !(await isGlobalMode(root))) return;
+        if (!confirm(`Convert the Archive of "${root.name}" back to LOCAL?\n\n• Each folder in "${root.name}/_archive" is MOVED back into its own dataset ("<dataset>/_archive", originals in "<dataset>/_archive/original").\n• The global folders are removed once empty.\n• From then on each dataset keeps its own Archive again, and the panel lists only the dataset you are in.\n\nThis moves files on disk. Continue?`)) return;
+
+        const btn = document.getElementById('archive-convert-local');
+        const setBtn = (t, dis) => { if (btn) { btn.textContent = t; btn.disabled = !!dis; } };
+        _converting = true;
+        setBtn('⏳ Scanning...', true);
+        const stats = { moved: 0, skipped: 0, failed: 0, adopted: 0, leftover: 0 };
+        try {
+            if ((await root.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                if ((await root.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                    if (window.showAlert) window.showAlert('Permission denied for the root folder.', 'error');
+                    return;
+                }
+            }
+            if (typeof window.saveAllImages === 'function') { try { await window.saveAllImages(true); } catch (e) {} }
+
+            const globalDir = await root.getDirectoryHandle('_archive');
+            const manifest = await getAllArchiveManifestEntries();
+            const nodes = (await collectGlobalNodes(globalDir)).sort((a, b) => b.rel.length - a.rel.length); // _root (rel []) por último
+
+            for (let n = 0; n < nodes.length; n++) {
+                const node = nodes[n];
+                setBtn(`⏳ ${n + 1}/${nodes.length}`, true);
+
+                let ds = null;
+                try { ds = await datasetHandleForRel(root, node.rel); } catch (e) { stats.leftover++; continue; } // dataset não existe mais
+                const isRootNode = node.rel.length === 0;
+                // O "_archive" local da raiz é a própria pasta global.
+                const local = isRootNode ? globalDir : await ds.getDirectoryHandle('_archive', { create: true });
+                let srcOriginal = null;
+                try { srcOriginal = await node.dir.getDirectoryHandle(ORIGINAL_DIR); } catch (e) {}
+                const localOriginal = srcOriginal ? await local.getDirectoryHandle(ORIGINAL_DIR, { create: true }) : null;
+
+                // Só os arquivos deste nível (sub-datasets têm o próprio nó).
+                await moveTree(node.dir, local, stats, []);
+                if (srcOriginal) await moveTree(srcOriginal, localOriginal, stats, []);
+
+                for (const entry of manifest) {
+                    try {
+                        let target = null;
+                        if (entry.archiveDirHandle && await entry.archiveDirHandle.isSameEntry(node.dir)) target = local;
+                        else if (srcOriginal && entry.archiveDirHandle && await entry.archiveDirHandle.isSameEntry(srcOriginal)) target = localOriginal;
+                        if (!target || !(await fileExistsIn(target, entry.archiveImageName))) continue;
+                        entry.archiveDirHandle = target;
+                        entry.folderLabel = ds.name || '';
+                        await updateArchiveManifestEntry(entry);
+                    } catch (e) {}
+                }
+            }
+
+            await pruneEmptyDirs(globalDir);
+            let remaining = false;
+            for await (const e of globalDir.values()) if (e.kind === 'directory' && e.name !== ORIGINAL_DIR) remaining = true;
+
+            if (remaining || stats.leftover > 0 || stats.skipped > 0 || stats.failed > 0) {
+                if (window.showAlert) window.showAlert(`⚠️ Some files could not go back to their dataset (folder missing, name conflict or error), so the Archive stays GLOBAL. Moved ${stats.moved} file(s). Fix it and run Convert to Local again.`, 'error');
+            } else {
+                try { await globalDir.removeEntry(GLOBAL_MARKER); } catch (e) {}
+                try { if (await isDirEmpty(globalDir)) await root.removeEntry('_archive'); } catch (e) {}
+                if (window.showAlert) window.showAlert(`Archive is LOCAL again — moved ${stats.moved} file(s) back to their datasets.`, 'success');
+            }
+        } catch (e) {
+            console.error('convertArchiveToLocal failed:', e);
+            if (window.showAlert) window.showAlert('Error converting the Archive to Local: ' + (e.message || e), 'error');
+        } finally {
+            _converting = false;
+            _globalCache.delete(root);
+            await renderArchiveList();
+            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+        }
+    };
+
+    /* Converte o Archive da pasta raiz para GLOBAL: vasculha todos os datasets, move tudo
+       que está nos "_archive" locais para <root>/_archive/<dataset>/ e atualiza o manifesto
+       (para Restore / Delete / Pin continuarem funcionando). Idempotente: dá para rodar de novo. */
+    window.convertArchiveToGlobal = async function () {
+        const root = window.rootHandle;
+        if (!root || _converting) return;
+        if (await isGlobalMode(root)) return;
+        if (!(await rootHasDatasets(root))) {
+            if (window.showAlert) window.showAlert('This folder has no dataset subfolders — Global mode needs datasets one level below it.', 'error');
+            return;
+        }
+        if (!confirm(`Convert the Archive of "${root.name}" to GLOBAL?\n\n• A single "_archive" folder is used at the root of "${root.name}", with one subfolder per dataset.\n• Every dataset is scanned and ALL its archived files (including originals) are MOVED into the global folder.\n• From now on, archiving from any dataset under this folder goes to the global Archive, and the panel lists every dataset's archived items.\n\nThis moves files on disk. Continue?`)) return;
+
+        const btn = document.getElementById('archive-convert-global');
+        const setBtn = (t, dis) => { if (btn) { btn.textContent = t; btn.disabled = !!dis; } };
+        _converting = true;
+        setBtn('⏳ Scanning...', true);
+
+        const stats = { moved: 0, skipped: 0, failed: 0, adopted: 0, leftover: 0 };
+        let sourceCount = 0;
+        try {
+            if ((await root.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                if ((await root.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                    if (window.showAlert) window.showAlert('Permission denied for the root folder.', 'error');
+                    return;
+                }
+            }
+            if (typeof window.saveAllImages === 'function') { try { await window.saveAllImages(true); } catch (e) {} }
+
+            const sources = await collectLocalArchives(root);
+            sourceCount = sources.length;
+            const manifest = await getAllArchiveManifestEntries();
+
+            for (let n = 0; n < sources.length; n++) {
+                setBtn(`⏳ ${n + 1}/${sources.length}`, true);
+                await sweepSource(root, sources[n], manifest, stats);
+            }
+
+            // Marcador: só agora o modo vira Global.
+            const globalDir = await root.getDirectoryHandle('_archive', { create: true });
+            await pruneEmptyDirs(globalDir); // sem pastas vazias: só existe pasta para dataset que tem itens
+            const mh = await globalDir.getFileHandle(GLOBAL_MARKER, { create: true });
+            const w = await mh.createWritable();
+            await w.write(JSON.stringify({ mode: 'global', version: 1, convertedAt: new Date().toISOString() }));
+            await w.close();
+
+            if (window.showAlert) {
+                window.showAlert(`Archive is now GLOBAL 🌐 — moved ${stats.moved} file(s) from ${sourceCount} archive folder(s).`, 'success');
+                if (stats.adopted > 0) window.showAlert(`${stats.adopted} archived image(s) had no record — they are now managed by the global Archive.`, 'info');
+                if (stats.skipped > 0 || stats.leftover > 0) window.showAlert(`⚠️ ${stats.skipped} file(s) were left in a dataset's "_archive" because a different file with the same name already exists in the global folder.`, 'error');
+                if (stats.failed > 0) window.showAlert(`⚠️ ${stats.failed} file(s) could not be moved (see console).`, 'error');
+            }
+        } catch (e) {
+            console.error('convertArchiveToGlobal failed:', e);
+            if (window.showAlert) window.showAlert('Error converting the Archive to Global: ' + (e.message || e), 'error');
+        } finally {
+            _converting = false;
+            _globalCache.delete(root);
+            await renderArchiveList();
+            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+        }
+    };
+
+    async function updateModeBar() {
+        const bar = document.getElementById('archive-mode-bar');
+        if (!bar) return;
+        const root = window.rootHandle;
+        if (!root) { bar.style.display = 'none'; return; }
+        if (await isGlobalMode(root)) {
+            bar.style.display = 'flex';
+            bar.className = 'is-global';
+            bar.innerHTML = `<span>🌐 <b>Global mode</b> — every dataset under "${esc(root.name)}" archives into <code>${esc(root.name)}/_archive/&lt;dataset&gt;/</code>. Open a folder to see its images; the panel opens at the dataset you are in.</span><button id="archive-rescan-global" title="Scan every dataset again: bring any leftover local _archive into the global one and register images that have no record">🔄 Rescan Global</button><button id="archive-convert-local" title="Move everything back into each dataset's own _archive and leave Global mode">🏠 Convert to Local</button>`;
+            document.getElementById('archive-rescan-global').onclick = () => window.rescanArchiveGlobal();
+            document.getElementById('archive-convert-local').onclick = () => window.convertArchiveToLocal();
+            return;
+        }
+        if (!(await rootHasDatasets(root))) { bar.style.display = 'none'; return; }
+        bar.style.display = 'flex';
+        bar.className = '';
+        bar.innerHTML = `<span>This folder contains datasets. Convert to <b>Global</b> to keep one Archive at the root ("${esc(root.name)}/_archive/&lt;dataset&gt;") instead of one per dataset.</span><button id="archive-convert-global" title="Scan every dataset and move all archived files into the global Archive">🌐 Convert to Global</button>`;
+        document.getElementById('archive-convert-global').onclick = () => window.convertArchiveToGlobal();
+    }
+
     // Registros "normais" (não-original) do Archive com este nome de imagem, nesta pasta de dataset.
     async function findRootCopies(parent, imgName) {
         const all = await getAllArchiveManifestEntries();
@@ -275,7 +747,7 @@
                 if ((await img.parentDirHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
             }
 
-            const archiveRoot = await img.parentDirHandle.getDirectoryHandle('_archive', { create: true });
+            const archiveRoot = await getArchiveRootFor(img.parentDirHandle, true);
 
             let originalDir = null;
             try { originalDir = await archiveRoot.getDirectoryHandle(ORIGINAL_DIR); } catch (e) {}
@@ -310,7 +782,7 @@
                 originalBaseName: img.baseName,
                 originalExt: img.ext,
                 parentDirHandle: img.parentDirHandle,
-                folderLabel: (img.parentDirHandle && img.parentDirHandle.name) || '',
+                folderLabel: await folderLabelFor(img.parentDirHandle),
                 label: asOriginal ? ORIGINAL_LABEL : (cleanLabel(label) || cleanLabel(window._archiveAutoLabel) || DEFAULT_LABEL),
                 isOriginal: asOriginal,
                 // Mapa NL (tags NL internas ↔ texto limpo do .txt) — volta pro config ao restaurar.
@@ -351,7 +823,7 @@
 
         if (typeof window.saveAllImages === 'function') { try { await window.saveAllImages(true); } catch (e) {} }
 
-        const archiveRoot = await parent.getDirectoryHandle('_archive', { create: true });
+        const archiveRoot = await getArchiveRootFor(parent, true);
         const olds = await findRootCopies(parent, imgName);
 
         // 1) modificada -> Archive normal
@@ -409,7 +881,11 @@
     window.archiveSelectedImages = async function () {
         if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
 
-        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\nArchived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and won't show up in the list. The first version of each image becomes its "original" (kept in _archive/original); later versions get the label "${DEFAULT_LABEL}". You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
+        const _isGlobal = !!window.rootHandle && await isGlobalMode(window.rootHandle);
+        const _where = _isGlobal
+            ? `Archived files go to the GLOBAL Archive ("${window.rootHandle.name}/_archive/<dataset>") and`
+            : 'Archived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and';
+        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\n${_where} won't show up in the list. The first version of each image becomes its "original" (kept in _archive/original); later versions get the label "${DEFAULT_LABEL}". You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
 
         const label = DEFAULT_LABEL;
 
@@ -698,6 +1174,31 @@
         #archive-select-bar { display: none; align-items: center; gap: 10px; flex-shrink: 0; padding: 6px 2px; font-size: 11px; color: #aaa; }
         #archive-select-bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
         #archive-select-count { color: #888; }
+
+        /* Navegação por pastas (modo Global) */
+        #archive-crumbs { display: none; align-items: center; flex-wrap: wrap; gap: 5px; flex-shrink: 0; margin: 0 0 8px; font-size: 12px; }
+        #archive-crumbs .ac-seg { color: #66ccff; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+        #archive-crumbs .ac-seg:hover { background: #0d1f2a; }
+        #archive-crumbs .ac-seg.current { color: #fff; cursor: default; font-weight: bold; background: transparent; }
+        #archive-crumbs .ac-sep { color: #555; }
+        .archive-folder { display: flex; align-items: center; gap: 10px; background: #101820; border: 1px solid #144a63; border-radius: 6px; padding: 10px 12px; cursor: pointer; flex-shrink: 0; }
+        .archive-folder:hover { background: #0d2230; border-color: #66ccff; }
+        .archive-folder .af-icon { font-size: 18px; }
+        .archive-folder .af-name { flex: 1; font-size: 12px; font-weight: bold; color: #ddd; word-break: break-all; }
+        .archive-folder .af-count { font-size: 11px; color: #888; }
+        .archive-folder .af-go { color: #66ccff; font-size: 18px; line-height: 1; }
+
+        /* Barra do modo Global */
+        #archive-mode-bar { display: none; align-items: center; gap: 10px; flex-shrink: 0; margin: 0 0 8px; padding: 7px 10px; font-size: 11px; color: #aaa; background: #101820; border: 1px solid #144a63; border-radius: 6px; }
+        #archive-mode-bar > span { flex: 1; line-height: 1.4; }
+        #archive-mode-bar code { color: #66ccff; font-size: 10px; }
+        #archive-mode-bar.is-global { background: #0d1f16; border-color: #00aa66; color: #9fe3c0; }
+        #archive-mode-bar.is-global code { color: #00ff99; }
+        #archive-convert-global, #archive-rescan-global, #archive-convert-local { flex-shrink: 0; font-size: 11px; padding: 5px 10px; background: #0d1f2a; color: #66ccff; border: 1px solid #144a63; }
+        #archive-convert-global:hover:not(:disabled), #archive-rescan-global:hover:not(:disabled), #archive-convert-local:hover:not(:disabled) { background: #66ccff; color: #000; }
+        #archive-convert-global:disabled, #archive-rescan-global:disabled, #archive-convert-local:disabled { opacity: 0.5; cursor: not-allowed; }
+        #archive-convert-local { background: #1f1a0d; color: #ffcc66; border-color: #4a3410; }
+        #archive-convert-local:hover:not(:disabled) { background: #ffcc66; color: #000; }
         #archive-restore-selected { margin-left: auto; font-size: 11px; padding: 5px 10px; background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; }
         #archive-restore-selected:hover:not(:disabled) { background: #00aa66; color: #000; }
         #archive-restore-selected:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -831,6 +1332,8 @@
                 <div style="font-size:11px; color:#888; margin: -4px 0 10px;">
                     Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. Items are labeled automatically by the tool that archived them (excluded / grayscale / bucket); click a label to rename it. The first version of each image is kept as its "original" (folder _archive/original); restoring it swaps it with the version currently in the dataset. "Delete Permanently" removes the archived copy for good — this cannot be undone.
                 </div>
+                <div id="archive-mode-bar"></div>
+                <div id="archive-crumbs"></div>
                 <div id="archive-filter-bar">
                     <span style="font-size:13px;" title="Filter by label — click a label to show only it, click again to turn it off">🏷️</span>
                     <div id="archive-label-filter"></div>
@@ -954,8 +1457,34 @@
         input.select();
     }
 
+    /* Pasta aberta no modo Global (array de nomes a partir da raiz). null = seguir o dataset atual. */
+    let _viewPath = null;
+
+    // Trilha clicável: 🌐 raiz / A / sub  (só no modo Global).
+    function renderCrumbs(root, base) {
+        const bar = document.getElementById('archive-crumbs');
+        if (!bar) return;
+        if (!root) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+        bar.style.display = 'flex';
+        bar.innerHTML = '';
+        const segs = [{ label: '🌐 ' + (root.name || 'root'), path: [] }, ...base.map((n, i) => ({ label: n, path: base.slice(0, i + 1) }))];
+        segs.forEach((s, i) => {
+            if (i > 0) { const sep = document.createElement('span'); sep.className = 'ac-sep'; sep.textContent = '/'; bar.appendChild(sep); }
+            const c = document.createElement('span');
+            const last = i === segs.length - 1;
+            c.className = 'ac-seg' + (last ? ' current' : '');
+            c.textContent = s.label;
+            if (!last) c.onclick = () => { _viewPath = s.path; _selectedIds.clear(); renderArchiveList(); };
+            bar.appendChild(c);
+        });
+    }
+
     async function renderArchiveList() {
         buildModal();
+
+        // Relê o modo do disco (pode ter mudado fora do app) e atualiza a barra Global.
+        if (window.rootHandle && !_converting) _globalCache.delete(window.rootHandle);
+        await updateModeBar();
 
         window._archiveObjectUrls.forEach(u => {
             if (window.ThumbLoader) window.ThumbLoader.forget(u);
@@ -973,15 +1502,63 @@
         const list = document.getElementById('archive-list');
         list.innerHTML = '<div style="color:#666; font-size:12px; text-align:center; padding:15px;">Loading...</div>';
 
-        const allItems = await pruneStaleArchiveEntries(await getArchiveEntriesForCurrentDataset());
-        allItems.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
-        updateFilterUI(allItems);
+        const everyItem = await pruneStaleArchiveEntries(await getArchiveEntriesForCurrentDataset());
+        everyItem.sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
 
-        const items = allItems.filter(entryMatchesFilter);
+        /* GLOBAL: navegação por pastas. `base` = pasta aberta (caminho a partir da raiz).
+           - scopeItems = tudo dessa pasta para baixo (alimenta filtro de rótulos e contagens);
+           - items      = SÓ as imagens dessa pasta (lista plana, sem sub-níveis);
+           - folders    = subpastas imediatas que têm itens arquivados. */
+        const root = window.rootHandle;
+        const globalOn = !!root && await isGlobalMode(root);
+        let scopeItems = everyItem;
+        let ownItems = everyItem;
+        let folders = [];
+        let base = [];
+        if (globalOn) {
+            const relOf = new Map();
+            for (const e of everyItem) {
+                let r = null;
+                try { r = await root.resolve(e.parentDirHandle); } catch (err) {}
+                relOf.set(e.id, r || []);
+            }
+            if (_viewPath) base = _viewPath;
+            else {
+                try { base = (window.currentImagesHandle && await root.resolve(window.currentImagesHandle)) || []; } catch (err) { base = []; }
+                _viewPath = base;
+            }
+            const under = (r) => base.every((seg, i) => r[i] === seg);
+            scopeItems = everyItem.filter(e => under(relOf.get(e.id)));
+            ownItems = scopeItems.filter(e => relOf.get(e.id).length === base.length);
+            const counts = new Map();
+            scopeItems.forEach(e => {
+                const r = relOf.get(e.id);
+                if (r.length > base.length && entryMatchesFilter(e)) counts.set(r[base.length], (counts.get(r[base.length]) || 0) + 1);
+            });
+            folders = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }));
+        }
+        updateFilterUI(scopeItems);
+        renderCrumbs(globalOn ? root : null, base);
+
+        const items = ownItems.filter(entryMatchesFilter);
+        const allItems = scopeItems;
         const info = document.getElementById('archive-filter-info');
-        if (info) info.textContent = _activeLabels.size > 0 ? `${items.length} of ${allItems.length} shown` : `${allItems.length} item(s)`;
+        if (info) {
+            const shown = globalOn ? scopeItems.filter(entryMatchesFilter).length : items.length;
+            info.textContent = _activeLabels.size > 0 ? `${shown} of ${allItems.length} shown` : `${allItems.length} item(s)`;
+        }
 
         list.innerHTML = '';
+
+        // Pastas (só no modo Global): clicar entra na pasta.
+        folders.forEach(([name, count]) => {
+            const f = document.createElement('div');
+            f.className = 'archive-folder';
+            f.title = 'Open this folder';
+            f.innerHTML = `<span class="af-icon">📁</span><span class="af-name">${esc(name)}</span><span class="af-count">${count} item(s)</span><span class="af-go">›</span>`;
+            f.onclick = () => { _viewPath = [...base, name]; _selectedIds.clear(); renderArchiveList(); };
+            list.appendChild(f);
+        });
 
         if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
@@ -1023,9 +1600,11 @@
 
         if (items.length === 0) {
             updateSelectBar();
-            list.innerHTML = allItems.length === 0
-                ? '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>'
-                : '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">No archived images with this label.</div>';
+            if (folders.length === 0) {
+                list.innerHTML = allItems.length === 0
+                    ? '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>'
+                    : '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">No archived images with this label.</div>';
+            }
             return;
         }
 
@@ -1115,6 +1694,7 @@
     window.openArchiveModal = async function () {
         buildModal();
         window.openModal('modal-archive');
+        _viewPath = null; // abre na pasta do dataset atual
         await renderArchiveList();
     };
 

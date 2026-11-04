@@ -505,6 +505,8 @@ class Server(http.server.ThreadingHTTPServer):
 
 
 def open_browser():
+    if os.environ.get('MODULAR_NO_BROWSER'):   # set when florence_backend restarts the server after a pip update
+        return
     url = 'http://localhost:{}/{}'.format(PORT, quote(PAGE))
     if CHROME and os.name == 'nt':
         try:
