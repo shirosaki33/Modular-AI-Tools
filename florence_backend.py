@@ -29,6 +29,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 
@@ -44,6 +45,14 @@ TASKS_PROMPTGEN = ('GENERATE_TAGS', 'CAPTION', 'DETAILED_CAPTION', 'MORE_DETAILE
 
 # trust_remote_code executes code from the repo, so only known repos are allowed.
 ALLOWED_PREFIXES = ('microsoft/Florence-2', 'florence-community/Florence-2', 'MiaoshouAI/Florence-2')
+# Generic vision-language models that run with the stock transformers classes
+# (no trust_remote_code), so they are safe to download by hub id.
+VLM_PREFIXES = ('Qwen/Qwen3-VL', 'Qwen/Qwen2.5-VL', 'huihui-ai/Huihui-Qwen3-VL')
+# Same default prompt as ostris/ai-toolkit's Qwen3-VL captioner.
+DEFAULT_VLM_PROMPT = ("Caption this image as if you were going to try to generate it with an image generator. "
+                      "Be thorough and describe everything in the image. Be decisive by stating things as they are. "
+                      "Do not say things like \"It appears that\" Or \"possibly\". Start out with things like "
+                      "\"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.")
 MODEL_ID_RE = re.compile(r'^[\w.\-]+/[\w.\-]+$')
 IGNORE_PATTERNS = ['*.onnx', 'onnx/*', '*.msgpack', '*.h5', '*.ot', '*.tflite']
 
@@ -64,7 +73,7 @@ _gen_lock = threading.Lock()
 _cancel = threading.Event()
 _S = {'state': 'idle', 'message': '', 'error': '', 'model': None,
       'device': None, 'device_pref': None, 'obj': None}
-_P = {'loaded': 0, 'total': 0, 'file': ''}
+_P = {'loaded': 0, 'total': 0, 'file': '', 'speed': 0, 'eta': 0, 'exact': False, 'tq': 0}
 
 
 def _set(**kw):
@@ -372,7 +381,7 @@ def scan_all():
 
 # ---------------------------------------------------------------- model specs
 def _check_model_id(model_id):
-    if not isinstance(model_id, str) or not MODEL_ID_RE.match(model_id) or not model_id.startswith(ALLOWED_PREFIXES):
+    if not isinstance(model_id, str) or not MODEL_ID_RE.match(model_id) or not model_id.startswith(ALLOWED_PREFIXES + VLM_PREFIXES):
         raise ValueError('Model not allowed: {}'.format(model_id))
     return model_id
 
@@ -412,6 +421,9 @@ def _spec(model_id):
                 'native': family != 'vlm' and not remote, 'remote': remote, 'name': _display_name(path)}
     _check_model_id(model_id)
     low = model_id.lower()
+    if model_id.startswith(VLM_PREFIXES):
+        return {'kind': 'torch', 'src': model_id, 'local': False, 'family': 'vlm',
+                'native': False, 'remote': False, 'name': model_id}
     return {'kind': 'torch', 'src': model_id, 'local': False,
             'family': 'promptgen' if 'promptgen' in low else 'florence',
             'native': low.startswith('florence-community/'),
@@ -470,13 +482,53 @@ def status(model=None):
 
 
 # ---------------------------------------------------------------- loading
+def _remote_size(model_id):
+    """Exact number of bytes snapshot_download will fetch (ignore patterns applied), or 0."""
+    try:
+        import fnmatch
+        from huggingface_hub import HfApi
+        info = HfApi().model_info(model_id, files_metadata=True)
+        total = 0
+        for sib in info.siblings or []:
+            if any(fnmatch.fnmatch(sib.rfilename, pat) for pat in IGNORE_PATTERNS):
+                continue
+            total += int(sib.size or 0)
+        return total
+    except Exception as e:  # noqa: BLE001
+        print('[florence] could not read the remote file sizes ({}); progress will be approximate'.format(e), flush=True)
+        return 0
+
+
+def _blobs_size(model_id):
+    return _dir_size(os.path.join(_model_dir(model_id), 'blobs'))
+
+
+def _monitor_download(model_id, stop):
+    """Updates _P (loaded / speed / eta) from the bytes on disk while snapshot_download runs.
+    Counting the files on disk also works when the downloader (hf-xet) does not report per-byte progress,
+    and it counts a resumed download correctly."""
+    samples = []
+    while not stop.is_set():
+        size = max(_blobs_size(model_id), _P['tq'])
+        now = time.time()
+        samples.append((now, size))
+        samples = [x for x in samples if now - x[0] <= 6]
+        total = _P['total']
+        _P['loaded'] = min(size, total) if total else size
+        if len(samples) >= 2 and samples[-1][0] > samples[0][0]:
+            speed = max(0.0, (samples[-1][1] - samples[0][1]) / (samples[-1][0] - samples[0][0]))
+            _P['speed'] = int(speed)
+            _P['eta'] = int((total - _P['loaded']) / speed) if (speed > 1 and total > _P['loaded']) else 0
+        stop.wait(0.5)
+
+
 def _make_tqdm():
     from huggingface_hub.utils import tqdm as hf_tqdm
 
     class T(hf_tqdm):
         def __init__(self, *a, **k):
             super().__init__(*a, **k)
-            if getattr(self, 'unit', '') == 'B' and getattr(self, 'total', None):
+            if getattr(self, 'unit', '') == 'B' and getattr(self, 'total', None) and not _P.get('exact'):
                 _P['total'] += int(self.total)
             desc = getattr(self, 'desc', None)
             if desc:
@@ -487,7 +539,7 @@ def _make_tqdm():
                 raise _Cancelled()
             r = super().update(n)
             if getattr(self, 'unit', '') == 'B' and n:
-                _P['loaded'] += int(n)
+                _P['tq'] += int(n)
             return r
 
     return T
@@ -495,12 +547,14 @@ def _make_tqdm():
 
 def _build(torch, tf, spec, dtype):
     src = spec['src']
-    kw = {'torch_dtype': dtype}
+    # transformers >= 4.56 renamed torch_dtype -> dtype (the old name only prints a deprecation warning)
+    new_name = _vkey(tf.__version__) >= _vkey('4.56.0')
+    kw = {('dtype' if new_name else 'torch_dtype'): dtype}
     if spec['local']:
         kw['local_files_only'] = True
     else:
         kw['cache_dir'] = MODELS_DIR
-    pkw = {k: v for k, v in kw.items() if k != 'torch_dtype'}
+    pkw = {k: v for k, v in kw.items() if k not in ('torch_dtype', 'dtype')}
 
     if spec['family'] == 'vlm':
         # Generic vision-language model: first loader class that accepts it.
@@ -602,7 +656,7 @@ def _load_worker(model_id, device_pref):
         spec = _spec(model_id)
         _free()
         _cancel.clear()
-        _P.update(loaded=0, total=0, file='')
+        _P.update(loaded=0, total=0, file='', speed=0, eta=0, exact=False, tq=0)
         _set(state='loading', message='Loading...', error='')
 
         if spec['kind'] == 'tagger':
@@ -616,16 +670,28 @@ def _load_worker(model_id, device_pref):
         if not spec['local']:
             _set(message='Downloading model files...')
             from huggingface_hub import snapshot_download
+            remote_total = _remote_size(model_id)
+            if remote_total:
+                _P.update(total=remote_total, exact=True)
+            _P['loaded'] = _blobs_size(model_id)   # already-downloaded part (resume)
+            stop_mon = threading.Event()
+            threading.Thread(target=_monitor_download, args=(model_id, stop_mon), daemon=True).start()
             try:
-                snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS,
-                                  tqdm_class=_make_tqdm())
-            except TypeError:  # very old huggingface_hub without tqdm_class
-                snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS)
+                try:
+                    snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS,
+                                      tqdm_class=_make_tqdm())
+                except TypeError:  # very old huggingface_hub without tqdm_class
+                    snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS)
+            finally:
+                stop_mon.set()
+            _P.update(speed=0, eta=0)
             if _cancel.is_set():
                 raise _Cancelled()
 
         device = _resolve_device(torch, device_pref)
         dtype = torch.float16 if device == 'cuda' else torch.float32
+        if device == 'cuda' and spec['family'] == 'vlm' and torch.cuda.is_bf16_supported():
+            dtype = torch.bfloat16   # Qwen-VL overflows in fp16; bf16 is what ai-toolkit uses
         _set(message='Loading model into memory ({})...'.format(device))
         try:
             model, processor = _build(torch, tf, spec, dtype)
@@ -778,7 +844,17 @@ def generate(image_bytes, params):
                       stopping_criteria=tf.StoppingCriteriaList([_Stop()]))
 
         if spec['family'] == 'vlm':
-            prompt = _clean(params.get('prompt', '')) or 'Describe this image in detail.'
+            prompt = _clean(params.get('prompt', '')) or DEFAULT_VLM_PROMPT
+            # ai-toolkit behaviour: shrink to ~max_res^2 pixels (keeps aspect ratio) so
+            # dynamic-resolution models do not produce thousands of vision tokens.
+            try:
+                max_res = int(params.get('max_res', 512))
+            except (TypeError, ValueError):
+                max_res = 512
+            if max_res > 0 and image.width * image.height > max_res * max_res:
+                f = ((max_res * max_res) / (image.width * image.height)) ** 0.5
+                image = image.resize((max(1, int(image.width * f)), max(1, int(image.height * f))), Image.BICUBIC)
+            kwargs['num_beams'] = 1   # greedy, like ai-toolkit (beams waste VRAM on VLMs)
             messages = [{'role': 'user', 'content': [{'type': 'image'}, {'type': 'text', 'text': prompt}]}]
             chat = processor.apply_chat_template(messages, add_generation_prompt=True)
             inputs = to_dev(processor(text=chat, images=[image], return_tensors='pt'))
@@ -789,6 +865,8 @@ def generate(image_bytes, params):
             ids = ids[:, inputs['input_ids'].shape[1]:]
             dec = getattr(processor, 'batch_decode', None) or processor.tokenizer.batch_decode
             text = dec(ids, skip_special_tokens=True)[0]
+            if '</think>' in text:
+                text = text.split('</think>')[-1]
             return {'text': _clean(text), 'seconds': round(time.time() - t0, 2), 'device': device}
 
         task = str(params.get('task', 'MORE_DETAILED_CAPTION'))
@@ -855,6 +933,148 @@ def clear_cache(model_id):
 
 
 # ---------------------------------------------------------------- router
+# ---------------------------------------------------------------- Hugging Face token
+# Stored by huggingface_hub itself (~/.cache/huggingface/token), so every download picks it up and
+# nothing secret is ever written inside the served project folder. The token is never sent back.
+def hf_token_status():
+    try:
+        from huggingface_hub import get_token, HfApi
+    except Exception as e:  # noqa: BLE001
+        return {'set': False, 'error': str(e)}
+    tok = get_token()
+    if not tok:
+        return {'set': False}
+    try:
+        user = HfApi().whoami(token=tok).get('name')
+        return {'set': True, 'valid': True, 'user': user, 'env': bool(os.environ.get('HF_TOKEN'))}
+    except Exception as e:  # noqa: BLE001
+        return {'set': True, 'valid': False, 'error': str(e)[:160], 'env': bool(os.environ.get('HF_TOKEN'))}
+
+
+def hf_token_save(token):
+    from huggingface_hub import HfApi, login, logout
+    token = (token or '').strip()
+    if not token:
+        try:
+            logout()
+        except Exception:  # noqa: BLE001
+            pass
+        os.environ.pop('HF_TOKEN', None)
+        return {'set': False}
+    if not re.match(r'^[\w\-]{8,200}$', token):
+        raise ValueError('That does not look like a Hugging Face token.')
+    try:
+        user = HfApi().whoami(token=token).get('name')
+    except Exception as e:  # noqa: BLE001
+        raise ValueError('Hugging Face rejected this token: {}'.format(str(e)[:120]))
+    login(token=token, add_to_git_credential=False)
+    os.environ['HF_TOKEN'] = token   # effective right away, no restart needed
+    return {'set': True, 'valid': True, 'user': user}
+
+# ---------------------------------------------------------------- dependencies (pip)
+# Packages the app may update by itself. torch is NEVER touched: a plain "pip install -U torch" would
+# replace a CUDA build with the CPU-only wheel. (name on PyPI -> minimum version this app needs)
+PIP_PACKAGES = {
+    'transformers': '4.57.0',     # Qwen3-VL architecture (qwen3_vl) appears in 4.57
+    'huggingface_hub': None,
+    'tokenizers': None,
+    'safetensors': None,
+    'accelerate': None,
+    'pillow': None,
+}
+
+
+def _vkey(v):
+    try:
+        from packaging.version import Version
+        return Version(str(v))
+    except Exception:  # noqa: BLE001
+        return tuple(int(x) if x.isdigit() else 0 for x in re.split(r'[.\-+]', str(v))[:4])
+
+
+def _installed(name):
+    from importlib import metadata
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _pypi_latest(name):
+    import urllib.request
+    try:
+        with urllib.request.urlopen('https://pypi.org/pypi/{}/json'.format(name), timeout=8) as r:
+            return json.loads(r.read().decode('utf-8'))['info']['version']
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def deps_check():
+    from concurrent.futures import ThreadPoolExecutor
+    names = list(PIP_PACKAGES)
+    with ThreadPoolExecutor(max_workers=len(names)) as ex:
+        latest = dict(zip(names, ex.map(_pypi_latest, names)))
+    rows, todo = [], []
+    for n in names:
+        cur, lat, need = _installed(n), latest[n], PIP_PACKAGES[n]
+        below_min = bool(need and (cur is None or _vkey(cur) < _vkey(need)))
+        outdated = bool(cur and lat and _vkey(cur) < _vkey(lat))
+        if cur is None or below_min or outdated:
+            todo.append(n)
+        rows.append({'name': n, 'installed': cur, 'latest': lat, 'min': need,
+                     'below_min': below_min, 'outdated': outdated, 'missing': cur is None})
+    tv = _installed('torch')
+    cuda = False
+    try:
+        import torch
+        cuda = bool(torch.cuda.is_available())
+    except Exception:  # noqa: BLE001
+        pass
+    cpu_build = bool(tv and '+cpu' in tv)
+    torch_info = {'installed': tv, 'cuda': cuda, 'cpu_build': cpu_build}
+    if tv and not cuda:
+        torch_info['hint'] = ('{0} -m pip uninstall -y torch torchvision torchaudio && '
+                              '{0} -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128'
+                              ).format('python')
+    return {'python': sys.version.split()[0], 'executable': sys.executable, 'packages': rows,
+            'needs_update': todo, 'torch': torch_info}
+
+
+_UPDATER = r"""
+import json, subprocess, sys, time
+pkgs, exe, script, cwd, rest = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], json.loads(sys.argv[5])
+print('=' * 60)
+print(' Updating: ' + ', '.join(pkgs))
+print('=' * 60)
+time.sleep(2.5)   # let the old server exit and release its files
+code = subprocess.call([exe, '-m', 'pip', 'install', '-U'] + pkgs)
+print('\n pip finished with exit code', code, '-- starting the server again...\n')
+subprocess.call([exe, script] + rest, cwd=cwd)
+"""
+
+
+def deps_update(packages):
+    """Runs "pip install -U" for the allowed packages in a NEW console, then restarts the server.
+    Done outside this process because Windows cannot overwrite .pyd files that are loaded right now."""
+    import subprocess
+    if _S['state'] == 'loading' or _gen_lock.locked():
+        raise _Busy('The model is loading / generating. Wait for it to finish first.')
+    pkgs = [p for p in (packages or list(PIP_PACKAGES)) if p in PIP_PACKAGES]
+    if not pkgs:
+        raise ValueError('No valid package to update.')
+    script = os.path.abspath(sys.argv[0])
+    env = dict(os.environ, MODULAR_NO_BROWSER='1')   # server_max.py: do not open another browser tab
+    kw = {}
+    if os.name == 'nt':
+        kw['creationflags'] = subprocess.CREATE_NEW_CONSOLE
+    else:
+        kw['start_new_session'] = True
+    subprocess.Popen([sys.executable, '-c', _UPDATER, json.dumps(pkgs), sys.executable, script,
+                      os.path.dirname(script), json.dumps(sys.argv[1:])], env=env, cwd=os.path.dirname(script), **kw)
+    threading.Timer(0.8, os._exit, [0]).start()   # after the HTTP answer has been sent
+    return {'ok': True, 'restarting': True, 'packages': pkgs}
+
+
 def handle(method, route, query, body):
     """Returns (http_code, dict)."""
     try:
@@ -862,6 +1082,16 @@ def handle(method, route, query, body):
             return 200, status(query.get('model'))
         if method == 'GET' and route == 'models':
             return 200, scan_all()
+        if method == 'GET' and route == 'hf_token':
+            return 200, hf_token_status()
+        if method == 'POST' and route == 'hf_token':
+            data = json.loads(body.decode('utf-8') or '{}')
+            return 200, hf_token_save(data.get('token', ''))
+        if method == 'GET' and route == 'deps':
+            return 200, deps_check()
+        if method == 'POST' and route == 'deps_update':
+            data = json.loads(body.decode('utf-8') or '{}')
+            return 200, deps_update(data.get('packages'))
         if method == 'POST' and route == 'load':
             data = json.loads(body.decode('utf-8') or '{}')
             load(data.get('model', ''), data.get('device', 'auto'))
