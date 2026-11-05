@@ -47,7 +47,15 @@ if (typeof window.createBooruClient !== 'function') {
     window.e621FetchCountsBatch     = (tags, force = false) => E6.fetchCountsBatch(tags, force);
     window.e621FetchWikiBatch       = (tags, force = false, onEachTag, onProgress) => E6.fetchWikiBatch(tags, force, onEachTag, onProgress);
     window.e621LookupSingleTag      = raw => E6.lookupSingleTag(raw);
-    window.e621SearchTagMatches     = (query, limit = 6) => E6.searchTagMatches(query, limit);
+    window.e621SaveWikiFull         = (tag, body) => E6.saveWikiFull(tag, body);
+    window.e621MigrateDescriptions = () => E6.migrateDescriptions();
+    window.e621WikiFillList = () => E6.wikiFillList();
+    window.e621MissingInfo = tags => E6.missingInfo(tags);
+    window.e621CrawlPage = (page, limit) => E6.crawlPage(page, limit);
+    window.e621IsBusy = () => E6.isBusy();
+    window.e621WikiRecursive = (seeds, opts) => E6.wikiRecursive(seeds, opts);
+    window.e621FullTextTags = () => E6.fullTextTags();
+    window.e621SearchTagMatches     = (query, limit = 6, opts) => E6.searchTagMatches(query, limit, opts);
     window._flushE621CachePersist   = (useBeacon = false) => E6.flushPersist(useBeacon);
     window.e621TagExists            = tag => E6.tagExists(tag);
     window.e621FetchSingleTagInfo   = (tag, force = false) => E6.fetchSingleTagInfo(tag, force, true);

@@ -239,7 +239,8 @@
             const c = await window.getSetting(CFG_KEY, null);
             if (c && typeof c === 'object') cfg = { ...DEFAULT_CFG, ...c, tipFields: { ...DEFAULT_CFG.tipFields, ...(c.tipFields || {}) } };
             cfg.consistency = true;
-            const r = await window.getSetting(RES_KEY, null);
+            // results are big: own file (local/evaluator_results.json) on localhost, not user_config.json
+            const r = window.LocalStore ? await window.LocalStore.get(RES_KEY, null) : await window.getSetting(RES_KEY, null);
             if (r && typeof r === 'object') results = r;
             const dr = await window.getSetting(DSR_KEY, null);
             if (dr && typeof dr === 'object') dsReviews = dr;
@@ -261,7 +262,8 @@
     function saveResults() {
         clearTimeout(saveResTimer);
         saveResTimer = setTimeout(() => {
-            if (typeof window.saveSetting === 'function') window.saveSetting(RES_KEY, results);
+            if (window.LocalStore) window.LocalStore.set(RES_KEY, results);
+            else if (typeof window.saveSetting === 'function') window.saveSetting(RES_KEY, results);
         }, 500);
     }
 

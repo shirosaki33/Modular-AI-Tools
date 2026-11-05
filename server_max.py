@@ -8,7 +8,7 @@ PORT = 8100
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOCAL_DIR = os.path.join(ROOT, 'local')
 BACKUP_DIR = os.path.join(LOCAL_DIR, 'backups')   # automatic daily copies (see daily_backup)
-BACKUP_FILES = ('user_config.json', 'user_presets.json')
+BACKUP_FILES = ('user_config.json', 'user_presets.json', 'evaluator_results.json', 'nl_known_texts.json', 'danbooru_cache.json', 'e621_cache.json')
 BACKUP_KEEP = 4                                    # 4 copies + the file in use = 5 versions
 MODELS_DIR = os.path.join(ROOT, 'models')  # model files (Prompt Helper / Florence-2)
 MODEL_ID_RE = re.compile(r'^[\w.\-]+/[\w.\-]+$')  # "org/name"

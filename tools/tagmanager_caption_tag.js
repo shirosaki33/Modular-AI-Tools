@@ -65,6 +65,7 @@ style.innerHTML = `
     .tag-to-ghost:hover { color: #fff; transform: scale(1.2); opacity: 1; }
  
     .db-alias-arrow { color: #ffcc66; font-weight: normal; font-size: 11px; margin-left: 4px; }
+    .db-dep-badge { display: inline-block; color: #f48fb1; background: rgba(244,143,177,.12); border: 1px solid rgba(244,143,177,.35); border-radius: 8px; font-size: 9px; font-weight: bold; letter-spacing: .3px; text-transform: lowercase; padding: 0 6px; cursor: help; vertical-align: middle; }
     .tag-alias-arrow { color:#ffcc66; font-size:10px; margin-left:6px; font-weight:bold; cursor:help; }
     .tag-alias-info-icon { cursor: pointer; font-weight: bold; font-size: 1em; padding: 0 0.35em; flex-shrink: 0; opacity: 0.85; user-select: none; transition: 0.1s; }
     .tag-alias-info-icon:hover { transform: scale(1.2); opacity: 1; }
@@ -299,8 +300,9 @@ window.NLCodec = (function () {
     let knownTimer = null;
     const ready = (async () => {
         try {
-            if (typeof window.getSetting !== 'function') return;
-            const v = await window.getSetting(KNOWN_KEY, {});
+            if (!window.LocalStore && typeof window.getSetting !== 'function') return;
+            // own file (local/nl_known_texts.json) on localhost: it is big and must not live in user_config.json
+            const v = window.LocalStore ? await window.LocalStore.get(KNOWN_KEY, {}) : await window.getSetting(KNOWN_KEY, {});
             known = (typeof v === 'string' ? JSON.parse(v || '{}') : v) || {};
         } catch (e) { known = {}; }
     })();
@@ -311,7 +313,7 @@ window.NLCodec = (function () {
         });
         if (!changed) return;
         clearTimeout(knownTimer);
-        knownTimer = setTimeout(() => { if (typeof window.saveSetting === 'function') window.saveSetting(KNOWN_KEY, known); }, 300);
+        knownTimer = setTimeout(() => { if (window.LocalStore) window.LocalStore.set(KNOWN_KEY, known); else if (typeof window.saveSetting === 'function') window.saveSetting(KNOWN_KEY, known); }, 300);
     }
 
     // Compat (modo recursivo antigo).

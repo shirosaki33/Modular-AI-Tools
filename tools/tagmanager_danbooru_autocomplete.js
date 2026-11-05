@@ -11,9 +11,13 @@
    - e621 / e926 (rosa)
    - desconhecida (cinza) — não existe em nenhum dos dois (ex.: tag só do dataset)
 
-   ORDEM: 4 do Danbooru primeiro, depois 4 do e621 (ver fetchBooruSuggestions).
-   Tags com 0 posts / sem link só aparecem (em cinza) quando nenhum dos dois
-   sites achou nada.
+   ORDEM: 5 do Danbooru primeiro, depois 5 do e621 (ver fetchBooruSuggestions),
+   e por último 1 tag desconhecida do dataset (cinza), se houver.
+   CACHE PRIMEIRO: as tags já conhecidas aparecem NA HORA, direto dos arquivos
+   de cache; a busca nos sites roda em segundo plano e só atualiza a lista se
+   trouxer tags novas (sem esperar por ela).
+   Tags com 0 posts / sem link só aparecem (em cinza) como a última sugestão
+   (ou no fallback, quando nenhum dos dois sites achou nada).
 
    Chave mestra: com "Enable Tag Interrogator" desligado
    (window.danbooruInfoEnabled === false) NENHUMA consulta à API é feita.
@@ -81,7 +85,7 @@ function getUsedTagSuggestions(query) {
 }
 
 /* =========================================================================
-   SUGESTÕES DIVIDIDAS: 4 Danbooru + 4 e621 (window.fetchBooruSuggestions)
+   SUGESTÕES DIVIDIDAS: 5 Danbooru + 5 e621 (window.fetchBooruSuggestions)
    ---------------------------------------------------------------------
    - Danbooru SEMPRE primeiro (mesmo com menos posts que as do e621).
    - O bloco e621 só mostra tags que NÃO estão no bloco Danbooru; uma tag
@@ -93,7 +97,8 @@ function getUsedTagSuggestions(query) {
      só aparecem no fallback (cinza) quando nenhum site achou nada.
    Usado também pelo autocomplete do Tag Interrogator (danbooru_panel).
 ========================================================================= */
-window.AUTOCOMPLETE_PER_SOURCE = window.AUTOCOMPLETE_PER_SOURCE || 4;
+window.AUTOCOMPLETE_PER_SOURCE = window.AUTOCOMPLETE_PER_SOURCE || 5;
+window.AUTOCOMPLETE_UNKNOWN_MAX = 1;   // desconhecidas do dataset, sempre por último
 
 function _acNormalize(t, source, dbMainKeys) {
     const name = String(t.name || '').replace(/_/g, ' ');
@@ -115,16 +120,16 @@ function _acNormalize(t, source, dbMainKeys) {
 
 function _acValid(x) { return x && x.name && (x.post_count > 0 || (x.isAlias && x.aliasTo)); }
 
-window.fetchBooruSuggestions = async function (val, perSource) {
+window.fetchBooruSuggestions = async function (val, perSource, opts) {
     const per = perSource || window.AUTOCOMPLETE_PER_SOURCE || 4;
     const total = per * 2;
     const useE6 = !!window.showE621 && typeof window.e621SearchTagMatches === 'function';
     // Pede mais que 4 de cada: tags repetidas entre os sites são descartadas do bloco e621.
     const fetchN = per + 4;
-    const [dbRaw, e6Raw] = await Promise.all([
-        typeof window.dbSearchTagMatches === 'function' ? window.dbSearchTagMatches(val, useE6 ? fetchN : total + 2).catch(() => []) : Promise.resolve([]),
-        useE6 ? window.e621SearchTagMatches(val, fetchN).catch(() => []) : Promise.resolve([])
-    ]);
+    const askDb = (opts) => typeof window.dbSearchTagMatches === 'function' ? window.dbSearchTagMatches(val, useE6 ? fetchN : total + 2, opts).catch(() => []) : Promise.resolve([]);
+    const askE6 = (opts) => useE6 ? window.e621SearchTagMatches(val, fetchN, opts).catch(() => []) : Promise.resolve([]);
+    // opts.localOnly = só o cache (arquivos), sem rede; senão a busca completa (cache + sites).
+    const [dbRaw, e6Raw] = await Promise.all([askDb(opts), askE6(opts)]);
 
     const dbList = [];
     const dbKeys = new Set();
@@ -157,6 +162,43 @@ window.fetchBooruSuggestions = async function (val, perSource) {
     if (dbTake < per) e6Take = Math.min(e6List.length, total - dbTake);
     if (e6Take < per) dbTake = Math.min(dbList.length, total - e6Take);
     return dbList.slice(0, dbTake).concat(e6List.slice(0, e6Take));
+};
+
+/* =========================================================================
+   AUTO-ENRIQUECIMENTO: as tags que o autocomplete mostrou entram na fila de
+   download. A busca já grava as tags novas nos arquivos de cache; aqui
+   completa o que ainda falta delas (contagem/categoria e wiki + texto da
+   description, conforme 💾 Wiki text). Alias → enriquece a tag principal.
+   Usa a fila compartilhada dos cores (não atropela scans / Fill wiki) e
+   cada tag só é enviada uma vez por sessão.
+========================================================================= */
+const _acEnriched = new Set();
+window.enrichBooruSuggestions = function (list) {
+    if (window.danbooruInfoEnabled === false || !Array.isArray(list) || !list.length) return;
+    const sites = {
+        danbooru: { names: new Set(), missing: 'dbMissingInfo', counts: 'dbFetchCountsBatch', wiki: 'dbFetchWikiBatch' },
+        e621: { names: new Set(), missing: 'e621MissingInfo', counts: 'e621FetchCountsBatch', wiki: 'e621FetchWikiBatch' }
+    };
+    list.forEach(t => {
+        const name = String((t.isAlias && t.aliasTo) ? t.aliasTo : t.name).replace(/_/g, ' ').toLowerCase();
+        const where = t.isAlias ? [t.aliasSource || t.group] : (t.sources && t.sources.length ? t.sources : [t.group]);
+        where.forEach(s => { if (sites[s]) sites[s].names.add(name); });
+    });
+    Object.keys(sites).forEach(s => {
+        const cfg = sites[s];
+        if (!cfg.names.size || (s === 'e621' && !window.showE621)) return;
+        if (typeof window[cfg.missing] !== 'function' || typeof window[cfg.wiki] !== 'function') return;
+        const fresh = [...cfg.names].filter(n => !_acEnriched.has(s + '|' + n)).slice(0, 12);
+        const need = window[cfg.missing](fresh);
+        fresh.forEach(n => _acEnriched.add(s + '|' + n));
+        if (!need.length) return;
+        (async () => {
+            try {
+                if (typeof window[cfg.counts] === 'function') await window[cfg.counts](need);
+                await window[cfg.wiki](need);
+            } catch (e) {}
+        })();
+    });
 };
 
 /* Cor da linha: azul se existe no Danbooru, rosa se só no e621. */
@@ -212,6 +254,40 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
         suggBox.style.display = 'block';
     }
 
+    /* ❓ Danbooru / ❔ e621 / ⁉️ both: the same wiki icon the tag lists have, one per suggestion. Tags whose wiki is known to be
+       empty get the icon dimmed (the popout then says "Wiki of this tag is empty"); wiki not checked yet counts as "may have one". */
+    function wikiIconFor(t) {
+        const name = String((t.isAlias && t.aliasTo) ? t.aliasTo : t.name).replace(/_/g, ' ').toLowerCase();
+        const sites = [];
+        if (window.danbooruInfoShowIcons !== false && t.sources.includes('danbooru') && !(t.isAlias && t.aliasSource === 'danbooru')) sites.push('danbooru');   // a Danbooru alias already has its own ❓
+        if (window.showE621 && t.sources.includes('e621')) sites.push('e621');
+        if (!sites.length) return null;
+        const state = (s) => {
+            const c = s === 'danbooru' ? (window.dbGetCachedTag && window.dbGetCachedTag(name)) : (window.e621GetCachedTag && window.e621GetCachedTag(name));
+            return (c && c.wikiChecked && !c.hasWikiInfo) ? 'empty' : 'yes';
+        };
+        const withWiki = sites.filter(s => state(s) === 'yes');
+        const empty = !withWiki.length;
+        const use = empty ? sites : withWiki;
+        const icon = document.createElement('span');
+        icon.dataset.wikiIcon = '1';
+        if (use.length > 1) {
+            icon.className = 'tag-both-info'; icon.textContent = '⁉️';
+            icon.title = empty ? 'The wiki of this tag is empty on Danbooru and e621' : 'Info found on Danbooru AND e621 — click to see both side by side';
+            icon.onclick = (e) => { e.stopPropagation(); if (window.openBothTagInfoPopout) window.openBothTagInfoPopout(name); else if (window.openTagInterrogatorFor) window.openTagInterrogatorFor(name); };
+        } else if (use[0] === 'danbooru') {
+            icon.className = 'tag-db-info'; icon.textContent = '❓';
+            icon.title = empty ? 'The wiki of this tag is empty on Danbooru' : 'View Danbooru info for this tag';
+            icon.onclick = (e) => { e.stopPropagation(); if (window.openDanbooruTagInfoPopout) window.openDanbooruTagInfoPopout(name); };
+        } else {
+            icon.className = 'tag-e621-info'; icon.textContent = '❔';
+            icon.title = empty ? 'The wiki of this tag is empty on e621' : 'View e621 info for this tag';
+            icon.onclick = (e) => { e.stopPropagation(); if (window.openE621TagInfoPopout) window.openE621TagInfoPopout(name); };
+        }
+        if (empty) icon.style.opacity = '0.4';
+        return icon;
+    }
+
     function renderBooruItem(t) {
         const div = document.createElement('div'); div.className = 'db-sugg-item';
         const color = window.suggestionColor(t);
@@ -221,7 +297,7 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
         // Seta ➜ do alias sempre dourada (classe .db-alias-arrow) = "tem substituição para a tag principal".
         const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${esc(aliasToSpaced)}</span>` : '';
         const infoHtml = (t.isAlias && t.aliasSource === 'danbooru') ? `<span class="tag-alias-info-icon" title="View info about the original tag">❓</span>` : '';
-        const countHtml = t.post_count > 0 ? Number(t.post_count).toLocaleString() : 'Alias';
+        const countHtml = (t.isAlias && t.isDeprecated) ? '<span class="db-dep-badge" title="Deprecated tag: it was merged into / replaced by the tag after the ➜ arrow.">deprecated</span>' : (t.post_count > 0 ? Number(t.post_count).toLocaleString() : 'Alias');   // alias: "deprecated" instead of the counter
         const bothTitle = t.sources.length > 1 ? ' title="Found on Danbooru and e621"' : '';
 
         div.innerHTML = `<span style="color:${color}; font-weight:bold;"${bothTitle}>${esc(displayName)}${arrowHtml}</span>
@@ -232,6 +308,8 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
             input.value = (t.isAlias && aliasToSpaced && !keepAlias) ? aliasToSpaced : displayName;
             suggBox.style.display = 'none'; input.focus();
         };
+        const wikiIcon = wikiIconFor(t);
+        if (wikiIcon) { const right = div.querySelector('div'); right.insertBefore(wikiIcon, right.firstChild); }
         const infoIcon = div.querySelector('.tag-alias-info-icon');
         if (infoIcon) infoIcon.onclick = (ev) => {
             ev.stopPropagation();
@@ -239,6 +317,36 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
         };
         return div;
     }
+
+    /* Desenha a lista de sugestões (Danbooru, e621 e, por último, 1 desconhecida do dataset). */
+    function renderBooruList(list, rawVal) {
+        suggBox.innerHTML = '';
+        // Última linha: até 1 tag do dataset que não existe em nenhum dos dois sites (cinza).
+        const shown = new Set(list.map(t => t.key));
+        const unknownTail = getUsedTagSuggestions(rawVal)
+            .filter(([tag]) => !shown.has(tag.toLowerCase().replace(/_/g, ' ')) && window.getTagSource(tag) === 'unknown')
+            .slice(0, window.AUTOCOMPLETE_UNKNOWN_MAX || 1);
+        const hasBoth = list.some(t => t.group === 'danbooru') && list.some(t => t.group === 'e621');
+        let lastGroup = null;
+        list.forEach(t => {
+            if (hasBoth && t.group !== lastGroup) {
+                suggBox.appendChild(window.makeSuggestionDivider(t.group === 'danbooru' ? 'Danbooru' : 'e621'));
+                lastGroup = t.group;
+            }
+            suggBox.appendChild(renderBooruItem(t));
+        });
+        if (unknownTail.length) {
+            suggBox.appendChild(window.makeSuggestionDivider('Unknown — dataset'));
+            unknownTail.forEach(([tag, count]) => {
+                const div = document.createElement('div'); div.className = 'db-sugg-item ac-unknown';
+                div.innerHTML = `<span style="color:${_acColor('unknown')}; font-weight:bold;">${esc(tag)}</span><span style="color:#666;" title="Images in this dataset using this tag">${count}×</span>`;
+                div.onclick = () => { input.value = tag; suggBox.style.display = 'none'; input.focus(); };
+                suggBox.appendChild(div);
+            });
+        }
+        suggBox.style.display = 'block';
+    }
+    const listSig = (list) => list.map(t => t.group + ':' + t.key).join('|');
 
     let timeout = null;
     let token = 0;
@@ -251,6 +359,17 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
 
         const val = rawVal.replace(/ /g, '_');
         const myToken = ++token;
+        let shownSig = null;
+
+        // 1) Cache local: aparece na hora, sem esperar debounce nem rede.
+        window.fetchBooruSuggestions(val, undefined, { localOnly: true }).then(local => {
+            if (myToken !== token || window.danbooruInfoEnabled === false) return;
+            if (local.length === 0) return;   // nada local: espera a busca nos sites
+            shownSig = listSig(local);
+            renderBooruList(local, rawVal);
+        }).catch(() => {});
+
+        // 2) Sites em segundo plano: só redesenha se trouxer algo diferente do que já está na tela.
         timeout = setTimeout(async () => {
             try {
                 const list = await window.fetchBooruSuggestions(val);
@@ -258,20 +377,11 @@ function setupDanbooruAutocomplete(inputId, direction = 'up') {
 
                 // O usuário pode ter desligado a chave mestra enquanto a busca rodava.
                 if (window.danbooruInfoEnabled === false) { suggBox.style.display = 'none'; return; }
+                window.enrichBooruSuggestions(list);   // new / incomplete tags → saved in the cache files, with wiki text
 
-                suggBox.innerHTML = '';
-                if (list.length === 0) { renderUsedOnlySuggestions(rawVal, true); return; }
-
-                const hasBoth = list.some(t => t.group === 'danbooru') && list.some(t => t.group === 'e621');
-                let lastGroup = null;
-                list.forEach(t => {
-                    if (hasBoth && t.group !== lastGroup) {
-                        suggBox.appendChild(window.makeSuggestionDivider(t.group === 'danbooru' ? 'Danbooru' : 'e621'));
-                        lastGroup = t.group;
-                    }
-                    suggBox.appendChild(renderBooruItem(t));
-                });
-                suggBox.style.display = 'block';
+                if (list.length === 0) { if (shownSig === null) renderUsedOnlySuggestions(rawVal, true); return; }
+                if (listSig(list) === shownSig) return;
+                renderBooruList(list, rawVal);
             } catch(err) {}
         }, 400);
     });

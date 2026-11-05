@@ -67,15 +67,32 @@
 
 
         #modal-db-tag-info .tool-modal, #modal-e621-tag-info .tool-modal { width: 700px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
-        #modal-danbooru .tool-modal { width: 1150px; max-width: 95vw; max-height: 90vh; overflow-y: auto; }
+        /* The popout has a fixed height: search row on top, wiki cards take ALL the free space, and the ⚙️ Settings expander
+           sits at the bottom (collapsed by default). Opening it gives the settings room (they scroll) and the cards shrink. */
+        #modal-danbooru .tool-modal { width: 1150px; max-width: 95vw; height: 90vh; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; }
+        #modal-danbooru .tool-modal > * { flex: 0 0 auto; }
+        #modal-danbooru .tool-modal > .dbp-cards { flex: 1 1 0; min-height: 150px; }
+        .dbp-settings { background: #0d0d0d; border: 1px solid #222; border-radius: 6px; margin-top: 10px; }
+        .dbp-settings > summary { cursor: pointer; padding: 9px 12px; font-size: 12px; font-weight: bold; color: #ccc; user-select: none; }
+        .dbp-settings > summary:hover { color: #fff; }
+        .dbp-settings[open] > summary { border-bottom: 1px solid #222; }
+        .dbp-settings-body { padding: 10px 12px 12px; max-height: 46vh; overflow-y: auto; }
+        .dbp-settings-body > :last-child { margin-bottom: 0; }
+        #modal-both-tag-info .tool-modal { width: 1000px; max-width: 95vw; max-height: 85vh; overflow-y: auto; }
+        .dbb-cols { display: flex; gap: 12px; align-items: stretch; }
+        .dbb-col { flex: 1 1 0; min-width: 0; background: #0d0d0d; border: 1px solid #222; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; }
+        .dbb-col[data-site="danbooru"] { border-color: #1f4468; }
+        .dbb-col[data-site="e621"] { border-color: #6b4a14; }
+        .dbb-col .dbp-desc { max-height: 52vh; flex: 1 1 auto; }
+        @media (max-width: 800px) { .dbb-cols { flex-direction: column; } }
 
         .dbp-cards { display: flex; gap: 12px; margin-top: 12px; align-items: stretch; }
-        .dbp-card { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: #0d0d0d; border: 1px solid #1e3d28; border-radius: 8px; overflow: hidden; }
+        .dbp-card { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0d0d0d; border: 1px solid #1e3d28; border-radius: 8px; overflow: hidden; }
         .dbp-card[data-site="danbooru"] { border-color: #1f4468; }
         .dbp-card[data-site="e621"] { border-color: #6b4a14; }
         .dbp-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 12px; background: #151515; border-bottom: 1px solid #222; font-size: 12px; font-weight: bold; flex-shrink: 0; }
         .dbp-card-status { font-size: 10px; color: #777; font-weight: normal; }
-        .dbp-card-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; height: 340px; overflow-y: auto; }
+        .dbp-card-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1 1 0; min-height: 0; overflow-y: auto; }
         .dbp-empty { color: #555; font-size: 13px; font-style: italic; text-align: center; padding: 24px 10px; }
         .dbp-tag-title { font-size: 16px; font-weight: bold; }
         .dbp-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
@@ -91,7 +108,7 @@
         .dbp-src-badge { font-size: 9px; font-weight: bold; padding: 1px 5px; border-radius: 8px; margin-left: 5px; border: 1px solid; vertical-align: middle; }
         .dbp-src-badge.db { color: #4db8ff; border-color: #2a5a8c; background: #0a1a2a; }
         .dbp-src-badge.e6 { color: #ffb74d; border-color: #aa7722; background: #2a1a05; }
-        @media (max-width: 800px) { .dbp-cards { flex-direction: column; } .dbp-card-body { height: 240px; } }
+        @media (max-width: 800px) { .dbp-cards { flex-direction: column; } .dbp-card-body { min-height: 200px; } }
 
         .dbp-row { display: flex; gap: 8px; }
         .dbp-input {
@@ -106,6 +123,7 @@
         .dbp-result.open { display: block; }
         .dbp-tag-title { font-size: 15px; font-weight: bold; color: #4db8ff; margin-bottom: 4px; }
         .dbp-tag-cat { font-size: 12px; color: #aaa; margin-left: 8px; }
+        .dbp-offline { display: inline-block; font-size: 9px; font-weight: bold; letter-spacing: 0.4px; text-transform: lowercase; color: #00ff99; background: #0d2a18; border: 1px solid #1f5a3a; border-radius: 8px; padding: 1px 7px; margin-bottom: 6px; cursor: help; user-select: none; }
         .dbp-desc { color: #ccc; font-size: 13px; line-height: 1.5; max-height: 450px; overflow-y: auto; margin: 8px 0; padding-right: 5px; }
 
         .dbp-btn-scan { background: #00aa66; color: #000; border: none; border-radius: 6px; padding: 8px; font-weight: bold; cursor: pointer; font-size: 12px; }
@@ -122,6 +140,9 @@
         .dbp-opts label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
         .dbp-opts input[type="checkbox"] { width: auto; margin: 0; accent-color: #00ff99; }
         .dbp-opts .dbp-opt-note { color: #666; font-weight: normal; font-size: 10px; }
+        .dbp-opts label.dbp-opt-local { color: #00ff99; }
+        .dbp-opts select { width: auto; background: #151515; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 2px 6px; font-size: 12px; }
+        .dbp-opts label.dbp-opt-local.is-disabled { opacity: 0.45; cursor: not-allowed; }
         .dbp-opts label.dbp-opt-e6 { color: #ffb74d; }
         .dbp-opts label.dbp-opt-sub { color: #ffcc66; margin-left: -10px; }
 
@@ -231,6 +252,7 @@
             .replace(/(?:\[?\s*post\s*#|post:)\s*(\d+)\s*\]?/gi, '<a href="https://danbooru.donmai.us/posts/$1" target="_blank" style="color:#00ff99; text-decoration:none; font-weight:bold; background:#0d2a18; padding:2px 6px; border-radius:4px; border:1px solid #00aa66; white-space:nowrap;">📸 IMG #$1</a>')
             .replace(/!?asset\s*#\d+/gi, '<span style="color:#888; font-style:italic; font-weight:bold;">[IMG]</span>')
             .replace(/^h[1-6]\.\s+(.*)$/gm, '<b style="color:#eee; display:block; margin-top:12px; margin-bottom:4px; border-bottom:1px solid #333; padding-bottom:4px;">$1</b>')
+            .replace(/"([^"]+)":\s*(\/[^\s"<]+)/g, '<a href="https://danbooru.donmai.us$2" target="_blank" style="color:#4db8ff; text-decoration:underline;">$1</a>')
             .replace(/"([^"]+)":\s*(https?:\/\/[^\s]+)/g, '<a href="$2" target="_blank" style="color:#4db8ff; text-decoration:underline;">$1</a>')
             .replace(/\[\s*(https?:\/\/[^\s\]]+)\s+([^\]]+)\s*\]/g, '<a href="$1" target="_blank" style="color:#4db8ff; text-decoration:underline;">$2</a>')
             .replace(/\[\s*b\s*\](.*?)\[\s*\/\s*b\s*\]/gi, '<b>$1</b>')
@@ -270,6 +292,31 @@
        counts and the background scan), so nothing is fetched twice. */
     const DBP_ESC = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+    /* ---------- WIKI SAVE MODE (localhost) ----------
+       Off / Short (800 chars, default) / Full. Texts live in their own file (local/wiki_full.json).
+       Wiki text served from that file gets a micro "offline" badge. */
+    const dbpFileOn = () => !!window.MAT_IS_LOCAL && !!window.WikiFull;
+    const dbpMode = () => window.WikiFull ? window.WikiFull.mode() : 'short';
+    const dbpStoreOn = () => dbpFileOn() && dbpMode() !== 'off';
+    // { text, ts, full } from local/wiki_full.json (separate file: tagmanager_wiki_full.js) or null
+    const dbpFullFromFile = (siteKey, tag) => dbpFileOn() ? window.WikiFull.get(siteKey, tag) : null;
+    function dbpOfflineBadge(ts, full) {
+        if (full !== false && ts && (Date.now() - ts) < 15000) return '';   // just read from the site a moment ago, not from the file
+        const when = ts ? new Date(ts).toLocaleString('en-US') : 'unknown date';
+        const kind = full === false ? 'Short summary (first 800 characters) from the local file; the site could not be reached.' : 'Read from the local file, no internet needed.';
+        return `<div class="dbp-offline" title="${kind}\nSaved: ${DBP_ESC(when)}">${full === false ? 'offline · summary' : 'offline'}</div><br>`;
+    }
+    // Shows what is saved when the live wiki could not be loaded. Returns true when something was shown.
+    function dbpShowSavedText(descEl, fromFile, info, fix) {
+        const text = fromFile ? fromFile.text : ((info && info.hasWikiInfo && info.description) || '');
+        if (!text) return false;
+        descEl.dataset.original = text;
+        let html = window.formatDanbooruDText(text);
+        if (fix) html = fix(html);
+        descEl.innerHTML = (fromFile ? dbpOfflineBadge(fromFile.ts, fromFile.full) : '') + html;
+        return true;
+    }
+
     const DBP_SITES = {
         danbooru: {
             key: 'danbooru', name: 'Danbooru', icon: '🅱️', badge: 'DB',
@@ -277,6 +324,7 @@
             colors: () => DB_CAT_COLORS,
             labels: () => DB_CAT_LABELS,
             lookup: (t) => window.dbLookupSingleTag(t),
+            saveFull: (t, b) => window.dbSaveWikiFull && window.dbSaveWikiFull(t, b),
             search: (q, n) => window.dbSearchTagMatches(q, n),
             aliasBehavior: () => window.aliasClickBehavior || 'replace'
         },
@@ -286,6 +334,7 @@
             colors: () => window.E621_CAT_COLORS || {},
             labels: () => window.E621_CAT_LABELS || {},
             lookup: (t) => window.e621LookupSingleTag(t),
+            saveFull: (t, b) => window.e621SaveWikiFull && window.e621SaveWikiFull(t, b),
             search: (q, n) => window.e621SearchTagMatches(q, n),
             aliasBehavior: () => window.e621AliasClickBehavior || 'replace'
         }
@@ -322,6 +371,7 @@
                     if (typeof window.fetchBooruSuggestions !== 'function') return;
                     const list = (await window.fetchBooruSuggestions(val)).map(t => ({ ...t, sites: t.sources, aliasSite: t.aliasSource }));
                     if (myToken !== token) return; // stale response
+                    if (typeof window.enrichBooruSuggestions === 'function') window.enrichBooruSuggestions(list);
 
                     suggBox.innerHTML = '';
                     if (list.length === 0) { suggBox.style.display = 'none'; return; }
@@ -340,7 +390,7 @@
                         const aliasToSpaced = (t.isAlias && t.aliasTo) ? t.aliasTo.replace(/_/g, ' ') : '';
                         const arrowHtml = t.isAlias ? ` <span class="db-alias-arrow">➜ ${DBP_ESC(aliasToSpaced)}</span>` : '';
                         const badges = t.sites.map(s => `<span class="dbp-src-badge ${s === 'e621' ? 'e6' : 'db'}">${DBP_SITES[s].badge}</span>`).join('');
-                        const countHtml = t.post_count > 0 ? Number(t.post_count).toLocaleString() : 'Alias';
+                        const countHtml = (t.isAlias && t.isDeprecated) ? '<span class="db-dep-badge" title="Deprecated tag: it was merged into / replaced by the tag after the ➜ arrow.">deprecated</span>' : (t.post_count > 0 ? Number(t.post_count).toLocaleString() : 'Alias');   // alias: "deprecated" instead of the counter
 
                         const div = document.createElement('div');
                         div.className = 'db-sugg-item';
@@ -424,12 +474,24 @@
                     ${cardHtml(DBP_SITES.e621, '#ffb74d')}
                 </div>
 
-                <hr style="border:0; border-top:1px solid #333; margin:14px 0;">
+                <div id="dbpScanProgress" style="font-size:11px; color:#aaa; margin-top:8px; flex-shrink:0; display:none;"></div>
+                <details class="dbp-settings" id="dbpSettings">
+                    <summary>⚙️ Settings &amp; tools</summary>
+                    <div class="dbp-settings-body">
 
                 <div class="dbp-opts">
                     <label title="Show a ❓ icon on tags that have a Danbooru wiki entry (tag lists and User Presets)."><input type="checkbox" id="dbpOptDbIcons"> Show ❓ Danbooru wiki icons</label>
                     <label class="dbp-opt-e6" title="Use e621 for tag suggestions, counts and ❔ wiki icons."><input type="checkbox" id="toggle-e621"> Enable e621 (Furry) Suggestions <span class="dbp-opt-note">(also shows the ❔ e621 icons)</span></label>
                     <label class="dbp-opt-e6 dbp-opt-sub" title="Use e926.net (safe-for-work) instead of e621.net."><input type="checkbox" id="toggle-e621-sfw"> 🛡️ Force Safe-for-Work (e926)</label>
+                    <label class="dbp-opt-local" id="dbpOptExpandLbl" title="How much of each tag's wiki is saved for offline use. Texts go to their own file (local/wiki_full.json); the Danbooru / e621 caches only keep counts, categories and aliases. Localhost only."> 💾 Wiki text:
+                        <select id="dbpOptWikiMode">
+                            <option value="off">Off (do not save)</option>
+                            <option value="short">Short (800 characters)</option>
+                            <option value="full">Full (text + links)</option>
+                        </select> <span class="dbp-opt-note">(localhost only — saved in local/wiki_full.json)</span></label>
+                    <label class="dbp-opt-local" id="dbpOptIdleLbl" title="While the app has nothing to do (no scan, Fill wiki or search running), it quietly fires small batches of requests on Danbooru and e621. First it fills in the info that saved tags still lack (counts, categories, wiki flags, wiki text per 💾 Wiki text). When nothing is missing it walks each site's tag list from the most used tag down and adds every tag that is not in the cache files yet — any tag, not only the ones in your dataset. Works in Tag Manager and Prompt Helper."><input type="checkbox" id="dbpOptIdleFill"> 🤖 Auto-fill when idle <span class="dbp-opt-note" id="dbpIdleStatus">(fills missing info and adds new tags while the app is idle)</span></label>
+                    <label class="dbp-opt-local" title="Show the Danbooru availability dot (green / yellow / red) in the All Dataset Tags header. Off = the dot is hidden and Danbooru is no longer pinged every minute."><input type="checkbox" id="dbpOptStatusDb"> 🟢 Danbooru status</label>
+                    <label class="dbp-opt-e6" title="Show the e621 availability dot (green / yellow / red) in the All Dataset Tags header. Off = the dot is hidden and e621 is no longer pinged every minute."><input type="checkbox" id="dbpOptStatusE6"> 🟢 e621 status</label>
                 </div>
 
                 <details class="dbp-alias-opts" id="dbpAliasOpts">
@@ -473,18 +535,32 @@
                     autocomplete and tag counts (tags already seen elsewhere are not fetched again). A tag with a wiki
                     entry gets an icon next to its remove (×) button — <b>nothing is shown</b> when neither site has an entry.<br>
                     <b>Tag lists and User Presets</b> show a single icon — <b>❓</b> Danbooru only · <b>❔</b> e621 only ·
-                    <b>⁉️</b> both (click it to open this window with the tag searched on both sites).<br>
+                    <b>⁉️</b> both (click it to open a popout with both wikis side by side). A dimmed icon = the tag exists but its wiki is empty.<br>
                     ❓ icons follow “Show ❓ Danbooru wiki icons”; ❔ icons (and e621 counts/suggestions) follow “Enable e621”.<br>
                     <b>🔍 Scan</b> checks the dataset now · <b>🔄</b> rechecks everything, ignoring the cache ·
+                    <b>🅱️ / 🦊 Fill wiki (Danbooru / e621)</b> do the same as 📚 Fill wiki but for one site only ·
+                    <b>📚 Fill wiki</b> uses the tags already saved in the cache files to first move the descriptions still stored in those files into wiki_full.json, then download the wiki text of the tags that still lack it or are outdated (💾 Wiki text = Short or Full, localhost) — the topbar button shows the progress while the panel is closed ·
                     <b>♻️ Recheck unknown tags</b> re-verifies every tag saved as “unknown” (not found on a site) and restores the ones that exist.<br>
                     <b>Tag colors:</b> <span style="color:#4db8ff;">Danbooru</span> · <span style="color:#f48fb1;">e621</span> · <span style="color:#8a8a8a;">unknown (not on either site)</span> · <span style="color:#ffcc66;">➜ gold arrow</span> = alias that can be replaced by its main tag.
                 </div>
                 <div style="display:flex; gap:8px;">
                     <button class="dbp-btn-scan" id="dbpScanBtn" style="flex:1;">🔍 Scan Dataset Tags</button>
                     <button class="dbp-btn-scan-force" id="dbpScanForceBtn" title="Force recheck ALL tags, even already-cached ones">🔄</button>
+                    <button class="dbp-btn-scan-force" id="dbpFillWikiBtn" style="white-space:nowrap;" title="Takes the tags already saved in the Danbooru / e621 cache files First moves the descriptions still stored in those files into local/wiki_full.json, then downloads the wiki text of the tags that have a wiki but are not in it yet (in Full mode also the ones with only the short summary) or whose wiki info is older than 30 days. Needs 💾 Wiki text = Short or Full (localhost).">📚 Fill wiki</button>
                     <button class="dbp-btn-recheck" id="dbpRecheckBtn" title="Force a new verification of every tag saved as unknown">♻️ Recheck unknown tags <span id="dbpUnknownCount"></span></button>
                 </div>
-                <div id="dbpScanProgress" style="font-size:11px; color:#aaa; margin-top:8px; display:none;"></div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button class="dbp-btn-scan-force" id="dbpFillWikiDbBtn" style="flex:1; white-space:nowrap;" title="Same as 📚 Fill wiki, but only for the tags saved in the Danbooru cache file (e621 is left alone). Needs 💾 Wiki text = Short or Full (localhost).">🅱️ Fill wiki (Danbooru)</button>
+                    <button class="dbp-btn-scan-force" id="dbpFillWikiE6Btn" style="flex:1; white-space:nowrap;" title="Same as 📚 Fill wiki, but only for the tags saved in the e621 cache file (Danbooru is left alone). Needs Enable e621 and 💾 Wiki text = Short or Full (localhost).">🦊 Fill wiki (e621)</button>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center; margin-top:8px; font-size:12px; color:#bbb;">
+                    <label id="dbpFillRecLbl" style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Applies to all three Fill wiki buttons. Wiki texts link to other tags ([[long hair]]). In recursive mode Fill wiki also reads the links inside the wikis already saved (needs 💾 Wiki text = Full to read them from the file) and inside every wiki it downloads: a linked tag that is already saved is not downloaded again, a linked tag that is missing is downloaded (count, category, wiki and text) and its own links are followed in turn. Up to 1000 new tags per site per run."><input type="checkbox" id="dbpFillRecursive"> 🔁 Recursive (follow links in wikis)</label>
+                    <label style="display:flex; gap:5px; align-items:center;" title="How many link levels to follow: 1 = only the tags linked by the tags being filled; 2 = also the tags linked by those; and so on.">Depth
+                        <select id="dbpFillDepth" style="background:#1a1a1a; color:#ddd; border:1px solid #333; border-radius:4px; padding:2px 4px;"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select>
+                    </label>
+                </div>
+                    </div>
+                </details>
 
                 <div class="modal-buttons">
                     <button class="btn-cancel" onclick="window.closeModal('modal-danbooru')">Close</button>
@@ -516,6 +592,37 @@
         document.getElementById('dbpScanBtn').onclick = () => window.runDanbooruInfoScan(false);
 
         // Forced manual scan: ignores the cache and rechecks everything.
+        document.getElementById('dbpFillWikiBtn').onclick = () => window.runDanbooruFillWiki();
+        document.getElementById('dbpFillWikiDbBtn').onclick = () => window.runDanbooruFillWiki('danbooru');
+        document.getElementById('dbpFillWikiE6Btn').onclick = () => window.runDanbooruFillWiki('e621');
+        (function bindRecursiveOpts() {
+            const cb = document.getElementById('dbpFillRecursive'), sel = document.getElementById('dbpFillDepth');
+            if (!cb || !sel) return;
+            if (typeof window.getSetting === 'function') {
+                Promise.resolve(window.getSetting('dbp-fill-recursive', false)).then(v => { cb.checked = !!v; });
+                Promise.resolve(window.getSetting('dbp-fill-depth', 3)).then(v => { if ([1, 2, 3, 4, 5].includes(Number(v))) sel.value = String(v); });
+            }
+            cb.onchange = () => { if (typeof window.saveSetting === 'function') window.saveSetting('dbp-fill-recursive', cb.checked); if (window.SharedSettings) window.SharedSettings.set('dbp-fill-recursive', cb.checked); };
+            sel.onchange = () => { if (typeof window.saveSetting === 'function') window.saveSetting('dbp-fill-depth', Number(sel.value)); if (window.SharedSettings) window.SharedSettings.set('dbp-fill-depth', Number(sel.value)); };
+            if (window.SharedSettings) {
+                const SS = window.SharedSettings;
+                SS.register('dbp-fill-recursive', v => { cb.checked = !!v; if (typeof window.saveSetting === 'function') window.saveSetting('dbp-fill-recursive', !!v); }, { own: () => window.getSetting('dbp-fill-recursive', false) });
+                SS.register('dbp-fill-depth', v => { if ([1, 2, 3, 4, 5].includes(Number(v))) { sel.value = String(Number(v)); if (typeof window.saveSetting === 'function') window.saveSetting('dbp-fill-depth', Number(v)); } }, { own: () => window.getSetting('dbp-fill-depth', 3) });
+                // wiki text mode + e621 SFW (the modal controls may not exist yet: only the values are applied here, the controls are refreshed on open)
+                SS.register('dbp-wiki-mode', v => {
+                    if (!['off', 'short', 'full'].includes(v)) return;
+                    window.danbooruWikiMode = v; if (typeof window.saveSetting === 'function') window.saveSetting('dbp-wiki-mode', v);
+                    const m = document.getElementById('dbpOptWikiMode'); if (m && window.MAT_IS_LOCAL) m.value = v;
+                    updateFillWikiState();
+                }, { own: () => window.getSetting('dbp-wiki-mode', null) });
+                SS.register('toggle-e621-sfw', v => {
+                    window._e621SfwChoice = !!v; if (typeof window.saveSetting === 'function') window.saveSetting('toggle-e621-sfw', !!v);
+                    const c = document.getElementById('toggle-e621-sfw'); if (c) c.checked = !!v;
+                    applyDerivedFlags();
+                }, { own: () => window.getSetting('toggle-e621-sfw', false) });
+            }
+        })();
+
         document.getElementById('dbpScanForceBtn').onclick = () => {
             if (confirm('Force recheck ALL dataset tags, even already-scanned ones?\nThis takes longer and hits the Danbooru API more.')) {
                 window.runDanbooruInfoScan(true);
@@ -606,28 +713,40 @@
         const trBtn = document.getElementById('dbpTr-' + site.key);
         descEl.dataset.original = '';
 
+        // Expand save mode: the full text is already in the local file — no request, flagged "offline".
+        const fromFile = dbpFullFromFile(site.key, key);
+        if (fromFile && fromFile.full) {
+            descEl.dataset.original = fromFile.text;
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text).split('https://danbooru.donmai.us/').join(`https://${host}/`);
+            trBtn.style.display = 'inline-block';
+            trBtn.onclick = () => translateDescNode(descEl);
+            return;
+        }
+
         try {
             const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent(wikiName)}.json`);
             if (token !== dbpSearchToken) return;
             if (wRes.ok) {
                 const wData = await wRes.json();
                 if (wData && wData.body && wData.body.trim()) {
+                    if (dbpStoreOn()) site.saveFull(key, wData.body);
                     descEl.dataset.original = wData.body;
                     // formatDanbooruDText builds Danbooru links; point them to this card's own site.
                     descEl.innerHTML = window.formatDanbooruDText(wData.body).split('https://danbooru.donmai.us/').join(`https://${host}/`);
                     trBtn.style.display = 'inline-block';
                     trBtn.onclick = () => translateDescNode(descEl);
                 } else {
-                    descEl.innerHTML = `No wiki description available on ${DBP_ESC(site.name)}.`;
+                    descEl.innerHTML = 'Wiki of this tag is empty';
                 }
+            } else if (dbpShowSavedText(descEl, fromFile, info)) {
+                trBtn.style.display = 'inline-block';
+                trBtn.onclick = () => translateDescNode(descEl);
             } else {
-                descEl.innerHTML = 'Wiki not found or error loading.';
+                descEl.innerHTML = wRes.status === 404 ? 'Wiki of this tag is empty' : 'Wiki not found or error loading.';   // 404 = the tag exists but has no wiki page
             }
         } catch (e) {
             if (token !== dbpSearchToken) return;
-            if (info.hasWikiInfo && info.description) {
-                descEl.dataset.original = info.description;
-                descEl.innerHTML = window.formatDanbooruDText(info.description);
+            if (dbpShowSavedText(descEl, fromFile, info)) {
                 trBtn.style.display = 'inline-block';
                 trBtn.onclick = () => translateDescNode(descEl);
             } else {
@@ -732,8 +851,55 @@
         cbSfw.onchange = async (e) => {
             window._e621SfwChoice = e.target.checked;
             await window.saveSetting('toggle-e621-sfw', window._e621SfwChoice);
+            if (window.SharedSettings) window.SharedSettings.set('toggle-e621-sfw', window._e621SfwChoice);
             applyDerivedFlags();
         };
+
+        const selMode = document.getElementById('dbpOptWikiMode');
+        if (selMode) {
+            selMode.onchange = async (e) => {
+                if (!window.MAT_IS_LOCAL) { e.target.value = 'short'; return; }
+                window.danbooruWikiMode = e.target.value;
+                await window.saveSetting('dbp-wiki-mode', window.danbooruWikiMode);
+                if (window.SharedSettings) window.SharedSettings.set('dbp-wiki-mode', window.danbooruWikiMode);
+                updateFillWikiState();
+                if (window.showAlert) window.showAlert({
+                    off: 'Wiki text: OFF — new wikis are not saved (texts already in the file stay).',
+                    short: '💾 Wiki text: SHORT — the first 800 characters of each wiki are saved in wiki_full.json.',
+                    full: '💾 Wiki text: FULL — complete wikis (text + links) are saved in wiki_full.json (a scan or 📚 Fill wiki completes the tags that only have the summary).'
+                }[window.danbooruWikiMode], 'info', 4500);
+                if (window.danbooruWikiMode !== 'off' && typeof window.runDanbooruBackgroundScan === 'function') window.runDanbooruBackgroundScan();
+            };
+        }
+
+        [['dbpOptStatusDb', 'danbooru'], ['dbpOptStatusE6', 'e621']].forEach(([id, site]) => {
+            const cb = document.getElementById(id);
+            if (!cb) return;
+            cb.onchange = async (e) => {
+                window._booruStatusOn[site] = e.target.checked;
+                await window.saveSetting('booru-status-' + site, e.target.checked);
+                applyStatusVisibility();
+            };
+        });
+
+        const cbIdle = document.getElementById('dbpOptIdleFill');
+        if (cbIdle) {
+            cbIdle.onchange = (e) => {
+                if (!window.IdleFill) { e.target.checked = false; return; }
+                window.IdleFill.setEnabled(e.target.checked);
+                if (window.showAlert) window.showAlert(e.target.checked
+                    ? '🤖 Auto-fill when idle ON — while the app has nothing to do it fills in missing info and adds new tags from the sites, in small batches.'
+                    : '🤖 Auto-fill when idle OFF.', 'info', 4000);
+            };
+            const bindIdle = () => {
+                if (!window.IdleFill) return;
+                window.IdleFill.extraPool = collectInfoScanTags;
+                cbIdle.checked = window.IdleFill.enabled();
+                window.IdleFill.onStatus(t => { const el = document.getElementById('dbpIdleStatus'); if (el) el.textContent = t ? '(' + t + ')' : '(fills missing info and adds new tags while the app is idle)'; cbIdle.checked = window.IdleFill.enabled(); });
+            };
+            bindIdle();
+            document.addEventListener('idlefill:ready', bindIdle);
+        }
     }
 
     /* ---------- OPÇÕES DE ALIAS (antes ficavam na engrenagem) ----------
@@ -811,6 +977,18 @@
         if (cbIcons) cbIcons.checked = !!window.danbooruInfoShowIcons;
         if (cbE6) cbE6.checked = !!window._e621Choice;
         if (cbSfw) cbSfw.checked = !!window._e621SfwChoice;
+        const cbIdleSync = document.getElementById('dbpOptIdleFill');
+        if (cbIdleSync && window.IdleFill) cbIdleSync.checked = window.IdleFill.enabled();
+        const cbExp = document.getElementById('dbpOptWikiMode');
+        if (cbExp) {
+            const local = !!window.MAT_IS_LOCAL;
+            cbExp.value = local ? dbpMode() : 'short';
+            cbExp.disabled = !local;
+            const lbl = document.getElementById('dbpOptExpandLbl');
+            if (lbl) lbl.classList.toggle('is-disabled', !local);
+            updateFillWikiState();
+            if (lbl && !local) lbl.title = 'Only available on localhost (server_max.py / the .bat): wiki texts are saved as a file in the local folder. Elsewhere the short summary stays in the browser cache.';
+        }
     }
 
     /* Compat: antes estas funções eram chamadas pelo onchange do HTML da
@@ -829,6 +1007,7 @@
         if (!cb) return;
         window._e621SfwChoice = cb.checked;
         window.saveSetting('toggle-e621-sfw', cb.checked);
+        if (window.SharedSettings) window.SharedSettings.set('toggle-e621-sfw', cb.checked);
         applyDerivedFlags();
     };
 
@@ -914,24 +1093,29 @@
             catEl.innerHTML = `<span style="color:${DB_CAT_COLORS[info.category] || '#888'}">● ${DB_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge1}`;
         }
 
+        const fromFile = dbpFullFromFile('danbooru', tagLower);
+        if (fromFile && fromFile.full) {
+            descEl.dataset.original = fromFile.text;
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text);
+            return;
+        }
+
         try {
             const wRes = await fetch(`https://danbooru.donmai.us/wiki_pages/${encodeURIComponent((info && info.wikiName) ? info.wikiName : tagLower.replace(/ /g, '_'))}.json`);
             if (wRes.ok) {
                 const wData = await wRes.json();
                 if (wData && wData.body && wData.body.trim()) {
+                    if (dbpStoreOn() && window.dbSaveWikiFull) window.dbSaveWikiFull(tagLower, wData.body);
                     descEl.dataset.original = wData.body;
                     descEl.innerHTML = window.formatDanbooruDText(wData.body);
                 } else {
-                    descEl.innerHTML = "No wiki description available on Danbooru.";
+                    descEl.innerHTML = "Wiki of this tag is empty";
                 }
-            } else {
-                 descEl.innerHTML = "Wiki not found or error loading.";
+            } else if (!dbpShowSavedText(descEl, fromFile, info)) {
+                 descEl.innerHTML = wRes.status === 404 ? "Wiki of this tag is empty" : "Wiki not found or error loading.";
             }
         } catch(e) {
-            if (info && info.hasWikiInfo && info.description) {
-                descEl.dataset.original = info.description;
-                descEl.innerHTML = window.formatDanbooruDText(info.description);
-            } else {
+            if (!dbpShowSavedText(descEl, fromFile, info)) {
                 descEl.innerHTML = "Error loading wiki from Danbooru.";
             }
         }
@@ -998,36 +1182,286 @@
             catEl.innerHTML = `<span style="color:${window.E621_CAT_COLORS[info.category] || '#888'}">● ${window.E621_CAT_LABELS[info.category] || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${deprecatedBadge}`;
         }
 
+        const fromFile = dbpFullFromFile('e621', tagLower);
+        if (fromFile && fromFile.full) {
+            descEl.dataset.original = fromFile.text;
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text);
+            return;
+        }
+
         try {
             const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent((info && info.wikiName) ? info.wikiName : tagLower.replace(/ /g, '_'))}.json`);
             if (wRes.ok) {
                 const wData = await wRes.json();
                 if (wData && wData.body && wData.body.trim()) {
+                    if (dbpStoreOn() && window.e621SaveWikiFull) window.e621SaveWikiFull(tagLower, wData.body);
                     descEl.dataset.original = wData.body;
                     descEl.innerHTML = window.formatDanbooruDText(wData.body);
                 } else {
-                    descEl.innerHTML = "No wiki description available on e621.";
+                    descEl.innerHTML = "Wiki of this tag is empty";
                 }
-            } else {
-                descEl.innerHTML = "Wiki not found or error loading.";
+            } else if (!dbpShowSavedText(descEl, fromFile, info)) {
+                descEl.innerHTML = wRes.status === 404 ? "Wiki of this tag is empty" : "Wiki not found or error loading.";
             }
         } catch (e) {
-            if (info && info.hasWikiInfo && info.description) {
-                descEl.dataset.original = info.description;
-                descEl.innerHTML = window.formatDanbooruDText(info.description);
-            } else {
+            if (!dbpShowSavedText(descEl, fromFile, info)) {
                 descEl.innerHTML = "Error loading wiki from e621.";
             }
         }
     };
 
+    /* ---------- 3RD POPOUT: ⁉️ both sites at once (Danbooru + e621 side by side) ---------- */
+    function buildBothInfoModal() {
+        if (document.getElementById('modal-both-tag-info')) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'modal-both-tag-info';
+        overlay.className = 'modal-overlay';
+        overlay.onclick = () => window.closeModal('modal-both-tag-info');
+        const col = (site, color, title, linkLabel, linkColor, linkBorder) => `
+            <div class="dbb-col" data-site="${site}">
+                <div style="color:${color}; font-weight:bold; font-size:13px; margin-bottom:6px;">${title}</div>
+                <div><span class="dbp-tag-cat" id="dbb_${site}_cat"></span></div>
+                <div class="dbp-desc" id="dbb_${site}_desc"></div>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+                    <button id="dbb_${site}_tr" style="background:#2f1a5c; color:#b890ff; border:1px solid #4a2a8c; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:bold; cursor:pointer;">🌐 Translate</button>
+                    <a href="#" target="_blank" id="dbb_${site}_link" style="color:${linkColor}; text-decoration:none; border:1px solid ${linkBorder}; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold; display:inline-block;">${linkLabel}</a>
+                </div>
+            </div>`;
+        overlay.innerHTML = `
+            <div class="tool-modal" onclick="event.stopPropagation()">
+                <h3 style="display:flex; justify-content:space-between; align-items:center;">
+                    <span id="dbbTitle">⁉️ Tag Info — Danbooru + e621</span>
+                    <button onclick="window.closeModal('modal-both-tag-info')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
+                </h3>
+                <div class="dbb-cols">
+                    ${col('danbooru', '#5aa9ff', '❓ Danbooru', 'Open on Danbooru ↗', '#5aa9ff', '#2a6aa8')}
+                    ${col('e621', '#ffb74d', '❔ e621', 'Open on e621 ↗', '#ffb74d', '#aa7722')}
+                </div>
+                <div class="modal-buttons" style="margin-top: 15px;">
+                    <button class="btn-cancel" onclick="window.closeModal('modal-both-tag-info')">Close</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        ['danbooru', 'e621'].forEach(k => { document.getElementById('dbb_' + k + '_tr').onclick = () => translateDescNode(document.getElementById('dbb_' + k + '_desc')); });
+    }
+
+    async function dbbLoadSite(site, tagLower) {
+        const e6 = site === 'e621';
+        const catEl = document.getElementById('dbb_' + site + '_cat');
+        const descEl = document.getElementById('dbb_' + site + '_desc');
+        const linkEl = document.getElementById('dbb_' + site + '_link');
+        const host = e6 ? e621HostForLinks() : 'danbooru.donmai.us';
+        const slug = encodeURIComponent(tagLower.replace(/ /g, '_'));
+        descEl.innerHTML = 'Loading full wiki description...';
+        descEl.dataset.original = '';
+        catEl.innerHTML = '';
+        linkEl.href = `https://${host}/wiki_pages/${slug}`;
+
+        const getC = e6 ? window.e621GetCachedTag : window.dbGetCachedTag;
+        let info = typeof getC === 'function' ? getC(tagLower) : null;
+        if (!info || info.count === undefined) {
+            const look = e6 ? window.e621LookupSingleTag : window.dbLookupSingleTag;
+            if (look) { try { info = await look(tagLower); } catch (e) {} }
+        }
+        if (info) {
+            const colors = e6 ? window.E621_CAT_COLORS : DB_CAT_COLORS;
+            const labels = e6 ? window.E621_CAT_LABELS : DB_CAT_LABELS;
+            const dep = info.isDeprecated ? ` <span style="color:#888;">· Deprecated</span>` : '';
+            catEl.innerHTML = `<span style="color:${(colors && colors[info.category]) || '#888'}">● ${(labels && labels[info.category]) || 'Unknown'} (${Number(info.count || 0).toLocaleString()} posts)</span>${dep}`;
+        } else {
+            catEl.innerHTML = `<span style="color:#888;">Tag not found on ${e6 ? 'e621' : 'Danbooru'}</span>`;
+        }
+
+        const fromFile = dbpFullFromFile(site, tagLower);
+        if (fromFile && fromFile.full) {
+            descEl.dataset.original = fromFile.text;
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text);
+            return;
+        }
+        try {
+            const name = (info && info.wikiName) ? info.wikiName : tagLower.replace(/ /g, '_');
+            const wRes = await fetch(`https://${host}/wiki_pages/${encodeURIComponent(name)}.json`);
+            if (wRes.ok) {
+                const wData = await wRes.json();
+                if (wData && wData.body && wData.body.trim()) {
+                    const saver = e6 ? window.e621SaveWikiFull : window.dbSaveWikiFull;
+                    if (dbpStoreOn() && saver) saver(tagLower, wData.body);
+                    descEl.dataset.original = wData.body;
+                    descEl.innerHTML = window.formatDanbooruDText(wData.body);
+                } else {
+                    descEl.innerHTML = 'Wiki of this tag is empty';
+                }
+            } else if (!dbpShowSavedText(descEl, fromFile, info)) {
+                descEl.innerHTML = wRes.status === 404 ? 'Wiki of this tag is empty' : 'Wiki not found or error loading.';
+            }
+        } catch (e) {
+            if (!dbpShowSavedText(descEl, fromFile, info)) descEl.innerHTML = 'Error loading wiki from ' + (e6 ? 'e621' : 'Danbooru') + '.';
+        }
+    }
+
+    window.openBothTagInfoPopout = function (tagLower) {
+        buildBothInfoModal();
+        const t = String(tagLower || '').toLowerCase();
+        document.getElementById('dbbTitle').textContent = '⁉️ ' + t.replace(/_/g, ' ') + ' — Danbooru + e621';
+        window.openModal('modal-both-tag-info');
+        dbbLoadSite('danbooru', t);
+        dbbLoadSite('e621', t);
+    };
+
     /* ---------- SCAN DO DATASET (contagem em lote + wiki tag-a-tag) ---------- */
     function setScanButtonsDisabled(disabled) {
-        ['dbpScanBtn', 'dbpScanForceBtn', 'dbpRecheckBtn'].forEach(id => {
+        ['dbpScanBtn', 'dbpScanForceBtn', 'dbpRecheckBtn', 'dbpFillWikiBtn', 'dbpFillWikiDbBtn', 'dbpFillWikiE6Btn'].forEach(id => {
             const b = document.getElementById(id);
             if (b) b.disabled = disabled;
         });
+        if (!disabled) updateFillWikiState();
     }
+
+    // 📚 Fill wiki is only usable on localhost with Wiki text = Short or Full.
+    function updateFillWikiState() {
+        const ok = dbpStoreOn();
+        ['dbpFillWikiBtn', 'dbpFillWikiDbBtn', 'dbpFillWikiE6Btn'].forEach(id => {
+            const b = document.getElementById(id);
+            if (!b) return;
+            b.disabled = !ok || !!window._dbInfoScanRunning;
+            b.style.opacity = ok ? '' : '0.45';
+            if (!ok) b.title = 'Set 💾 Wiki text to Short or Full first (localhost only).';
+        });
+    }
+
+    /* ---------- CONTADOR NO BOTÃO DO TOPBAR ----------
+       While a scan / Fill wiki runs, the 🏷️ Tag Interrogator button shows "done/total"
+       (so it is visible with the panel closed) and goes back to its label when it ends. */
+    let _tbLast = 0, _tbWatch = null;
+    // Shows "<site icon> done/total" of the site being worked on (each site has its own numbers; they are never added up).
+    const TB_ICONS = { danbooru: '🅱️', e621: '🦊' }, TB_NAMES = { danbooru: 'Danbooru', e621: 'e621' };
+    function tbSetCounter(done, total, site) {
+        const b = document.getElementById('btn-open-tag-interrogator');
+        if (!b) return;
+        if (b.dataset.label === undefined) { b.dataset.label = b.textContent; b.dataset.title = b.title; b.style.minWidth = b.offsetWidth + 'px'; }
+        b.textContent = `${TB_ICONS[site] || ''} ${done}/${total}`.trim();
+        b.title = `Tag Interrogator is working on ${TB_NAMES[site] || 'tags'}: ${done} of ${total}. Click to open the panel.`;
+        _tbLast = Date.now();
+        if (!_tbWatch) _tbWatch = setInterval(() => {
+            // safety net: if a scan ended without clearing (error), restore the button
+            if (!window._dbInfoScanRunning && Date.now() - _tbLast > 5000) tbClearCounter();
+        }, 1500);
+    }
+    function tbClearCounter() {
+        clearInterval(_tbWatch); _tbWatch = null;
+        const b = document.getElementById('btn-open-tag-interrogator');
+        if (!b || b.dataset.label === undefined) return;
+        b.textContent = b.dataset.label; b.title = b.dataset.title || '';
+        b.style.minWidth = '';
+        delete b.dataset.label; delete b.dataset.title;
+    }
+
+    /* ---------- 📚 FILL WIKI ---------- */
+    // site: 'danbooru' | 'e621' = only that site; omitted = both.
+    window.runDanbooruFillWiki = async function (site) {
+        const onlyDb = site === 'danbooru', onlyE6 = site === 'e621';
+        const siteLabel = onlyDb ? 'Danbooru' : onlyE6 ? 'e621' : '';
+        if (onlyE6 && !window.showE621) {
+            if (window.showAlert) window.showAlert('Enable e621 in the Tag Interrogator settings first.', 'warn');
+            return;
+        }
+        if (!window.danbooruInfoEnabled) {
+            if (window.showAlert) window.showAlert('Tag Interrogator is disabled in Settings.', 'warn');
+            return;
+        }
+        if (!dbpStoreOn()) {
+            if (window.showAlert) window.showAlert('Set 💾 Wiki text to Short or Full first (localhost only).', 'warn');
+            return;
+        }
+        if (window._dbInfoScanRunning) {
+            if (window.showAlert) window.showAlert('A scan is already running.', 'info');
+            return;
+        }
+        // Step 1: move the `description` summaries still stored in the cache files into wiki_full.json (and drop them from the caches).
+        let migrated = 0;
+        try {
+            const m1 = (window.dbMigrateDescriptions && !onlyE6) ? await window.dbMigrateDescriptions() : null;
+            const m2 = (window.e621MigrateDescriptions && !onlyDb) ? await window.e621MigrateDescriptions() : null;
+            migrated = ((m1 && m1.moved) || 0) + ((m2 && m2.moved) || 0);
+            if ((m1 && m1.ok === false) || (m2 && m2.ok === false)) {
+                if (window.showAlert) window.showAlert('local/wiki_full.json could not be read, so nothing was changed. Check that the localhost server is running.', 'warn');
+                return;
+            }
+        } catch (e) { console.warn('[Fill wiki] migration', e); }
+
+        // Step 2: the list comes from the tags ALREADY SAVED in the Danbooru / e621 cache files (not from the loaded dataset):
+        // every saved tag that has a wiki but whose text is not in wiki_full.json yet (or only the short summary, in Full mode),
+        // or whose wiki info is older than 30 days, is downloaded again.
+        const dbTags = (window.dbWikiFillList && !onlyE6) ? window.dbWikiFillList() : [];
+        const e6Tags = (!onlyDb && window.showE621 && window.e621WikiFillList && typeof window.e621FetchWikiBatch === 'function') ? window.e621WikiFillList() : [];
+        const recursive = !!(document.getElementById('dbpFillRecursive') || {}).checked;
+        const depth = Number((document.getElementById('dbpFillDepth') || {}).value) || 3;
+        // Recursive mode also starts from every saved tag whose full wiki text is in wiki_full.json (to read its links).
+        let dbSeeds = dbTags, e6Seeds = e6Tags;
+        if (recursive) {
+            if (!onlyE6 && window.dbFullTextTags) dbSeeds = Array.from(new Set(dbTags.concat(window.dbFullTextTags())));
+            if (e6Tags.length || (!onlyDb && window.showE621)) { if (window.e621FullTextTags) e6Seeds = Array.from(new Set(e6Tags.concat(window.e621FullTextTags()))); }
+            if (onlyDb) e6Seeds = []; if (onlyE6) dbSeeds = [];
+            if (!window.showE621) e6Seeds = [];
+        }
+        const total = dbSeeds.length + e6Seeds.length;
+        if (total === 0) {
+            if (window.showAlert) window.showAlert(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''}: ${migrated} description(s) moved to wiki_full.json. Nothing else to update — every saved tag with a wiki has its text and it is up to date.`, 'info');
+            refreshAll();
+            return;
+        }
+        const minutes = Math.max(1, Math.round(total * 0.4 / 60));
+        if (recursive) {
+            if (!confirm(`Recursive Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''}: starts from ${total} saved tag(s), follows the links inside their wikis up to ${depth} level(s) and downloads the linked tags that are not saved yet (up to 1000 new tags per site).\nThe Tag Interrogator button shows the progress.\n\nContinue?`)) return;
+        } else if (total > 150 && !confirm(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} will download the full wiki of ${total} saved tag(s) (about ${minutes} min).\nYou can close this panel — the Tag Interrogator button shows the progress.\n\nContinue?`)) return;
+
+        window._dbInfoScanRunning = true;
+        window._dbBackgroundScanCancelled = false;
+        window._e621BackgroundScanCancelled = false;
+        const progress = document.getElementById('dbpScanProgress');
+        setScanButtonsDisabled(true);
+        const prog = { danbooru: 0, e621: 0 };
+        const totals = { danbooru: dbSeeds.length, e621: e6Seeds.length };
+        const added = { danbooru: 0, e621: 0 };
+        const show = (done, site, tot) => {
+            prog[site] = done;
+            if (tot) totals[site] = tot;
+            tbSetCounter(done, totals[site], site);
+            if (progress) {
+                progress.style.display = 'block';
+                const parts = [];
+                if (totals.danbooru) parts.push(`Danbooru: ${prog.danbooru} / ${totals.danbooru}`);
+                if (totals.e621) parts.push(`e621: ${prog.e621} / ${totals.e621}`);
+                progress.textContent = `Filling wiki — ${parts.join(' · ')}`;
+            }
+        };
+        show(0, dbSeeds.length ? 'danbooru' : 'e621');
+
+        try {
+            if (recursive) {
+                if (dbSeeds.length && window.dbWikiRecursive) await window.dbWikiRecursive(dbSeeds, { depth, maxNew: 1000, onProgress: (d, t, a) => { added.danbooru = a; show(d, 'danbooru', t); } });
+                if (e6Seeds.length && window.e621WikiRecursive) await window.e621WikiRecursive(e6Seeds, { depth, maxNew: 1000, onProgress: (d, t, a) => { added.e621 = a; show(d, 'e621', t); } });
+            } else {
+                if (dbTags.length) await window.dbFetchWikiBatch(dbTags, false, () => scheduleIconRefresh(), (d) => show(d, 'danbooru'));
+                if (e6Tags.length && typeof window.e621FetchWikiBatch === 'function') {
+                    await window.e621FetchWikiBatch(e6Tags, false, () => scheduleIconRefresh(), (d) => show(d, 'e621'));
+                }
+            }
+        } finally {
+            window._dbInfoScanRunning = false;
+            tbClearCounter();
+            if (progress) progress.style.display = 'none';
+            setScanButtonsDisabled(false);
+        }
+
+        const saved = dbTags.filter(t => window.WikiFull.has('danbooru', t)).length + e6Tags.filter(t => window.WikiFull.has('e621', t)).length;
+        refreshAll();
+        if (recursive) {
+            if (window.showAlert) window.showAlert(`Recursive Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} complete: ${migrated} description(s) moved to wiki_full.json, ${added.danbooru + added.e621} new tag(s) added from wiki links (Danbooru ${added.danbooru}, e621 ${added.e621}).`, 'success');
+            return;
+        }
+        if (window.showAlert) window.showAlert(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} complete: ${migrated} description(s) moved to wiki_full.json, ${saved} of ${total} wiki text(s) downloaded/updated.`, saved === total ? 'success' : 'warn');
+    };
 
     window.runDanbooruInfoScan = async function (force = false) {
         if (!window.danbooruInfoEnabled) {
@@ -1067,7 +1501,7 @@
             force,
             () => scheduleIconRefresh(),
             (done, total, found) => {
-                if (progress) progress.textContent = `Scanning Danbooru: ${done} / ${total} (found ${found})`;
+                tbSetCounter(done, total, 'danbooru'); if (progress) progress.textContent = `Scanning Danbooru: ${done} / ${total} (found ${found})`;
             }
         );
 
@@ -1078,13 +1512,14 @@
                 force,
                 () => scheduleIconRefresh(),
                 (done, total, found) => {
-                    if (progress) progress.textContent = `Scanning e621: ${done} / ${total} (found ${found})`;
+                    tbSetCounter(done, total, 'e621'); if (progress) progress.textContent = `Scanning e621: ${done} / ${total} (found ${found})`;
                 }
             );
             e621Found = e621Result.found;
         }
 
         window._dbInfoScanRunning = false;
+        tbClearCounter();
         setScanButtonsDisabled(false);
         if (progress) progress.style.display = 'none';
 
@@ -1186,7 +1621,7 @@
                 });
                 if (restored.length) {
                     await window.dbFetchWikiBatch(restored, false, () => scheduleIconRefresh(),
-                        (done, total) => say(`Danbooru wiki info: ${done} / ${total}`));
+                        (done, total) => { tbSetCounter(done, total, 'danbooru'); say(`Danbooru wiki info: ${done} / ${total}`); });
                 }
             }
 
@@ -1212,7 +1647,7 @@
                 });
                 if (restored.length) {
                     await window.e621FetchWikiBatch(restored, false, () => scheduleIconRefresh(),
-                        (done, total) => say(`e621 wiki info: ${done} / ${total}`));
+                        (done, total) => { tbSetCounter(done, total, 'e621'); say(`e621 wiki info: ${done} / ${total}`); });
                 }
             }
         } catch (err) {
@@ -1220,6 +1655,7 @@
         }
 
         window._dbInfoScanRunning = false;
+        tbClearCounter();
         setScanButtonsDisabled(false);
         if (progress) progress.style.display = 'none';
         refreshAll();
@@ -1262,7 +1698,7 @@
             false,
             () => scheduleIconRefresh(),
             (done, total, found) => {
-                if (progress) progress.textContent = `Background scan (Danbooru): ${done} / ${total} (found ${found})`;
+                tbSetCounter(done, total, 'danbooru'); if (progress) progress.textContent = `Background scan (Danbooru): ${done} / ${total} (found ${found})`;
             }
         );
 
@@ -1272,12 +1708,13 @@
                 false,
                 () => scheduleIconRefresh(),
                 (done, total, found) => {
-                    if (progress) progress.textContent = `Background scan (e621): ${done} / ${total} (found ${found})`;
+                    tbSetCounter(done, total, 'e621'); if (progress) progress.textContent = `Background scan (e621): ${done} / ${total} (found ${found})`;
                 }
             );
         }
 
         window._dbInfoScanRunning = false;
+        tbClearCounter();
         setScanButtonsDisabled(false);
         if (progress) progress.style.display = 'none';
         refreshAll();
@@ -1319,14 +1756,14 @@
         dbpPerformSearch(t);
     };
 
-    function makeWikiIcon(tagLower, hasDb, hasE6) {
+    function makeWikiIcon(tagLower, hasDb, hasE6, empty) {
         const icon = document.createElement('span');
         icon.dataset.wikiIcon = '1';
         if (hasDb && hasE6) {
             icon.className = 'tag-both-info';
             icon.textContent = '⁉️';
-            icon.title = 'Info found on Danbooru AND e621 — click to open both in the Tag Interrogator';
-            icon.onclick = (e) => { e.stopPropagation(); window.openTagInterrogatorFor(tagLower); };
+            icon.title = 'Info found on Danbooru AND e621 — click to see both side by side';
+            icon.onclick = (e) => { e.stopPropagation(); window.openBothTagInfoPopout(tagLower); };
         } else if (hasDb) {
             icon.className = 'tag-db-info';
             icon.textContent = '❓';
@@ -1338,15 +1775,22 @@
             icon.title = 'View e621 info for this tag';
             icon.onclick = (e) => { e.stopPropagation(); window.openE621TagInfoPopout(tagLower); };
         }
+        if (empty) {   // the tag exists but its wiki is empty: same icon, dimmed (the popout says "Wiki of this tag is empty")
+            icon.style.opacity = '0.4';
+            icon.title = 'The wiki of this tag is empty' + (hasDb && hasE6 ? ' on Danbooru and e621' : hasDb ? ' on Danbooru' : ' on e621') + ' — click to open it';
+        }
         return icon;
     }
 
     /* ghost = sugestão 💡: wiki ainda não checada também conta (o clique
        abre o popout, que busca na hora — ghosts quase nunca passaram pelo scan). */
-    function siteHasWiki(info, ghost) {
-        if (!info) return !!ghost;
-        if (info.hasWikiInfo) return true;
-        return !!ghost && !info.wikiChecked;
+    // 'yes' = has a wiki (or may have one: ghost not checked yet) · 'empty' = the tag exists but its wiki is empty · '' = nothing to show
+    function wikiState(info, ghost) {
+        if (!info) return ghost ? 'yes' : '';
+        if (info.hasWikiInfo) return 'yes';
+        if (ghost && !info.wikiChecked) return 'yes';
+        if (info.wikiChecked && ((info.count || 0) > 0 || info.aliasTo)) return 'empty';
+        return '';
     }
 
     function placeWikiIcon(row, anchorBtn, tagLower, ghost) {
@@ -1357,9 +1801,15 @@
         // O ícone de alias (❓ Danbooru / ❔ e621) já cobre o lado daquele site nesta linha.
         const aliasIcon = row.querySelector('.tag-alias-info-icon');
         const aliasSrc = aliasIcon ? (aliasIcon.getAttribute('data-alias-source') || 'danbooru') : null;
-        const wikiDb = showDb && aliasSrc !== 'danbooru' && typeof window.dbGetCachedTag === 'function' && siteHasWiki(window.dbGetCachedTag(tagLower), ghost);
-        const wikiE6 = showE6 && aliasSrc !== 'e621' && siteHasWiki(window.e621GetCachedTag(tagLower), ghost);
-        if (!wikiDb && !wikiE6) return;
+        const stDb = (showDb && aliasSrc !== 'danbooru' && typeof window.dbGetCachedTag === 'function') ? wikiState(window.dbGetCachedTag(tagLower), ghost) : '';
+        const stE6 = (showE6 && aliasSrc !== 'e621') ? wikiState(window.e621GetCachedTag(tagLower), ghost) : '';
+        const wikiDb = stDb === 'yes', wikiE6 = stE6 === 'yes';
+        if (!wikiDb && !wikiE6) {
+            // No site has a wiki text, but the tag exists and its wiki is empty: dimmed icon (not on rows that already have an alias icon).
+            const emptyDb = stDb === 'empty', emptyE6 = stE6 === 'empty';
+            if ((emptyDb || emptyE6) && !aliasIcon) anchorBtn.parentNode.insertBefore(makeWikiIcon(tagLower, emptyDb, emptyE6, true), anchorBtn);
+            return;
+        }
 
         // Alias de um site + wiki do outro = os dois lados → UM ⁉️ no lugar do ícone de
         // alias (antes apareciam ❓ e ❔ lado a lado). O ⁉️ abre o Tag Interrogator com a
@@ -1459,18 +1909,33 @@
         window.showE621Sfw = !!window._e621SfwChoice;
     }
 
+    // Danbooru / e621 status dots (tools/booru_status.js): each site can be hidden (and then it is not pinged).
+    window._booruStatusOn = window._booruStatusOn || { danbooru: true, e621: true };
+    function applyStatusVisibility() {
+        if (window.BooruStatus) Object.keys(window._booruStatusOn).forEach(site => window.BooruStatus.setEnabled(site, window._booruStatusOn[site]));
+        const a = document.getElementById('dbpOptStatusDb'), b = document.getElementById('dbpOptStatusE6');
+        if (a) a.checked = !!window._booruStatusOn.danbooru;
+        if (b) b.checked = !!window._booruStatusOn.e621;
+    }
+
     async function loadInterrogatorSettings() {
         if (typeof window.getSetting !== 'function') return;
         window.danbooruInfoEnabled = await window.getSetting('danbooru-info-enabled', true);
         window.danbooruInfoShowIcons = await window.getSetting('danbooru-info-show-icons', true);
         window._e621Choice = await window.getSetting('toggle-e621', false);
         window._e621SfwChoice = await window.getSetting('toggle-e621-sfw', false);
+        // Wiki text mode: off | short (default) | full. The old "Expand save mode" checkbox becomes "full".
+        let wm = await window.getSetting('dbp-wiki-mode', null);
+        if (!['off', 'short', 'full'].includes(wm)) wm = (await window.getSetting('dbp-expand-save', false)) ? 'full' : 'short';
+        window.danbooruWikiMode = wm;
+        window._booruStatusOn = { danbooru: !!(await window.getSetting('booru-status-danbooru', true)), e621: !!(await window.getSetting('booru-status-e621', true)) };
         window.aliasPrimarySource = await window.getSetting('alias-primary-source', 'danbooru');
     }
 
     // Aplica TODO o efeito visual/funcional do estado atual.
     function applyInterrogatorState(refresh) {
         applyDerivedFlags();
+        applyStatusVisibility();
         updateTopbarButtonVisibility();
         applyGearState();
         syncModalOptionStates();
@@ -1479,7 +1944,7 @@
             // Para qualquer scan em andamento e fecha as janelas da função.
             window._dbBackgroundScanCancelled = true;
             window._e621BackgroundScanCancelled = true;
-            ['modal-danbooru', 'modal-db-tag-info', 'modal-e621-tag-info'].forEach(id => {
+            ['modal-danbooru', 'modal-db-tag-info', 'modal-e621-tag-info', 'modal-both-tag-info'].forEach(id => {
                 const m = document.getElementById(id);
                 if (m) m.classList.remove('active');
             });
@@ -1630,7 +2095,7 @@
         const wrappedOpenModal = function (id) {
             if (id === 'modal-danbooru' && !window.danbooruInfoEnabled) return;
             const r = originalOpenModal.apply(this, arguments);
-            if (id === 'modal-danbooru') { updateUnknownBadge(); syncModalOptionStates(); }
+            if (id === 'modal-danbooru') { updateUnknownBadge(); syncModalOptionStates(); const st = document.getElementById('dbpSettings'); if (st) st.open = false; }   // the settings expander always starts collapsed
             return r;
         };
         wrappedOpenModal.__ifaceWrapped = true;

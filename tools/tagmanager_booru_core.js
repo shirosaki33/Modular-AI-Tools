@@ -139,12 +139,24 @@
         const isLocalMode = () => !!window[cfg.localModeVar];
         const enabled = () => window.danbooruInfoEnabled !== false;
         const cancelled = () => !!window[cfg.cancelVar] || !enabled();
+        // "Expand save mode" (Tag Interrogator option, localhost only): the FULL wiki text of each tag (raw DText =
+        // text + links) goes to its OWN file (tagmanager_wiki_full.js -> local/wiki_full.json), NOT into this cache.
+        // This cache only says whether the tag has a wiki; the text is looked up in that file.
+        // Wiki texts (localhost): mode 'off' | 'short' (800 chars) | 'full' — all stored in local/wiki_full.json, never in this cache.
+        // Outside localhost there is no file, so the short `description` stays inside the cache entry (memory/localStorage).
+        const useFile = () => isLocalMode() && !!window.WikiFull;
+        const wikiMode = () => window.WikiFull ? window.WikiFull.mode() : 'short';
+        const storeOn = () => useFile() && enabled() && wikiMode() !== 'off';
+        const fullOn = () => storeOn() && wikiMode() === 'full';
+        const textMissing = key => !window.WikiFull.has(cfg.id, key, fullOn());
         const put = (key, patch) => { cache()[key] = Object.assign({}, cache()[key] || {}, patch); bump(); return cache()[key]; };
         const log = (...a) => console.log(`[${cfg.label}]`, ...a);
 
         let queue = Promise.resolve();
+        let queued = 0;     // batches waiting or running (the idle auto-fill only works when this is 0)
         function queueBatch(fn) {
-            const run = () => fn().catch(e => { console.warn(`[${cfg.label} API]`, e); });
+            queued++;
+            const run = () => fn().catch(e => { console.warn(`[${cfg.label} API]`, e); }).finally(() => { queued--; });
             queue = queue.then(run, run);
             return queue;
         }
@@ -172,14 +184,56 @@
             scheduleUnknownSave();
         }
 
+        /* ---------- ON-DISK FORMAT ----------
+           In memory every alias is its own entry ({ aliasTo, ... }) — that is what the rest of the app reads.
+           On disk (and in the settings store) the aliases are folded into their MAIN tag:
+               "public restroom": { count, category, wikiName, ..., "aliases": ["restroom", "..."], "aliasesTs": 1787... }
+           which is far smaller (an alias used to repeat count, category, three timestamps...).
+           An alias whose main tag is not in the cache yet stays as a flat entry. Old flat files load fine and are
+           rewritten in the new format on the next save. */
+        const isRealMain = e => !!(e && !e.aliasTo && e.count !== undefined && e.wikiName);
+        function pack(c) {
+            const out = {}, groups = {};
+            for (const key of Object.keys(c)) {
+                const e = c[key];
+                if (!e || typeof e !== 'object') { out[key] = e; continue; }
+                const t = e.aliasTo ? toKey(e.aliasTo) : null;
+                if (t && t !== key && isRealMain(c[t])) { (groups[t] = groups[t] || []).push([key, e]); continue; }
+                const copy = Object.assign({}, e);
+                if (copy.aliasTo === null) delete copy.aliasTo;           // "no alias" is the default
+                if (copy.isDeprecated === false) delete copy.isDeprecated;
+                out[key] = copy;
+            }
+            for (const t of Object.keys(groups)) {
+                const main = out[t] || (out[t] = Object.assign({}, c[t]));
+                main.aliases = groups[t].map(([k]) => k);
+                main.aliasesTs = Math.min.apply(null, groups[t].map(([, e]) => e.aliasTs || e.ts || Date.now()));
+            }
+            return out;
+        }
+        // returns the same object, expanded; `flat` = how many old-format alias entries it already held
+        function unpack(json) {
+            for (const key of Object.keys(json)) {
+                const e = json[key];
+                if (!e || typeof e !== 'object' || !Array.isArray(e.aliases)) continue;
+                for (const name of e.aliases) {
+                    if (json[name]) continue;
+                    json[name] = { count: e.count, category: e.category, wikiName: e.wikiName, aliasTo: key, aliasChecked: true, aliasTs: e.aliasesTs || e.ts, isDeprecated: true, ts: e.ts };
+                }
+                delete e.aliases; delete e.aliasesTs;
+            }
+            return json;
+        }
+        const hasFlatAliases = c => Object.keys(c).some(k => c[k] && c[k].aliasTo);
+
         /* ---------- persistência ---------- */
         let persistTimer = null;
         async function persist(unload = false) {
             if (isLocalMode()) {
-                if (unload) postLocalCacheOnUnload(cfg.localFile, cache());
-                else await postLocalCache(cfg.localFile, cache());
+                if (unload) postLocalCacheOnUnload(cfg.localFile, pack(cache()));
+                else await postLocalCache(cfg.localFile, pack(cache()));
             } else if (typeof window.saveSetting === 'function') {
-                await window.saveSetting(cfg.settingKey, cache());
+                await window.saveSetting(cfg.settingKey, pack(cache()));
             }
         }
         function schedulePersist() {
@@ -372,6 +426,37 @@
             });
         }
 
+        // Saves one wiki result: the short info goes to the cache; with Expand save mode ON the full text goes to wiki_full.json.
+        const lastBody = new Map();   // key -> raw DText of the last wiki downloaded (memory only; used by the recursive mode)
+        function applyWiki(key, w, now) {
+            if (w && w.full) { if (lastBody.size > 300) lastBody.clear(); lastBody.set(key, w.full); }
+            if (!useFile()) {
+                put(key, { wikiChecked: true, wikiTs: now, hasWikiInfo: w.hasWikiInfo, description: w.description });
+                return;
+            }
+            // Localhost: the cache keeps only the flags; the text goes to wiki_full.json according to the mode.
+            put(key, { wikiChecked: true, wikiTs: now, hasWikiInfo: w.hasWikiInfo });
+            delete cache()[key].description;
+            if (!storeOn()) return;
+            if (!w.hasWikiInfo) { window.WikiFull.remove(cfg.id, key); return; }
+            if (fullOn()) { if (w.full) window.WikiFull.set(cfg.id, key, w.full, now, true); }
+            else {
+                const cur = window.WikiFull.get(cfg.id, key);
+                if (!cur || !cur.full) window.WikiFull.set(cfg.id, key, w.description, now, false);   // a saved full text is never downgraded
+            }
+        }
+
+        /* Saves the full wiki text of a tag that is already in the cache (used by the Tag Interrogator after a live read). */
+        function saveWikiFull(rawTag, body) {
+            if (!storeOn() || !body || !String(body).trim()) return false;
+            const key = toKey(rawTag);
+            if (!cache()[key]) return false;
+            if (fullOn()) return window.WikiFull.set(cfg.id, key, body, Date.now(), true);
+            const cur = window.WikiFull.get(cfg.id, key);
+            if (cur) return false;
+            return window.WikiFull.set(cfg.id, key, cleanWiki(body), Date.now(), false);
+        }
+
         /* ---------- wiki de 1 tag ----------
            { ok:false } = erro | { ok:true, hasWikiInfo, description } */
         async function fetchWiki(wikiName) {
@@ -380,7 +465,7 @@
                 if (res.status === 404) return { ok: true, hasWikiInfo: false, description: '' };
                 if (!res.ok) return { ok: false };
                 const data = await res.json();
-                if (data && data.body && data.body.trim()) return { ok: true, hasWikiInfo: true, description: cleanWiki(data.body) };
+                if (data && data.body && data.body.trim()) return { ok: true, hasWikiInfo: true, description: cleanWiki(data.body), full: String(data.body).trim() };
                 return { ok: true, hasWikiInfo: false, description: '' };
             } catch (e) {
                 return { ok: false };
@@ -397,6 +482,7 @@
                     if (isUnknown(key) && !force) return false;
                     const c = cache()[key];
                     if (force || !c || !c.wikiChecked) return true;
+                    if (storeOn() && c.hasWikiInfo && textMissing(key)) return true;   // wiki text not saved yet (or only the summary while mode = full)
                     return (now - (c.wikiTs || 0)) > TTL.wiki;
                 });
                 if (toFetch.length === 0) return { fetched: 0, found: 0 };
@@ -408,7 +494,7 @@
                     const wikiName = (cache()[key] && cache()[key].wikiName) || toApi(tag);
                     const w = await fetchWiki(wikiName);
                     // Só grava wikiChecked quando a API respondeu de verdade (OK ou 404).
-                    if (w.ok) put(key, { wikiChecked: true, wikiTs: now, hasWikiInfo: w.hasWikiInfo, description: w.description });
+                    if (w.ok) applyWiki(key, w, now);
                     if (w.hasWikiInfo) found++;
                     processed++;
 
@@ -420,6 +506,86 @@
                 }
                 await persist();
                 return { fetched: processed, found };
+            });
+        }
+
+        /* ---------- WIKI RECURSIVA ----------
+           Wiki texts (DText) link to other tags: [[long hair]], [[long hair|label]], "label":/wiki_pages/long_hair.
+           extractWikiLinks() returns those tag names; wikiRecursive() follows them: a linked tag that is already saved
+           (with its wiki info) is NOT downloaded again — only its own links are followed when its full text is saved —
+           and a linked tag that is not saved yet is downloaded (count, category, wiki + text) and followed in turn. */
+        function extractWikiLinks(body) {
+            const out = new Set(), s = String(body || '');
+            const add = (n) => {
+                n = String(n || '').trim();
+                try { n = decodeURIComponent(n); } catch (e) {}
+                n = n.replace(/#.*$/, '').trim();
+                if (!n || n.length > 80 || /[:{}<>\/?]/.test(n) || /^\d+$/.test(n)) return;   // namespaces (help:, howto:), URLs, ids
+                out.add(toKey(n));
+            };
+            for (const m of s.matchAll(/\[\[([^\]\n]+?)\]\]/g)) add(m[1].split('|')[0]);
+            for (const m of s.matchAll(/\/wiki_pages\/([^\s)\]"'<>?#]+)/g)) add(m[1]);
+            return out;
+        }
+
+        function fullTextTags() {
+            return window.WikiFull ? window.WikiFull.keys(cfg.id, true) : [];
+        }
+
+        function wikiRecursive(seeds, opts) {
+            opts = opts || {};
+            return queueBatch(async () => {
+                const maxDepth = Math.max(0, opts.depth == null ? 3 : opts.depth), maxNew = opts.maxNew || 1000;
+                const visited = new Set(), q = [];
+                (seeds || []).forEach(t => {
+                    const k = toKey(t);
+                    if (!k || k.startsWith('nl:') || visited.has(k)) return;
+                    visited.add(k); q.push({ k, d: 0, seed: true });
+                });
+                const fullOf = (k) => {
+                    const e = window.WikiFull && window.WikiFull.get(cfg.id, k);
+                    return e && e.full ? e.text : null;
+                };
+                let done = 0, requests = 0, added = 0;
+                const now = Date.now();
+                while (q.length) {
+                    if (cancelled()) break;
+                    const { k, d, seed } = q.shift();
+                    let body = null, requested = false;
+                    const c = cache()[k];
+                    if (seed) {
+                        const needs = !isUnknown(k) && (!c || !c.wikiChecked || (storeOn() && c.hasWikiInfo && textMissing(k)) || (now - (c.wikiTs || 0)) > TTL.wiki);
+                        if (needs) {
+                            const w = await fetchWiki((c && c.wikiName) || toApi(k));
+                            requested = true;
+                            if (w.ok) applyWiki(k, w, now);
+                            body = w.full || null;
+                        } else body = fullOf(k);
+                    } else if (isUnknown(k)) {
+                        body = null;
+                    } else if (c && c.wikiChecked && !(storeOn() && c.hasWikiInfo && textMissing(k))) {
+                        body = fullOf(k);   // already saved: nothing to download, just follow its links
+                    } else if (added < maxNew) {
+                        await lookupSingleTag(k);
+                        requested = true;
+                        if (isUnknown(k)) unmarkUnknown(k);   // a wiki link to something that is not a tag: do not flag it as an unknown tag
+                        else if (cache()[k]) added++;
+                        body = lastBody.get(k) || null;
+                    }
+                    lastBody.delete(k);
+                    if (body && d < maxDepth) {
+                        extractWikiLinks(body).forEach(n => { if (n !== k && !visited.has(n)) { visited.add(n); q.push({ k: n, d: d + 1 }); } });
+                    }
+                    done++;
+                    if (opts.onProgress) opts.onProgress(done, done + q.length, added);
+                    if (requested) {
+                        requests++;
+                        if (requests % 8 === 0) await persist();
+                        await sleep(D.wiki);
+                    }
+                }
+                await persist();
+                return { processed: done, requests, added };
             });
         }
 
@@ -439,7 +605,8 @@
             const cached = cache()[key];
             const fakeZero = !!(cached && cached.count === 0 && !cached.wikiName && !cached.aliasTo);
             const needsBasic = !cached || cached.count === undefined || fakeZero || (now - (cached.ts || 0)) > TTL.count;
-            const needsWiki = !cached || !cached.wikiChecked || (now - (cached.wikiTs || 0)) > TTL.wiki;
+            const needsWiki = !cached || !cached.wikiChecked || (now - (cached.wikiTs || 0)) > TTL.wiki ||
+                (storeOn() && !!cached.hasWikiInfo && textMissing(key));
 
             if (needsBasic) {
                 const r = await fetchRow(tag);
@@ -466,7 +633,7 @@
 
             if (needsWiki && cache()[key]) {
                 const w = await fetchWiki(cache()[key].wikiName || tag);
-                if (w.ok) put(key, { wikiChecked: true, wikiTs: now, hasWikiInfo: w.hasWikiInfo, description: w.description });
+                if (w.ok) applyWiki(key, w, now);
             }
 
             schedulePersist();
@@ -479,7 +646,8 @@
            grava para tags do dataset que não existem no site NUNCA aparecem
            aqui (era isso que mostrava tags desconhecidas em azul com "0").
            A API é consultada uma vez por termo a cada 10 min (memo em memória);
-           dentro dessa janela o cache local responde sozinho. */
+           dentro dessa janela o cache local responde sozinho. O autocomplete pede
+           primeiro opts.localOnly (instantâneo) e só depois a busca completa. */
         const SEARCH_MEMO_TTL = 10 * 60 * 1000;
         const searchMemo = new Map();   // query -> ts da última consulta à API
 
@@ -489,7 +657,7 @@
             return (entry.count || 0) > 0;
         }
 
-        async function searchTagMatches(query, limit = 6) {
+        async function searchTagMatches(query, limit = 6, opts) {
             const now = Date.now();
             const queryLower = String(query || '').trim().toLowerCase().replace(/_/g, ' ');
             if (!queryLower) return [];
@@ -503,6 +671,9 @@
             }
             localResults.sort((a, b) => b.post_count - a.post_count);
 
+            // opts.localOnly: instant answer from the cache (file), no network. The caller then runs
+            // the normal search in the background to complete the list with tags the cache doesn't know yet.
+            if (opts && opts.localOnly) return localResults.slice(0, limit);
             const memoTs = searchMemo.get(queryLower) || 0;
             if (localResults.length >= limit && (now - memoTs) < SEARCH_MEMO_TTL) return localResults.slice(0, limit);
             if (!enabled()) return localResults.slice(0, limit);
@@ -628,11 +799,27 @@
                     }
                 }
 
+                // Folded aliases (new on-disk format) -> one entry per alias in memory. Old flat files get rewritten folded.
+                const hadFlat = hasFlatAliases(json);
+                unpack(json);
+                if (hadFlat) needsSync = true;
+
                 // "count 0, sem alias, sem wikiName" nunca foi confirmado pela API:
                 // tira do cache para o próximo scan conferir de novo.
                 for (const key of Object.keys(json)) {
                     const e = json[key];
                     if (e && e.count === 0 && e.aliasChecked && !e.aliasTo && !e.wikiName) { delete json[key]; needsSync = true; }
+                }
+
+                // `wikiFull` used to be written inside this cache: move it to wiki_full.json so this file stays small.
+                if (window.WikiFull) {
+                    for (const key of Object.keys(json)) {
+                        const e = json[key];
+                        if (e && e.wikiFull) {
+                            window.WikiFull.set(cfg.id, key, e.wikiFull, e.wikiFullTs);
+                            delete e.wikiFull; delete e.wikiFullTs; needsSync = true;
+                        }
+                    }
                 }
 
                 window[cfg.cacheVar] = Object.assign(window[cfg.cacheVar] || {}, json);
@@ -642,7 +829,7 @@
                 window[cfg.localModeVar] = false;
                 await window.loadUnknownTags();
                 if (typeof window.getSetting === 'function') {
-                    window[cfg.cacheVar] = await window.getSetting(cfg.settingKey, window[cfg.cacheVar] || {});
+                    window[cfg.cacheVar] = unpack(await window.getSetting(cfg.settingKey, window[cfg.cacheVar] || {}));
                     bump();
                     pruneOnline();
                 }
@@ -650,11 +837,81 @@
             await migrateLegacyUnknown();
         }
 
+        /* 📚 Fill wiki, step 1: move the `description` (800-char summary) still stored in this cache into
+           local/wiki_full.json (as a short entry, unless a text is already there) and drop it from the cache. */
+        async function migrateDescriptions() {
+            if (!useFile()) return { moved: 0, cleaned: 0, ok: false };
+            try { await window.WikiFull.load(); } catch (e) {}
+            if (!window.WikiFull.ready()) return { moved: 0, cleaned: 0, ok: false };   // file unreadable: do not touch anything
+            let moved = 0, cleaned = 0;
+            const c = cache();
+            for (const key of Object.keys(c)) {
+                const e = c[key];
+                if (!e || e.description === undefined || key.startsWith('NL:')) continue;
+                if (e.hasWikiInfo && e.description && !window.WikiFull.has(cfg.id, key)) {
+                    window.WikiFull.set(cfg.id, key, e.description, e.wikiTs || e.ts, false); moved++;
+                }
+                delete e.description; cleaned++;
+            }
+            if (cleaned) { bump(); await persist(); }
+            return { moved, cleaned, ok: true };
+        }
+
+        /* 📚 Fill wiki, step 2: saved tags whose wiki text is missing (or only the summary while mode = full)
+           or whose wiki check is older than the wiki TTL (30 days). */
+        function wikiFillList() {
+            if (!storeOn()) return [];
+            const now = Date.now();
+            return Object.keys(cache()).filter(k => {
+                if (!k || k.startsWith('NL:')) return false;
+                const e = cache()[k];
+                if (!e || !e.hasWikiInfo) return false;
+                return textMissing(k) || (now - (e.wikiTs || 0)) > TTL.wiki;
+            });
+        }
+
+        /* Idle auto-fill: which of these tags still lack info (counts, wiki flag, wiki text) or have outdated info. */
+        function missingInfo(tags) {
+            const now = Date.now();
+            return (tags || []).filter(t => {
+                if (!t || String(t).startsWith('NL:')) return false;
+                const key = String(t).toLowerCase();
+                if (isUnknown(key)) return false;
+                const c = cache()[key];
+                if (!c || c.count === undefined || (now - (c.ts || 0)) > TTL.count) return true;
+                if (!c.wikiChecked || (now - (c.wikiTs || 0)) > TTL.wiki) return true;
+                return storeOn() && !!c.hasWikiInfo && textMissing(key);
+            });
+        }
+
+        /* Idle auto-fill: one page of the site's tag list, most used first. Every tag that is NOT in the cache yet is added
+           (count, category, name) — its wiki is filled in afterwards. { ok, n, added, end } */
+        async function crawlPage(page, limit = 100) {
+            try {
+                const res = await fetch(`https://${host()}/tags.json?search[order]=count&search[hide_empty]=true&limit=${limit}&page=${page}`);
+                if (res.status === 410 || res.status === 404) return { ok: true, n: 0, added: 0, end: true };
+                if (!res.ok) return { ok: false, status: res.status };
+                const rows = tagsArray(await res.json());
+                const now = Date.now();
+                let added = 0;
+                for (const row of rows) {
+                    if (!row || !row.name || !(parseInt(row.post_count) > 0)) continue;
+                    const key = toKey(row.name);
+                    if (cache()[key] || isUnknown(key)) continue;
+                    cache()[key] = Object.assign(rowPatch(row, now), { aliasTo: null, aliasChecked: true, aliasTs: now }); added++;   // it is listed with posts: a real tag, not an alias
+                }
+                if (added) { bump(); schedulePersist(); }
+                return { ok: true, n: rows.length, added, end: rows.length < limit };
+            } catch (e) {
+                return { ok: false };
+            }
+        }
+
         const client = {
             id: cfg.id, label: cfg.label, host, cache, bump,
             isUnknown, markUnknown, unmarkUnknown,
             getCachedTag, resolveAlias, fetchSingleTagInfo, tagExists,
-            fetchCountsBatch, fetchWikiBatch, lookupSingleTag, searchTagMatches,
+            fetchCountsBatch, fetchWikiBatch, wikiRecursive, fullTextTags, extractWikiLinks, lookupSingleTag, searchTagMatches, saveWikiFull, migrateDescriptions, wikiFillList, missingInfo, crawlPage, isBusy: () => queued > 0,
             persist, schedulePersist, flushPersist, boot
         };
         if (cfg.autoBoot !== false) window.addEventListener('DOMContentLoaded', () => boot());

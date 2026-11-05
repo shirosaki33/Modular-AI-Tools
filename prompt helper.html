@@ -55,6 +55,7 @@
         .db-sugg-item:hover { background: #1a2a1a; }
         .db-sugg-item:last-child { border-bottom: none; }
         .db-alias-arrow { color: #ffcc66; font-weight: normal; font-size: 0.9em; }
+        .db-dep-badge { display: inline-block; color: #f48fb1; background: rgba(244,143,177,.12); border: 1px solid rgba(244,143,177,.35); border-radius: 8px; font-size: 9px; font-weight: bold; letter-spacing: .3px; text-transform: lowercase; padding: 0 6px; cursor: help; vertical-align: middle; }
         .src-badge { font-size: 9px; font-weight: bold; padding: 1px 5px; border-radius: 8px; margin-left: 5px; border: 1px solid; vertical-align: middle; }
         .src-badge.db { color: #4db8ff; border-color: #2a5a8c; background: #0a1a2a; }
         .src-badge.e6 { color: #ffb74d; border-color: #aa7722; background: #2a1a05; }
@@ -90,6 +91,26 @@
         .sugg-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; justify-content: center; }
         .sugg-chip { background: #151515; border: 1px solid #2a3a4a; color: #9ecfff; border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; user-select: none; }
         .sugg-chip:hover { background: #1a3a5c; color: #fff; border-color: #4db8ff; }
+
+        /* Tag Lookup header: status dots + gear menu */
+        #col-left .panel-header { position: relative; }
+        .ph-head-right { display: flex; align-items: center; gap: 12px; }
+        .ph-gear-btn { background: transparent; border: 1px solid #333; color: #aaa; border-radius: 6px; padding: 2px 7px; font-size: 14px; cursor: pointer; line-height: 1.2; }
+        .ph-gear-btn:hover, .ph-gear-btn.open { color: #fff; border-color: #4db8ff; }
+        .ph-gear-menu { display: none; position: absolute; right: 10px; top: calc(100% + 6px); z-index: 60; width: 330px; max-width: calc(100% - 20px); background: #151515; border: 1px solid #333; border-radius: 8px; padding: 10px 12px; box-shadow: 0 6px 18px rgba(0,0,0,.6); flex-direction: column; gap: 9px; font-weight: normal; }
+        .ph-gear-menu.open { display: flex; }
+        .ph-gear-menu label { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
+        .ph-gear-menu label input { width: auto; margin: 2px 0 0; accent-color: #00ff99; flex-shrink: 0; }
+        .ph-gear-menu label.is-disabled { opacity: .45; cursor: not-allowed; }
+        .ph-gear-menu select { background: #1a1a1a; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 2px 4px; font-size: 11px; width: auto; flex: none; }
+        .ph-gear-menu label.ph-gear-row { align-items: center; justify-content: space-between; }
+        .ph-gear-menu .ph-gear-sep { border-top: 1px solid #2a2a2a; margin: 1px 0; }
+        .ph-gear-menu .ph-gear-btns { display: flex; gap: 6px; }
+        .ph-gear-menu .ph-gear-btns button { flex: 1; white-space: nowrap; font-size: 11px; padding: 5px 6px; background: #1c2a38; color: #9ecfff; border: 1px solid #2f4a63; border-radius: 6px; cursor: pointer; }
+        .ph-gear-menu .ph-gear-btns button:hover:not(:disabled) { background: #24384b; }
+        .ph-gear-menu .ph-gear-btns button:disabled { opacity: .45; cursor: not-allowed; }
+        .ph-gear-menu .ph-gear-note { display: block; color: #777; font-weight: normal; font-size: 10px; line-height: 1.4; margin-top: 2px; }
+        .offline-badge { display: inline-block; font-size: 9px; font-weight: bold; letter-spacing: .4px; color: #00ff99; background: #0d2a18; border: 1px solid #1f5a3a; border-radius: 8px; padding: 1px 7px; margin-right: 6px; cursor: help; user-select: none; vertical-align: middle; }
 
         .cache-badge {
             font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: bold;
@@ -189,6 +210,36 @@
                 🏷️ Tag Lookup
                 <span class="cache-badge" id="cacheModeBadge" title="Local cache only works when running on localhost with the same server as Tag Manager">…</span>
             </span>
+            <span class="ph-head-right">
+                <span data-booru-status></span>
+                <button class="ph-gear-btn" id="phGearBtn" title="Tag Lookup settings">⚙️</button>
+            </span>
+            <div class="ph-gear-menu" id="phGearMenu">
+                <label id="phOptUpdateLbl" title="Each successful lookup updates local/danbooru_cache.json and local/e621_cache.json (the same files as Tag Manager). Off = lookups do not touch those files.">
+                    <input type="checkbox" id="phOptUpdateLocal">
+                    <span>💾 Update localhost file (Danbooru / e621)<span class="ph-gear-note">Lookups update the local cache files shared with Tag Manager.</span></span>
+                </label>
+                <label class="ph-gear-row" id="phOptExpandLbl" title="How much of each wiki is saved in its own file, local/wiki_full.json (the cache files stay small). Off = new wikis are not saved · Short = first 800 characters (default) · Full = the complete text with links. Saved wikis open from that file and are flagged offline.">
+                    <span>💾 Wiki text (Danbooru / e621)<span class="ph-gear-note">Saved in local/wiki_full.json. Saved wikis open from it, marked “offline”.</span></span>
+                    <select id="phOptExpandSave"><option value="off">Off</option><option value="short">Short (800)</option><option value="full">Full</option></select>
+                </label>
+                <label id="phOptIdleLbl" title="While the app has nothing to do (no lookup or Fill wiki running), it quietly fires small batches of requests on Danbooru and e621. First it fills in the info that saved tags still lack (counts, categories, wiki flags, wiki text per 💾 Wiki text). When nothing is missing it walks each site's tag list from the most used tag down and adds every tag that is not in the cache files yet. Shared with Tag Manager.">
+                    <input type="checkbox" id="phOptIdleFill">
+                    <span>🤖 Auto-fill when idle<span class="ph-gear-note" id="phIdleStatus">Fills missing info and adds new tags while the app is idle.</span></span>
+                </label>
+                <div class="ph-gear-sep"></div>
+                <div class="ph-gear-btns">
+                    <button id="phFillBoth" title="Moves the descriptions still stored in the cache files into local/wiki_full.json, then downloads the wiki text of the saved tags that lack it or are outdated (Danbooru and e621). Needs 💾 Wiki text = Short or Full (localhost).">📚 Fill wiki</button>
+                    <button id="phFillDb" title="Same as 📚 Fill wiki, only for the tags saved in the Danbooru cache file.">🅱️ Danbooru</button>
+                    <button id="phFillE6" title="Same as 📚 Fill wiki, only for the tags saved in the e621 cache file.">🦊 e621</button>
+                </div>
+                <label class="ph-gear-row" id="phFillRecLbl" title="Wiki texts link to other tags ([[long hair]]). In recursive mode Fill wiki also reads the links inside the wikis already saved (needs 💾 Wiki text = Full to read them from the file) and inside every wiki it downloads: a linked tag that is already saved is not downloaded again, a linked tag that is missing is downloaded (count, category, wiki and text) and its own links are followed in turn. Up to 1000 new tags per site per run.">
+                    <span style="display:flex; gap:7px; align-items:center;"><input type="checkbox" id="phFillRecursive"><span>🔁 Recursive (follow links)</span></span>
+                    <span style="display:flex; gap:5px; align-items:center; font-weight:normal; color:#9a9a9a;" title="How many link levels to follow.">Depth <select id="phFillDepth"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select></span>
+                </label>
+                <div class="ph-gear-note" id="phFillStatus" style="display:none;"></div>
+                <div class="ph-gear-note" id="phGearLocalNote" style="display:none;">These options need localhost (the same server as Tag Manager).</div>
+            </div>
         </div>
         <div class="panel-body">
             <div class="search-row" id="tagSearchWrap">
@@ -435,11 +486,17 @@
 
 <!-- 2) Tag Manager cores: shared cache layer (write-through only).
      tagmanager_booru_core.js = implementação única usada pelos dois cores. -->
+<script src="tools/tagmanager_wiki_full.js"></script>
 <script src="tools/tagmanager_booru_core.js"></script>
 <script src="tools/tagmanager_danbooru_core.js"></script>
 <script src="tools/tagmanager_e621_core.js"></script>
+<script src="tools/tagmanager_shared_settings.js"></script>
+<script src="tools/tagmanager_idle_fill.js"></script>
+<!-- Danbooru / e621 availability dots (Tag Lookup header) -->
+<script src="tools/booru_status.js"></script>
 
 <!-- 3) Prompt Helper modules -->
+<script src="tools/tagmanager_danbooru_autocomplete.js"></script>
 <script src="tools/prompt_helper_tags.js"></script>
 <script src="tools/prompt_helper_ui.js"></script>
 <script src="tools/prompt_helper_google.js"></script>

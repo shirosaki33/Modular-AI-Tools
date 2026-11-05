@@ -39,7 +39,15 @@ if (typeof window.createBooruClient !== 'function') {
     window.dbFetchCountsBatch       = (tags, force = false) => DB.fetchCountsBatch(tags, force);
     window.dbFetchWikiBatch         = (tags, force = false, onEachTag, onProgress) => DB.fetchWikiBatch(tags, force, onEachTag, onProgress);
     window.dbLookupSingleTag        = raw => DB.lookupSingleTag(raw);
-    window.dbSearchTagMatches       = (query, limit = 6) => DB.searchTagMatches(query, limit);
+    window.dbSaveWikiFull           = (tag, body) => DB.saveWikiFull(tag, body);
+    window.dbMigrateDescriptions = () => DB.migrateDescriptions();
+    window.dbWikiFillList = () => DB.wikiFillList();
+    window.dbMissingInfo = tags => DB.missingInfo(tags);
+    window.dbCrawlPage = (page, limit) => DB.crawlPage(page, limit);
+    window.dbIsBusy = () => DB.isBusy();
+    window.dbWikiRecursive = (seeds, opts) => DB.wikiRecursive(seeds, opts);
+    window.dbFullTextTags = () => DB.fullTextTags();
+    window.dbSearchTagMatches       = (query, limit = 6, opts) => DB.searchTagMatches(query, limit, opts);
     window._flushDanbooruCachePersist = (useBeacon = false) => DB.flushPersist(useBeacon);
     window.dbTagExists              = tag => DB.tagExists(tag);
     window.dbFetchSingleTagInfo     = (tag, force = false) => DB.fetchSingleTagInfo(tag, force);

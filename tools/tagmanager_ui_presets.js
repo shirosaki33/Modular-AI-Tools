@@ -909,7 +909,7 @@ function ppApplyWikiIcons(row) {
     if (!t || t.startsWith('nl:')) return;
 
     // ONE icon per tag (nothing is drawn when no site has a wiki entry):
-    //   only Danbooru -> red ❓   only e621 -> white ❔   both -> ⁉️ (opens the Tag Interrogator)
+    //   only Danbooru -> red ❓   only e621 -> white ❔   both -> ⁉️ (opens the side-by-side popout)
     let hasDb = false, hasE6 = false;
     if (wantDb && typeof window.dbGetCachedTag === 'function') { const i = window.dbGetCachedTag(t); hasDb = !!(i && i.hasWikiInfo); }
     if (wantE6 && typeof window.e621GetCachedTag === 'function') { const i = window.e621GetCachedTag(t); hasE6 = !!(i && i.hasWikiInfo); }
@@ -920,9 +920,10 @@ function ppApplyWikiIcons(row) {
     const ic = ppEl('span');
     if (hasDb && hasE6) {
         ic.className = 'tag-both-info'; ic.textContent = '⁉️';
-        ic.title = 'Info found on Danbooru AND e621 — click to open both in the Tag Interrogator';
+        ic.title = 'Info found on Danbooru AND e621 — click to see both side by side';
         ic.onclick = (e) => {
             e.stopPropagation();
+            if (typeof window.openBothTagInfoPopout === 'function') { window.openBothTagInfoPopout(t); return; }
             const modal = document.getElementById('modal-danbooru');
             const input = document.getElementById('dbpInput');
             const btn = document.getElementById('dbpSearchBtn');

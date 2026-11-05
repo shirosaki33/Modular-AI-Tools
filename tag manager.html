@@ -188,10 +188,17 @@
         #alertBar.warn    { background: #2a1a00; border: 1px solid #aa6600; color: #ffcc66; display: block; }
         #alertBar.info    { background: #001a2a; border: 1px solid #0066aa; color: #66ccff; display: block; }
 
-        .footerbar { margin-top: 10px; text-align: center; font-size: 13px; }
+        /* Danbooru / e621 status dots: OUTSIDE the All Dataset Tags container, in the gap right under it (not attached to it).
+           The bar is placed over the gap by a tiny script that follows the panel's position and width. */
+        #booru-status-bar { position: fixed; z-index: 5; display: flex; justify-content: center; align-items: center; height: 14px; pointer-events: none; }
+        #booru-status-bar .booru-status { pointer-events: auto; gap: 18px; font-size: 11px; }
+        #booru-status-bar .booru-status-name { opacity: 1; }
+        .footerbar { margin-top: 0; text-align: center; font-size: 13px; }
+        .footer-mode { height: 19px; line-height: 16px; }
+        .footer-mode .run-mode-badge { margin-top: 0; padding: 0 8px; line-height: 14px; vertical-align: top; }
         .footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
         .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
-        .footer-copy { margin-bottom: 10px; text-align: center; font-size: 11px; color: #555; }
+        .footer-copy { margin-bottom: 1px; text-align: center; font-size: 11px; color: #555; }
 
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #111; }
@@ -227,7 +234,6 @@
 
     <div class="topbar-section center" style="flex-direction: column; justify-content: center;">
         <div id="app-title">🏷️ Tag Manager 🏷️</div>
-        <span id="run-mode-badge" class="run-mode-badge">…</span>
         <span id="current-folder-display" style="display: none;"></span>
         <div id="last-edited-display" style="font-size: 10px; color: #666; display: block; margin-top: 4px; font-weight: bold; letter-spacing: 0.5px;">Last edited: Never</div>
     </div>
@@ -314,8 +320,6 @@
         <button onclick="document.getElementById('clone-dropdown').classList.remove('open')" style="background: #4a1118; color: #ffb6c0; border: 1px solid #7a222c; flex: 1;">Cancel</button>
     </div>
 </div>
-
-<div id="unsaved-changes-alert" style="display:none; margin: 12px 20px 0 20px; padding: 10px 14px; border-left: 3px solid #ffd040; border-right: 3px solid #ffd040; background: #101723; color: #f5f5f5; border-radius: 7px; font-size: 13.5px; line-height: 1.45; text-align: center; box-sizing: border-box; flex-shrink: 0;"></div>
 
 <div id="workspace">
     <div id="view-editor" class="view-layer active">
@@ -427,8 +431,10 @@
                     <span>All Dataset Tags</span> <span id="master-tag-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
                     <button id="btn-toggle-presets" class="btn-save-local" onclick="window.togglePresetPanel()" style="background:transparent; border: 1px solid #00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px; margin-left: 5px;" title="Toggle User Preset Tags">👁️</button>
                 </div>
-                <button id="btn-discard-suggestions" class="btn-save-local" onclick="window.discardAllSuggestions()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;">🗑️ Discard Suggestions</button>
-                <button id="btn-save-all" class="btn-save-local" onclick="window.saveAllImages()" style="display:none;">💾 Save All</button>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <button id="btn-discard-suggestions" class="btn-save-local" onclick="window.discardAllSuggestions()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;">🗑️ Discard Suggestions</button>
+                    <button id="btn-save-all" class="btn-save-local" onclick="window.saveAllImages()" style="display:none;">💾 Save All</button>
+                </div>
             </div>
 
             <div class="logic-bar">
@@ -458,8 +464,10 @@
                 <select id="master-add-pos" class="pos-select"><option value="bottom">Bot</option><option value="top">Top</option></select>
             </div>
         </div>
+
     </div>
 </div>
+<div id="booru-status-bar"><span data-booru-status></span></div>
 
 <div id="view-auto" class="modal-overlay" onclick="window.closeModal('view-auto')">
     <div class="auto-panel" onclick="event.stopPropagation()">
@@ -774,7 +782,29 @@ python -m pip install einops timm</pre>
     </div>
 </div>
 
-<div class="footerbar"><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a></div>
+<script>
+/* Keeps the Danbooru / e621 dots (#booru-status-bar) on the footer line (same height as the run-mode badge), anchored to the window's right edge, so it stays still when columns are resized. */
+(function () {
+    function place() {
+        const panel = document.getElementById('col-tools'), bar = document.getElementById('booru-status-bar'), badge = document.getElementById('run-mode-badge');
+        if (!panel || !bar) return;
+        const p = panel.getBoundingClientRect();
+        let top = p.bottom + 2;
+        if (badge) { const b = badge.getBoundingClientRect(); if (b.height) top = b.top + b.height / 2 - 7; }
+        /* Fixed to the right edge of the window: does not follow the panel when its column is resized. */
+        bar.style.right = '15px';
+        bar.style.left = 'auto';
+        bar.style.width = '350px';
+        bar.style.top = top + 'px';
+        bar.style.display = (panel.offsetParent === null) ? 'none' : 'flex';
+    }
+    window.addEventListener('resize', place);
+    window.addEventListener('load', () => { place(); setTimeout(place, 400); setTimeout(place, 1500); });
+    if (window.ResizeObserver) { const ro = new ResizeObserver(place); ['workspace', 'col-tools', 'run-mode-badge'].forEach(id => { const e = document.getElementById(id); if (e) ro.observe(e); }); }
+    document.addEventListener('DOMContentLoaded', place);
+})();
+</script>
+<div class="footerbar"><div class="footer-mode"><span id="run-mode-badge" class="run-mode-badge">…</span></div><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a></div>
 <div class="footer-copy">© 2026 shirosaki33</div>
 <div id="alertBar"></div>
 
@@ -785,10 +815,16 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager_globals.js"></script>
 <script src="tools/tagmanager_tm.js"></script>
 <script src="tools/tagmanager_alert.js"></script>
+<script src="tools/tagmanager_notice.js"></script>
 <script src="tools/tagmanager_db.js"></script>
+<script src="tools/tagmanager_local_store.js"></script>
+<script src="tools/tagmanager_wiki_full.js"></script>
 <script src="tools/tagmanager_booru_core.js"></script>
 <script src="tools/tagmanager_danbooru_core.js"></script>
 <script src="tools/tagmanager_e621_core.js"></script>
+<script src="tools/tagmanager_shared_settings.js"></script>
+<script src="tools/tagmanager_idle_fill.js"></script>
+<script src="tools/booru_status.js"></script>
 <script src="tools/tagmanager_batch_tagger.js"></script>
 <script src="tools/tagmanager_review_unconfirmed.js"></script>
 <script src="tools/tagmanager_caption_tag.js"></script>
