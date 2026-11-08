@@ -1151,7 +1151,7 @@
     }
 
     // true = converted | 'skipped' = nothing to change | false = failed (original kept)
-    async function convertOne(img, opts) {
+    async function convertOne(img, opts, root) {
         let originalBlob;
         try { originalBlob = await readOriginalBlob(img); }
         catch (e) { console.error('[B&W] could not read', img.name, e); return false; }
@@ -1165,7 +1165,7 @@
         if (img.dirty && img.hasFile && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
 
         if (typeof window.moveToArchive !== 'function') { console.error('[B&W] Archive module not loaded.'); return false; }
-        const archived = await window.moveToArchive(img, archiveLabelFor(opts));
+        const archived = await window.moveToArchive(img, archiveLabelFor(opts), root);
         if (!archived) return false; // original untouched
 
         let newHandle;
@@ -1199,8 +1199,17 @@
         return Array.from(selectedIndices).sort((a, b) => a - b).map(i => imageFiles[i]).filter(img => img && !img.hidden);
     }
 
+    // ⏳ background task: the images and the dataset are captured now; it finishes on that dataset even if
+    // another one is opened (the screen is only refreshed when that dataset is still open).
     async function runBatch(imgs) {
+        const ctx = window.TM.tasks.captureDataset();
+        ctx.files = imgs;
+        return window.TM.tasks.run({ title: `B&W / styles (${imgs.length})`, icon: '🖤', ctx, silentEnd: true,
+            onCancel: () => { _cancel = true; } }, (task) => runBatchTask(imgs, ctx, task)).promise;
+    }
+    async function runBatchTask(imgs, ctx, task) {
         const opts = { ...state };
+        const btnEl = () => (window.TM.tasks.sameLoad(ctx) ? document.getElementById('btn-grayscale') : null);
         const btn = document.getElementById('btn-grayscale');
         _busy = true;
         if (btn) btn.disabled = true;
@@ -1211,9 +1220,11 @@
         let done = 0, skipped = 0, failed = [], stoppedAt = -1;
         try {
             for (let i = 0; i < imgs.length; i++) {
-                if (_cancel) { stoppedAt = i; break; }
-                if (btn) btn.textContent = `⏳ ${i + 1}/${imgs.length}`;
-                const r = await convertOne(imgs[i], opts);
+                if (_cancel || task.cancelled) { stoppedAt = i; break; }
+                const b = btnEl();
+                if (b) b.textContent = `⏳ ${i + 1}/${imgs.length}`;
+                task.progress(i + 1, imgs.length, imgs[i].name);
+                const r = await convertOne(imgs[i], opts, ctx.root);
                 if (r === true) done++;
                 else if (r === 'skipped') skipped++;
                 else failed.push(imgs[i].name);
@@ -1225,7 +1236,8 @@
             if (btn) { btn.disabled = false; btn.textContent = '🖤'; btn.title = BTN_TITLE; }
         }
 
-        if (done > 0) {
+        task.result = `${done} converted${failed.length ? `, ${failed.length} failed` : ''}`;
+        if (done > 0 && window.TM.tasks.sameLoad(ctx)) {
             if (typeof window.renderImageList === 'function') window.renderImageList();
             if (typeof window.renderEditor === 'function' && selectedIndices.size > 0) window.renderEditor();
             if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();

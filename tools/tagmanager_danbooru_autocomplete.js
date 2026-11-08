@@ -85,7 +85,8 @@ function getUsedTagSuggestions(query) {
 }
 
 /* =========================================================================
-   SUGESTÕES DIVIDIDAS: 5 Danbooru + 5 e621 (window.fetchBooruSuggestions)
+   SUGESTÕES DIVIDIDAS: N Danbooru + N e621 (window.fetchBooruSuggestions)
+   (N de cada site vem do Tag Interrogator > Settings; padrão 5 / 5)
    ---------------------------------------------------------------------
    - Danbooru SEMPRE primeiro (mesmo com menos posts que as do e621).
    - O bloco e621 só mostra tags que NÃO estão no bloco Danbooru; uma tag
@@ -98,6 +99,35 @@ function getUsedTagSuggestions(query) {
    Usado também pelo autocomplete do Tag Interrogator (danbooru_panel).
 ========================================================================= */
 window.AUTOCOMPLETE_PER_SOURCE = window.AUTOCOMPLETE_PER_SOURCE || 5;
+// How many suggestions each site shows (🏷️ Tag Interrogator > Settings: "Autocomplete: Danbooru / e621"). Default 5 / 5.
+window.AUTOCOMPLETE_DB_COUNT = window.AUTOCOMPLETE_DB_COUNT || 5;
+window.AUTOCOMPLETE_E6_COUNT = window.AUTOCOMPLETE_E6_COUNT || 5;
+(async function _acLoadCounts() {
+    const load = async () => {
+        if (typeof window.getSetting !== 'function') return;
+        try {
+            const a = parseInt(await window.getSetting('autocomplete-count-danbooru', 5), 10);
+            const b = parseInt(await window.getSetting('autocomplete-count-e621', 5), 10);
+            if (a >= 0 && a <= 50) window.AUTOCOMPLETE_DB_COUNT = a;
+            if (b >= 0 && b <= 50) window.AUTOCOMPLETE_E6_COUNT = b;
+        } catch (e) {}
+        // kept in sync with Prompt Helper (same suggestions there)
+        if (window.SharedSettings) {
+            [['autocomplete-count-danbooru', 'AUTOCOMPLETE_DB_COUNT', 'dbpAcCountDb'], ['autocomplete-count-e621', 'AUTOCOMPLETE_E6_COUNT', 'dbpAcCountE6']].forEach(([k, g, id]) => {
+                try {
+                    window.SharedSettings.register(k, v => {
+                        const n = parseInt(v, 10);
+                        if (!(n >= 0 && n <= 50)) return;
+                        window[g] = n;
+                        const el = document.getElementById(id); if (el) el.value = n;
+                        if (typeof window.saveSetting === 'function') window.saveSetting(k, n);
+                    }, { own: () => window[g] });
+                } catch (e) {}
+            });
+        }
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load); else load();
+})();
 window.AUTOCOMPLETE_UNKNOWN_MAX = 1;   // desconhecidas do dataset, sempre por último
 
 function _acNormalize(t, source, dbMainKeys) {
@@ -121,13 +151,15 @@ function _acNormalize(t, source, dbMainKeys) {
 function _acValid(x) { return x && x.name && (x.post_count > 0 || (x.isAlias && x.aliasTo)); }
 
 window.fetchBooruSuggestions = async function (val, perSource, opts) {
-    const per = perSource || window.AUTOCOMPLETE_PER_SOURCE || 4;
-    const total = per * 2;
-    const useE6 = !!window.showE621 && typeof window.e621SearchTagMatches === 'function';
-    // Pede mais que 4 de cada: tags repetidas entre os sites são descartadas do bloco e621.
-    const fetchN = per + 4;
-    const askDb = (opts) => typeof window.dbSearchTagMatches === 'function' ? window.dbSearchTagMatches(val, useE6 ? fetchN : total + 2, opts).catch(() => []) : Promise.resolve([]);
-    const askE6 = (opts) => useE6 ? window.e621SearchTagMatches(val, fetchN, opts).catch(() => []) : Promise.resolve([]);
+    const clampN = n => Math.max(0, Math.min(50, parseInt(n, 10) || 0));
+    const dbPer = perSource ? clampN(perSource) : clampN(window.AUTOCOMPLETE_DB_COUNT != null ? window.AUTOCOMPLETE_DB_COUNT : 5);
+    const e6Per = perSource ? clampN(perSource) : clampN(window.AUTOCOMPLETE_E6_COUNT != null ? window.AUTOCOMPLETE_E6_COUNT : 5);
+    const useE6 = !!window.showE621 && typeof window.e621SearchTagMatches === 'function' && e6Per > 0;
+    const total = useE6 ? dbPer + e6Per : Math.max(dbPer, 1);
+    if (!useE6 && dbPer === 0) return [];
+    // Pede um pouco mais de cada: tags repetidas entre os sites são descartadas do bloco e621.
+    const askDb = (opts) => (typeof window.dbSearchTagMatches === 'function' && dbPer > 0) ? window.dbSearchTagMatches(val, useE6 ? dbPer + 4 : total + 2, opts).catch(() => []) : Promise.resolve([]);
+    const askE6 = (opts) => useE6 ? window.e621SearchTagMatches(val, e6Per + 4, opts).catch(() => []) : Promise.resolve([]);
     // opts.localOnly = só o cache (arquivos), sem rede; senão a busca completa (cache + sites).
     const [dbRaw, e6Raw] = await Promise.all([askDb(opts), askE6(opts)]);
 
@@ -156,11 +188,11 @@ window.fetchBooruSuggestions = async function (val, perSource, opts) {
 
     if (!useE6) return dbList.slice(0, total);
 
-    let dbTake = Math.min(per, dbList.length);
-    let e6Take = Math.min(per, e6List.length);
-    // Backfill: o site que tem mais completa o que faltou no outro.
-    if (dbTake < per) e6Take = Math.min(e6List.length, total - dbTake);
-    if (e6Take < per) dbTake = Math.min(dbList.length, total - e6Take);
+    let dbTake = Math.min(dbPer, dbList.length);
+    let e6Take = Math.min(e6Per, e6List.length);
+    // Backfill: o site que tem mais completa o que faltou no outro (só se ele não estiver em 0).
+    if (dbTake < dbPer && e6Per > 0) e6Take = Math.min(e6List.length, total - dbTake);
+    if (e6Take < e6Per && dbPer > 0) dbTake = Math.min(dbList.length, total - e6Take);
     return dbList.slice(0, dbTake).concat(e6List.slice(0, e6Take));
 };
 

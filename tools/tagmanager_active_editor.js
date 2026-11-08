@@ -123,7 +123,8 @@ window.renderEditor = function() {
     if(topbarSelectFormat) topbarSelectFormat.value = imgObj.ext || 'txt';
     let isAnyEmpty = false;
     selectedIndices.forEach(idx => { if (!imageFiles[idx].hasFile) isAnyEmpty = true; });
-    if(topbarSelectFormat) topbarSelectFormat.style.display = isAnyEmpty ? 'inline-block' : 'none';
+    // the .txt/.json choice for images with no caption file lives in the 🔄 button of the Active Image panel now; the hidden select only keeps the value
+    if(topbarSelectFormat) topbarSelectFormat.style.display = 'none';
     if (typeof window.updateConvertFormatButton === 'function') window.updateConvertFormatButton();
 
     const tagsContainer = document.getElementById('tags-editor-container');
@@ -215,6 +216,7 @@ window.renderEditor = function() {
             row._tmTag = tag;
 
             if (activeSelectedTags.has(tag)) row.classList.add('selected-active');
+            if (isPinFilterMatch || isButtonFilterMatch) row.classList.add('tm-sticky-src');   // stays on top while scrolled away
             if (isFav && window.enableFavHighlight !== false) row.classList.add('glow-favorite');
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
             if (isFilterMatch) row.classList.add('filter-match');
@@ -686,3 +688,120 @@ window.addEventListener('DOMContentLoaded', () => {
         anchor.insertAdjacentElement('afterend', b);
     }, 0);
 });
+
+
+/* =========================================================================
+   ↕️ REORDER TAG — moves the selected tag(s) to a line number (line 1 = top).
+   With several images selected each image gets the tag(s) at that line (or
+   at its end when the image has fewer tags).
+========================================================================= */
+window.reorderSelectedActiveTag = function () {
+    if (activeSelectedTags.size === 0) return;
+    const sel = Array.from(activeSelectedTags);
+    const list = window.sortedActiveTags || [];
+    const cur = list.indexOf(sel[0]) + 1;
+    const label = sel.length === 1 ? `"${window.nlDisplay ? window.nlDisplay(sel[0]) : sel[0]}"` : `${sel.length} tags`;
+    const ans = prompt(`Reorder tag — new line for ${label} (1 = top, ${list.length} = bottom).\nCurrent line: ${cur || '?'}`, String(cur || 1));
+    if (ans === null) return;
+    let pos = parseInt(String(ans).trim(), 10);
+    if (!isFinite(pos)) { if (window.showAlert) window.showAlert('Type a line number (1 = top).', 'warn'); return; }
+    const imgs = window.TM.tags.selectedImages().filter(img => img.hasFile || img.content);
+    const selSet = new Set(sel);
+    const changed = [];
+    imgs.forEach(img => {
+        const tags = window.TM.tags.get(img);
+        const moving = tags.filter(t => selSet.has(t));          // keeps their current order
+        if (!moving.length) return;
+        const rest = tags.filter(t => !selSet.has(t));
+        const at = Math.max(0, Math.min(rest.length, pos - 1));
+        const out = rest.slice(0, at).concat(moving, rest.slice(at));
+        if (out.join('\u0001') === tags.join('\u0001')) return;
+        window.TM.tags.set(img, out);
+        changed.push(img);
+    });
+    if (!changed.length) return;
+    if (typeof window.markDirty === 'function') window.markDirty(changed);
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (window.showAlert) window.showAlert(`Moved ${label} to line ${Math.max(1, pos)} in ${changed.length} image(s). Remember to save.`, 'success');
+};
+
+/* =========================================================================
+   STICKY PIN / FILTER TAG — when a tag is pinned (📌) or used by a filter
+   button in All Dataset Tags, its row in Active Image stays visible at the
+   top of the list while its real line is scrolled out of view. As soon as
+   the real line is visible again the copy disappears (the tag stays where it
+   is, as before). Click the copy to jump to the real line.
+========================================================================= */
+(function () {
+    const st = document.createElement('style');
+    st.textContent = `
+        #active-sticky-strip { display:none; flex-shrink:0; border-bottom:2px solid #2a5a8c; background:#0d1520; box-shadow:0 3px 8px rgba(0,0,0,.5); max-height:40%; overflow-y:auto; }
+        #active-sticky-strip .tag-row { cursor:pointer; }
+        #active-sticky-strip .tag-row::after { content:'📌'; font-size:.8em; margin-left:6px; opacity:.7; }
+        #active-sticky-strip .tag-row .tag-remove, #active-sticky-strip .tag-row .tag-star, #active-sticky-strip .tag-row .tag-save-preset,
+        #active-sticky-strip .tag-row .tag-to-ghost, #active-sticky-strip .tag-row .tag-edit-nl { pointer-events:none; opacity:.35; }
+        .tag-row.tm-sticky-flash { animation: tmStickyFlash .9s ease-out; }
+        @keyframes tmStickyFlash { 0% { box-shadow: inset 0 0 0 2px #4db8ff; } 100% { box-shadow: inset 0 0 0 0 transparent; } }`;
+    document.head.appendChild(st);
+
+    let raf = null;
+    function strip() {
+        let s = document.getElementById('active-sticky-strip');
+        const list = document.getElementById('tag-list-vertical');
+        if (!s && list && list.parentNode) {
+            s = document.createElement('div');
+            s.id = 'active-sticky-strip';
+            list.parentNode.insertBefore(s, list);
+        }
+        return s;
+    }
+    function update() {
+        raf = null;
+        const list = document.getElementById('tag-list-vertical');
+        const s = strip();
+        if (!list || !s) return;
+        const srcs = Array.from(list.querySelectorAll('.tag-row.tm-sticky-src'));
+        const lr = list.getBoundingClientRect();
+        const hiddenRows = srcs.filter(r => {
+            if (r.style.display === 'none' || r.offsetParent === null) return false;
+            const b = r.getBoundingClientRect();
+            return b.bottom <= lr.top + 1 || b.top >= lr.bottom - 1;      // real line out of view
+        });
+        const key = hiddenRows.map(r => r.getAttribute('data-tag-name')).join('\u0001');
+        if (s._key === key && s.childNodes.length === hiddenRows.length) { s.style.display = hiddenRows.length ? 'block' : 'none'; return; }
+        s._key = key;
+        s.innerHTML = '';
+        hiddenRows.forEach(orig => {
+            const c = orig.cloneNode(true);
+            c.classList.remove('tm-sticky-src', 'dragging');
+            c.draggable = false;
+            c.removeAttribute('data-tag-name');
+            c.title = 'Pinned / filtered tag — click to go to its line';
+            c.onclick = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                const lb = list.getBoundingClientRect(), ob = orig.getBoundingClientRect();
+                list.scrollTop += (ob.top - lb.top) - (lb.height - ob.height) / 2;
+                orig.classList.remove('tm-sticky-flash'); void orig.offsetWidth; orig.classList.add('tm-sticky-flash');
+            };
+            s.appendChild(c);
+        });
+        s.style.display = hiddenRows.length ? 'block' : 'none';
+    }
+    function schedule() { if (!raf) raf = requestAnimationFrame(update); }
+    function hook() {
+        const list = document.getElementById('tag-list-vertical');
+        if (!list || list.__stickyHooked) return;
+        list.__stickyHooked = true;
+        list.addEventListener('scroll', schedule, { passive: true });
+        window.addEventListener('resize', schedule);
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+        hook();
+        if (window.TM && typeof window.TM.on === 'function') {
+            window.TM.on('render:editor', () => { hook(); schedule(); });
+            window.TM.on('render:master', schedule);
+            window.TM.on('filters:applied', schedule);
+        }
+    });
+    window.tmUpdateActiveSticky = schedule;
+})();

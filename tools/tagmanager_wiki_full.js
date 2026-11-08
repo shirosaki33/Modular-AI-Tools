@@ -89,6 +89,12 @@
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(false); });
     window.addEventListener('pagehide', () => flush(true));
 
+    /* Summaries saved by the old cleaner lost the linked words ("Common settings are ] or ]."). They count as
+       missing, so the next read / scan / Fill wiki downloads them again with the new cleaner. */
+    function brokenSummary(e) {
+        return e && e.m === 's' && /(^|[\s(])\](?=[\s.,;:!?)]|$)|\[\s*\]/.test(String(e.t || ''));
+    }
+
     window.WikiFull = {
         load,
         ready() { return loadOk; },
@@ -97,11 +103,13 @@
         /* { text, ts, full } — full=false means the 800-char summary (entries without "m" are full texts from the first version) */
         get(site, tag) {
             const e = data[site] && data[site][norm(tag)];
-            return e ? { text: e.t, ts: e.ts, full: e.m !== 's' } : null;
+            // old summary with "are ]": still shown (offline), but counts as missing for scans and is replaced when the site answers
+            return e ? { text: e.t, ts: e.ts, full: e.m !== 's', broken: brokenSummary(e) } : null;
         },
         /* needFull: only counts if the saved text is the complete one */
         has(site, tag, needFull) {
             const e = data[site] && data[site][norm(tag)];
+            if (e && brokenSummary(e)) return false;
             return !!e && (!needFull || e.m !== 's');
         },
         set(site, tag, text, ts, full) {
@@ -120,7 +128,7 @@
         /* Tags saved in the file for a site (needFull: only the ones with the complete text). */
         keys(site, needFull) {
             const d = data[site] || {};
-            return Object.keys(d).filter(k => !needFull || d[k].m !== 's');
+            return Object.keys(d).filter(k => !brokenSummary(d[k]) && (!needFull || d[k].m !== 's'));
         },
         stats() { return { danbooru: Object.keys(data.danbooru).length, e621: Object.keys(data.e621).length }; }
     };

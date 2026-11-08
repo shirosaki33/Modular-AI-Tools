@@ -14,13 +14,26 @@
                       window.addEventListener('booru-status', e => e.detail)
    Standalone: does not depend on any other tool file. e621 follows the
    SFW switch (e926.net) when window.showE621Sfw is set.
+
+   REQUEST GATE (2026-11): every fetch() to Danbooru / e621 / e926 made by the
+   page goes through here first:
+     - the status is checked when the app starts;
+     - a site that failed (offline / having issues) is checked again every 5 min,
+       and while it is not Online NO request is sent to its API (the call fails
+       right away with "… request not sent", the callers treat it as an error and
+       try again later — nothing is marked as unknown);
+     - before a request, if the last check is older than 60 s, the status is
+       checked first and only then the request is sent.
+   BooruStatus.canRequest(id) / BooruStatus.ensure(id) for other scripts.
 ========================================================================= */
 (function () {
     if (window.BooruStatus) return;
 
     const TIMEOUT_MS = 8000;      // no answer in 8 s = offline
     const SLOW_MS = 3500;         // answered, but slower than this = issues
-    const DEFAULT_INTERVAL = 60000;
+    const DEFAULT_INTERVAL = 5 * 60000;   // background re-check (failed sites are retried every 5 min)
+    const FRESH_MS = 60000;               // a request older than this re-checks the status first
+    const RETRY_MS = 5 * 60000;           // failed site: next check
 
     const SITES = {
         danbooru: { label: 'Danbooru', host: () => 'danbooru.donmai.us', labelColor: '#9aa0a6' },
@@ -41,6 +54,9 @@
     let timer = null;
     let interval = DEFAULT_INTERVAL;
     const running = {};
+    const runningP = {};                  // id -> Promise of the check in progress
+    const retryTimer = {};
+    const realFetch = window.fetch.bind(window);
 
     function injectStyle() {
         if (document.getElementById('booru-status-style')) return;
@@ -94,7 +110,7 @@
         const to = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
         const t0 = performance.now();
         try {
-            const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+            const res = await realFetch(url, { signal: ctrl.signal, cache: 'no-store' });
             const ms = Math.round(performance.now() - t0);
             const r = { ms, status: res.status, state: 'online', reason: '' };
             if (res.status === 429) { r.state = 'issues'; r.reason = 'Rate limited (HTTP 429)'; }
@@ -126,17 +142,24 @@
         }
         status[id] = { state: r.state, ms: r.ms, status: r.status, reason: r.reason, checkedAt: Date.now() };
         paint();
+        // failed: check again in 5 min (requests stay blocked until then)
+        clearTimeout(retryTimer[id]);
+        if (r.state !== 'online') retryTimer[id] = setTimeout(() => { if (navigator.onLine !== false) check(id); }, RETRY_MS);
         try { window.dispatchEvent(new CustomEvent('booru-status', { detail: { id, ...status[id] } })); } catch (e) {}
     }
 
     // Checks one site (id) or all of them (no argument). Each site has its own lock.
     async function check(id) {
         const ids = id ? [id] : Object.keys(SITES);
-        await Promise.all(ids.map(async sid => {
-            if (!SITES[sid] || !enabled[sid] || running[sid]) return;
+        await Promise.all(ids.map(sid => {
+            if (!SITES[sid] || !enabled[sid]) return null;
+            if (running[sid]) return runningP[sid];
             running[sid] = true;
-            try { await checkOne(sid); }
-            finally { running[sid] = false; }
+            runningP[sid] = (async () => {
+                try { await checkOne(sid); }
+                finally { running[sid] = false; runningP[sid] = null; }
+            })();
+            return runningP[sid];
         }));
     }
     const checkAll = () => check();
@@ -184,7 +207,41 @@
 
     function autoMount() {
         document.querySelectorAll('[data-booru-status]').forEach(el => mount(el));
+        // status check at startup even when no dots are shown
+        if (!started) { started = true; schedule(); checkAll(); }
     }
+    let started = false;
+
+    /* ---------- REQUEST GATE ---------- */
+    function siteOfUrl(u) {
+        let host = '';
+        try { host = new URL(u, location.href).hostname.toLowerCase(); } catch (e) { return null; }
+        if (host === 'danbooru.donmai.us' || host.endsWith('.donmai.us')) return 'danbooru';
+        if (host === 'e621.net' || host.endsWith('.e621.net') || host === 'e926.net' || host.endsWith('.e926.net')) return 'e621';
+        return null;
+    }
+    // Makes sure the status is known and fresh before a request (waits for a check in progress).
+    async function ensure(id) {
+        if (!SITES[id] || !enabled[id]) return true;
+        if (running[id] && runningP[id]) await runningP[id];
+        const s = status[id];
+        const age = s.checkedAt ? Date.now() - s.checkedAt : Infinity;
+        if (s.state === 'online') { if (age > FRESH_MS) await check(id); }
+        else if (s.state === 'checking' || age > RETRY_MS) await check(id);
+        return status[id].state === 'online';
+    }
+    function canRequest(id) { return !SITES[id] || !enabled[id] || status[id].state === 'online'; }
+    window.fetch = async function (input, init) {
+        const url = typeof input === 'string' ? input : (input && input.url) ? input.url : String(input || '');
+        const id = siteOfUrl(url);
+        if (!id) return realFetch(input, init);
+        const ok = await ensure(id);
+        if (!ok) {
+            const s = status[id];
+            throw new TypeError(`${SITES[id].label} is ${STATE_INFO[s.state].text.toLowerCase()}${s.reason ? ' (' + s.reason + ')' : ''} — request not sent, next check in 5 min.`);
+        }
+        return realFetch(input, init);
+    };
 
     document.addEventListener('visibilitychange', () => { if (!document.hidden && mounts.length) checkAll(); });
     window.addEventListener('online', () => { if (mounts.length) checkAll(); });
@@ -201,9 +258,11 @@
             on = !!on;
             if (enabled[id] === on) return;
             enabled[id] = on;
-            if (on) { status[id].state = 'checking'; paint(); check(id); } else paint();
+            if (on) { status[id].state = 'checking'; paint(); check(id); } else { clearTimeout(retryTimer[id]); paint(); }
         },
         isEnabled: id => !!enabled[id],
+        canRequest,
+        ensure,
         get: id => (status[id] ? { ...status[id] } : null),
         all: () => JSON.parse(JSON.stringify(status))
     };

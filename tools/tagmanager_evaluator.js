@@ -75,7 +75,7 @@
         tipFields: { comment: true, issues: true, suggestion: true, framing: true, crop: true, consistency: true, styleNote: true, tags: true, review: true, meta: true, hint: true },
         baseKey: '',                // legacy (single base) — migrated to datasets[ds].bases
         showBadges: true,
-        keepOnSwitch: false,        // current-dataset run: keep going when another dataset is opened
+        keepOnSwitch: true,         // current-dataset run: keep going when another dataset is opened (⏳ background task)
         skipScored: true,           // dataset list: skip images that already have a score
         datasets: {},               // dsKey -> { brief, bases: [{ key, name, style, trigger }] }
         queue: []                   // [{ id, rootKey, rootName, path:[...], label, dsKey, status, done, total, ok, failed, ts }]
@@ -239,6 +239,8 @@
             const c = await window.getSetting(CFG_KEY, null);
             if (c && typeof c === 'object') cfg = { ...DEFAULT_CFG, ...c, tipFields: { ...DEFAULT_CFG.tipFields, ...(c.tipFields || {}) } };
             cfg.consistency = true;
+            // (2026-11) background tasks: a run keeps evaluating its dataset when another one is opened (on once for everybody)
+            if (!cfg.keepOnSwitchV2) { cfg.keepOnSwitch = true; cfg.keepOnSwitchV2 = 1; }
             // results are big: own file (local/evaluator_results.json) on localhost, not user_config.json
             const r = window.LocalStore ? await window.LocalStore.get(RES_KEY, null) : await window.getSetting(RES_KEY, null);
             if (r && typeof r === 'object') results = r;
@@ -1377,6 +1379,8 @@ ${withBase ? `
             while (true) {
                 if (manualJob) {
                     const j = manualJob;
+                    if (j._gpuReady) { await j._gpuReady; j._gpuReady = null; }   // waits its turn in the GPU queue
+                    if (j._task && j._task.cancelled) j.cancel = true;
                     if (!j.cancel && !j.broken && j.i < j.units.length) { await step(j); continue; }
                     finishManual(j);
                     if (!j.cancel && !j.broken) await maybeReview(j.dsKey, j.dsKey === currentDsKey() ? currentDatasetKeys() : j.allKeys);
@@ -1412,6 +1416,7 @@ ${withBase ? `
 
     function finishManual(j) {
         manualJob = null;
+        if (j._task) { j._task.result = `${j.ok} scored${j.failed ? `, ${j.failed} failed` : ''}`; if (j._done) j._done(); }
         const stopped = j.cancel;
         const msg = `${stopped ? 'Stopped' : (j.broken ? 'Stopped (errors)' : 'Done')}. ${j.ok} evaluated${j.failed ? `, ${j.failed} failed` : ''}.`;
         setProgress(null, msg);
@@ -1449,10 +1454,25 @@ ${withBase ? `
             return;
         } else {
             manualJob = { kind: 'manual', dsKey: u.dsKey, label: datasetLabel(u.dsKey), units: [u], allKeys: currentDatasetKeys(), i: 0, ok: 0, failed: 0, fails: 0, skipScored: false, bases: null, dir: window.currentImagesHandle || null, single: true };
+            attachTask(manualJob, [img]);
         }
         syncRunButton();
         paintBadges();
         worker();
+    }
+
+    /* ⏳ Tasks panel: each manual run shows there (dataset, x / N, ⏹ stop) and waits for the GPU queue
+       (Auto-Caption / PSD detection / seg body run one at a time with it). */
+    function attachTask(job, imgs) {
+        if (!window.TM || !window.TM.tasks) return;
+        const ctx = window.TM.tasks.captureDataset(job.dir || undefined);
+        ctx.files = imgs || [];
+        ctx.label = job.label || ctx.label;
+        let ready;
+        job._gpuReady = new Promise(r => { ready = r; });
+        job._task = window.TM.tasks.run({ title: job.single ? 'Evaluator (1 image)' : `Evaluator (${job.units.length})`, icon: '🧐', gpu: true, ctx, silentEnd: true,
+            onCancel: () => { if (manualJob === job) stopManual(); } }, (t) => new Promise(res => { job._done = res; ready(); }));
+        job._task.promise.finally(() => ready());
     }
 
     function startManual() {
@@ -1465,6 +1485,7 @@ ${withBase ? `
         }
         const ds = currentDsKey();
         manualJob = { kind: 'manual', dsKey: ds, label: datasetLabel(ds), units: imgs.map(unitFromImg), allKeys: currentDatasetKeys(), i: 0, ok: 0, failed: 0, fails: 0, skipScored: false, bases: null, dir: window.currentImagesHandle || null };
+        attachTask(manualJob, imgs);
         syncRunButton();
         // Runs in the background: the panel closes (progress stays on 🧐; clicking it reopens).
         window.closeModal('modal-evaluator');
@@ -1506,6 +1527,7 @@ ${withBase ? `
     }
 
     function setProgress(job, text) {
+        if (job && job._task) job._task.progress(job.i, job.units.length, text || '');
         const p = $('ev-progress'), f = $('ev-progress-fill');
         const where = job ? (job.kind === 'list' ? `📋 ${job.label} — ` : (job.dsKey !== currentDsKey() ? `${job.label} — ` : '')) : '';
         if (p) p.textContent = where + (text || '');
@@ -2206,7 +2228,7 @@ ${withBase ? `
 
     function onDatasetLoaded() {
         if (pick && pick.ds !== currentDsKey()) endBasePick(false);
-        if (manualJob && !manualJob.cancel && !cfg.keepOnSwitch && manualJob.dsKey !== currentDsKey()) {
+        if (manualJob && !manualJob.cancel && cfg.keepOnSwitch === false && manualJob.dsKey !== currentDsKey()) {
             const j = manualJob;
             stopManual(true);
             window.showAlert && window.showAlert(`🧐 Evaluation of "${j.label}" stopped: dataset changed (${j.i}/${j.units.length} done — scores so far are saved). Turn on "Keep evaluating in the background" to keep it running.`, 'info', 7000);

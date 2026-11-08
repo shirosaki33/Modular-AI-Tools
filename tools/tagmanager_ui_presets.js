@@ -51,7 +51,7 @@ window.presetCategoryCollapseState = {};
 window.presetHighlightsAlwaysVisible = false;
 
 // UI state of the side panel (persisted through saveSetting)
-window._presetUI = { mode: 'select', target: 'selected', pos: 'bottom', sortCat: 'asc', sortName: 'asc', hiddenCats: [] };
+window._presetUI = { mode: 'select', target: 'selected', pos: 'bottom', sortCat: 'asc', sortName: 'asc', hiddenCats: [], view: 'grouped' };
 
 /* ---------------------------------------------------------------------
    CACHE EM MEMÓRIA DOS PRESET TAGS
@@ -164,7 +164,10 @@ function ppRefreshAfterContentChange() {
     if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
     if (typeof window.renderEditor === 'function') window.renderEditor();
     if (typeof window.applyFilters === 'function') window.applyFilters();
-    window.renderPresetTags();
+    // presets list: only the rows in view are redrawn (usage counts + markers), no full re-render
+    PP.counts = ppComputeTagCounts();
+    ppComputeMarks();
+    ppRepaint();
 }
 
 // Usage count of every tag in the current dataset (visible images only)
@@ -327,7 +330,7 @@ window.addSelectedPresetTagsTo = function (target) {
 
 window.clearPresetSelection = function () {
     presetSelectedTags.clear();
-    window.renderPresetTags();
+    ppRepaint();
     window.updatePresetSelectionActions();
 };
 
@@ -500,6 +503,21 @@ function ppInjectStyles() {
         .pp-hl { font-size:10px; color:#aaa; display:flex; align-items:center; gap:4px; cursor:pointer; user-select:none; background:#111; border:1px solid #333; border-radius:6px; padding:3px 6px; white-space:nowrap; }
         .pp-hl:hover { color:#fff; border-color:#2dd4bf; }
         .pp-hl input { margin:0; accent-color:#2dd4bf; }
+        #preset-tag-list { position:relative; }
+        #pp-vport { position:relative; width:100%; flex:0 0 auto; }
+        #pp-vport .pp-cathead { position:absolute; left:0; right:0; box-sizing:border-box; display:flex; align-items:center; gap:6px; padding:0 8px; background:#1b2128; border-bottom:1px solid #2a2a2a; border-left:3px solid #444; cursor:pointer; user-select:none; overflow:hidden; font-size:12px; font-weight:bold; }
+        #pp-vport .pp-cathead:hover { background:#232c35; }
+        #pp-vport .pp-cathead.pp-drop { background:#0f4d45; outline:1px dashed #2dd4bf; outline-offset:-2px; }
+        #pp-vport .pp-caret { width:12px; color:#8a96a3; flex-shrink:0; }
+        #pp-vport .pp-catname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        #pp-vport .pp-catn { background:#111; color:#aaa; border:1px solid #333; border-radius:8px; padding:0 6px; font-size:10px; flex-shrink:0; }
+        #pp-vport .pp-cat-add { opacity:0.55; }
+        #pp-vport .pp-cathead:hover .pp-cat-add { opacity:1; }
+        #pp-vport.pp-grouped .pp-tag { padding-left:18px; }
+        #pp-vport.pp-grouped .pp-cat-badge { display:none; }
+        #pp-vport .pp-tag.pp-drop-row { background:#0f3a35 !important; }
+        #pp-vport .pp-tag.dragging { opacity:0.4; }
+        #pp-vport .pp-tag { position:absolute; left:0; right:0; box-sizing:border-box; overflow:hidden; }
         .pp-tag { gap:4px; border-left:3px solid transparent; padding-left:6px; padding-right:6px; }
         .pp-tag .pp-mark { flex-shrink:0; font-size:11px; color:#2dd4bf; text-align:center; margin-left:5px; }
         .pp-tag .pp-mark:empty { display:none; }
@@ -588,6 +606,8 @@ function ppSyncControls() {
     const ui = window._presetUI;
     const seg = document.getElementById('pp-seg-pos');
     if (seg) seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === ui.pos));
+    const ccb = document.getElementById('cb-preset-compact');
+    if (ccb) ccb.checked = ui.view === 'flat';
     [['pp-sort-cat', 'sortCat'], ['pp-sort-name', 'sortName']].forEach(([id, key]) => {
         const b = document.getElementById(id);
         if (!b) return;
@@ -692,6 +712,18 @@ function ensurePresetShell() {
     hcb.checked = !!window.presetHighlightsAlwaysVisible;
     hcb.onchange = () => window.togglePresetHighlightAlways(hcb.checked);
     hl.appendChild(hcb); hl.appendChild(document.createTextNode('Highlight'));
+    // Compact mode: no category bars — one flat list, like before
+    const cp = document.createElement('label'); cp.className = 'pp-hl';
+    cp.title = 'Compact mode: hides the category bars and shows one flat list (category beside each tag). Off = collapsible category bars, drag tags into a bar to move them.';
+    const ccb = document.createElement('input'); ccb.type = 'checkbox'; ccb.id = 'cb-preset-compact';
+    ccb.checked = window._presetUI.view === 'flat';
+    ccb.onchange = () => {
+        window._presetUI.view = ccb.checked ? 'flat' : 'grouped';
+        if (typeof window.saveSetting === 'function') window.saveSetting('preset-view', window._presetUI.view);
+        window.renderPresetTags();
+    };
+    cp.appendChild(ccb); cp.appendChild(document.createTextNode('Compact'));
+    right.appendChild(cp);
     right.appendChild(hl);
     header.appendChild(right);
     panel.appendChild(header);
@@ -848,102 +880,107 @@ window.togglePresetPanel = function () {
     if (typeof window.renderEditor === 'function') window.renderEditor();
 };
 
+/* =========================================================================
+   VIRTUAL LIST (2026-11 refactor)
+   ---------------------------------------------------------------------
+   Before: every click / marker update rebuilt (or walked) a DOM node for EVERY preset tag,
+   each with its own closures — slow with hundreds or thousands of presets.
+   Now: the list lives in memory (PP.rows -> PP.filtered) and only the rows that are on screen
+   (+ a small buffer) exist in the DOM, absolutely positioned inside #pp-vport. Clicks are handled
+   by ONE delegated listener; selecting a tag, the ✓/◐ markers, the wiki icons and the name filter
+   only repaint those few rows (no full re-render, no async work).
+========================================================================= */
+const PP = window._ppV = {
+    rows: [],          // [{ tag, cat, hay }] in display order (before the name filter)
+    filtered: [],      // indices into rows that pass the name filter
+    counts: new Map(), // usage of each tag in the dataset
+    cats: [],          // category names (for the "move to" select)
+    colors: new Map(),
+    rowH: 30, needMeasure: true,
+    nodes: new Map(),  // filtered position -> element
+    first: -1, last: -1,
+    marks: null, markTotal: 0, grouped: true, drag: null,
+    vp: null, wired: false, raf: 0, markTimer: 0
+};
+const PP_BUF = 8;
+const ppEsc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function ppColors(cat) { let c = PP.colors.get(cat); if (!c) { c = ppCatColors(cat); PP.colors.set(cat, c); } return c; }
+function ppContainer() { return document.getElementById('preset-tag-list'); }
+
 window.filterPresetTagsByName = function (val) {
     window.presetTagNameFilter = (val || '').trim().toLowerCase();
     ppApplyFilterDOM();
 };
 
-// Applies the name filter + the collapse state to the already rendered DOM.
-// While filtering, categories with matches are force-expanded and the others hidden.
-function ppApplyFilterDOM() {
-    const container = document.getElementById('preset-tag-list');
+// Name filter + collapse state: recomputes which rows are listed and repaints (no DOM walk).
+// While filtering, only categories with matches are listed (and they are shown expanded).
+function ppApplyFilterDOM(keepScroll) {
+    const container = ppContainer();
     if (!container) return;
     const f = window.presetTagNameFilter || '';
-    let visible = 0;
-    container.querySelectorAll('.pp-tag').forEach(item => {
-        const hay = ((item.dataset.presetTag || '') + ' ' + (item.dataset.presetCat || '')).toLowerCase();
-        const show = !f || hay.includes(f);
-        item.style.display = show ? 'flex' : 'none';
-        if (show) visible++;
-    });
-    const none = container.querySelector('.pp-nomatch');
-    if (none) none.style.display = (f && visible === 0) ? 'block' : 'none';
-}
-// Light update of the ✓ / ◐ markers (no re-render): which tags the target images already have
-window.updatePresetMarkers = function () {
-    if (!ppIsPanelVisible()) return;
-    const container = document.getElementById('preset-tag-list');
-    if (!container || typeof imageFiles === 'undefined') return;
-    const scopeAll = false;
-    const imgs = scopeAll
-        ? imageFiles.filter(i => !i.hidden)
-        : Array.from(selectedIndices).map(i => imageFiles[i]).filter(Boolean);
-    const total = imgs.length;
-    const counts = new Map();
-    if (total > 0) {
-        imgs.forEach(img => { new Set(ppTagsOf(img)).forEach(t => counts.set(t, (counts.get(t) || 0) + 1)); });
+    const grouped = window._presetUI.view !== 'flat';
+    const collapsed = window.presetCategoryCollapseState || {};
+    const out = [];
+    if (grouped && f) {
+        const has = new Set();
+        PP.rows.forEach(r => { if (r.kind === 'tag' && r.hay.includes(f)) has.add(r.cat); });
+        PP.rows.forEach((r, i) => { if (r.kind === 'cat' ? has.has(r.cat) : r.hay.includes(f)) out.push(i); });
+    } else {
+        PP.rows.forEach((r, i) => {
+            if (r.kind === 'cat') { if (grouped) out.push(i); return; }
+            if (f ? r.hay.includes(f) : !(grouped && collapsed[r.cat])) out.push(i);
+        });
     }
-    const scopeText = scopeAll ? 'visible image(s)' : 'selected image(s)';
-    container.querySelectorAll('.pp-tag').forEach(row => {
-        ppApplyWikiIcons(row);
-        const mark = row.querySelector('.pp-mark');
-        if (!mark) return;
-        const n = total > 0 ? (counts.get(row.dataset.presetTag) || 0) : 0;
-        if (total === 0 || n === 0) { mark.textContent = ''; mark.title = ''; }
-        else if (n === total) { mark.textContent = '✓'; mark.title = `On all ${total} ${scopeText}`; }
-        else { mark.textContent = '◐'; mark.title = `On ${n} of ${total} ${scopeText}`; }
-    });
+    const changed = out.length !== PP.filtered.length || out.some((v, k) => v !== PP.filtered[k]);
+    PP.filtered = out;
+    if (PP.vp) { PP.vp.style.height = (out.length * PP.rowH) + 'px'; PP.vp.classList.toggle('pp-grouped', grouped); }
+    const none = container.querySelector('.pp-nomatch');
+    if (none) none.style.display = (f && out.length === 0 && PP.rows.length) ? 'block' : 'none';
+    if (changed && !keepScroll) container.scrollTop = 0;
+    ppPaint(true);
+}
+
+/* ---------- ✓ / ◐ markers: which tags the selected images already have ---------- */
+function ppComputeMarks() {
+    const imgs = (typeof imageFiles !== 'undefined' && typeof selectedIndices !== 'undefined')
+        ? Array.from(selectedIndices).map(i => imageFiles[i]).filter(Boolean) : [];
+    const counts = new Map();
+    imgs.forEach(img => { new Set(ppTagsOf(img)).forEach(t => counts.set(t, (counts.get(t) || 0) + 1)); });
+    PP.marks = counts; PP.markTotal = imgs.length;
+}
+window.updatePresetMarkers = function () {
+    if (!ppIsPanelVisible() || !PP.vp) return;
+    clearTimeout(PP.markTimer);            // many callers (editor render, wiki lookups...) -> one repaint
+    PP.markTimer = setTimeout(() => { ppComputeMarks(); ppPaint(true); }, 40);
 };
 
-/* =========================================================================
-   RENDER (side panel)
-========================================================================= */
-function ppApplyWikiIcons(row) {
-    row.querySelectorAll('.tag-db-info, .tag-e621-info, .tag-both-info, .pp-wiki').forEach(e => e.remove());
-    // Master switch off -> no icons at all. Otherwise: ❓ follows "Show ❓ Danbooru wiki icons",
-    // ❔ follows "Enable e621" (window.showE621 is already false when the master switch is off).
-    if (!window.danbooruInfoEnabled) return;
+/* ---------- wiki icon (one per tag; nothing when no site has an entry) ---------- */
+function ppWikiHTML(tag) {
+    if (!window.danbooruInfoEnabled) return '';
     const wantDb = !!window.danbooruInfoShowIcons, wantE6 = !!window.showE621;
-    if (!wantDb && !wantE6) return;
-    const t = (row.dataset.presetTag || '').trim().toLowerCase();
-    if (!t || t.startsWith('nl:')) return;
-
-    // ONE icon per tag (nothing is drawn when no site has a wiki entry):
-    //   only Danbooru -> red ❓   only e621 -> white ❔   both -> ⁉️ (opens the side-by-side popout)
+    if (!wantDb && !wantE6) return '';
+    const t = tag.trim().toLowerCase();
+    if (!t || t.startsWith('nl:')) return '';
     let hasDb = false, hasE6 = false;
     if (wantDb && typeof window.dbGetCachedTag === 'function') { const i = window.dbGetCachedTag(t); hasDb = !!(i && i.hasWikiInfo); }
     if (wantE6 && typeof window.e621GetCachedTag === 'function') { const i = window.e621GetCachedTag(t); hasE6 = !!(i && i.hasWikiInfo); }
     if (hasDb && typeof window.openDanbooruTagInfoPopout !== 'function') hasDb = false;
     if (hasE6 && typeof window.openE621TagInfoPopout !== 'function') hasE6 = false;
-    if (!hasDb && !hasE6) return;
-
-    const ic = ppEl('span');
-    if (hasDb && hasE6) {
-        ic.className = 'tag-both-info'; ic.textContent = '⁉️';
-        ic.title = 'Info found on Danbooru AND e621 — click to see both side by side';
-        ic.onclick = (e) => {
-            e.stopPropagation();
-            if (typeof window.openBothTagInfoPopout === 'function') { window.openBothTagInfoPopout(t); return; }
-            const modal = document.getElementById('modal-danbooru');
-            const input = document.getElementById('dbpInput');
-            const btn = document.getElementById('dbpSearchBtn');
-            if (modal && input && btn && typeof window.openModal === 'function') {
-                input.value = t; window.openModal('modal-danbooru'); btn.click();
-            } else {
-                window.openDanbooruTagInfoPopout(t);
-            }
-        };
-    } else if (hasDb) {
-        ic.className = 'tag-db-info'; ic.textContent = '❓'; ic.title = 'View Danbooru info for this tag';
-        ic.onclick = (e) => { e.stopPropagation(); window.openDanbooruTagInfoPopout(t); };
-    } else {
-        ic.className = 'tag-e621-info'; ic.textContent = '❔'; ic.title = 'View e621 info for this tag';
-        ic.onclick = (e) => { e.stopPropagation(); window.openE621TagInfoPopout(t); };
-    }
-    const box = ppEl('span'); box.className = 'pp-wiki';
-    box.appendChild(ic);
-    const anchor = row.querySelector('.pp-cat-badge, .pp-cat-select');
-    if (anchor) anchor.after(box); else row.appendChild(box);
+    if (hasDb && hasE6) return '<span class="pp-wiki"><span class="tag-both-info" data-wk="both" title="Info found on Danbooru AND e621 — click to see both side by side">⁉️</span></span>';
+    if (hasDb) return '<span class="pp-wiki"><span class="tag-db-info" data-wk="db" title="View Danbooru info for this tag">❓</span></span>';
+    if (hasE6) return '<span class="pp-wiki"><span class="tag-e621-info" data-wk="e6" title="View e621 info for this tag">❔</span></span>';
+    return '';
+}
+function ppOpenWiki(kind, t) {
+    if (kind === 'both') {
+        if (typeof window.openBothTagInfoPopout === 'function') { window.openBothTagInfoPopout(t); return; }
+        const modal = document.getElementById('modal-danbooru');
+        const input = document.getElementById('dbpInput');
+        const btn = document.getElementById('dbpSearchBtn');
+        if (modal && input && btn && typeof window.openModal === 'function') { input.value = t; window.openModal('modal-danbooru'); btn.click(); }
+        else window.openDanbooruTagInfoPopout(t);
+    } else if (kind === 'db') window.openDanbooruTagInfoPopout(t);
+    else window.openE621TagInfoPopout(t);
 }
 
 // Looks up the wiki info of preset tags that were never checked (same shared caches
@@ -977,54 +1014,157 @@ function ppQueueWikiLookup(tags) {
     }, window._dbInfoScanRunning ? 4000 : 800);
 }
 
-function ppBuildTagRow(tag, cat, count, index, renderedTags, allCats) {
-    const item = ppEl('div');
-    item.className = 'master-tag-item pp-tag';
-    item.dataset.presetTag = tag;
-    item.dataset.presetCat = cat;
-    const col = ppCatColors(cat);
-    item.style.borderLeftColor = col.fg;
-
-    const isTagSelected = presetSelectedTags.has(tag);
-
-    const left = ppEl('div', 'display:flex; align-items:center; overflow:hidden; flex:1; min-width:0;');
-    const mark = ppEl('span'); mark.className = 'pp-mark';
-    const cnt = ppEl('span', '', String(count)); cnt.className = 'pp-count'; cnt.title = 'Times used in current dataset';
-    const nm = ppEl('span', 'color:#2dd4bf; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; min-width:44px;', tag); nm.className = 'tag-name'; nm.title = tag;
-    left.appendChild(cnt); left.appendChild(nm); left.appendChild(mark);
-
-    if (isTagSelected) {
-        item.classList.add('selected-master');
+/* ---------- one row as an HTML string ---------- */
+function ppHeadHTML(j, r) {
+    const col = ppColors(r.cat), H = PP.rowH;
+    const f = window.presetTagNameFilter || '';
+    const open = !!f || !(window.presetCategoryCollapseState || {})[r.cat];
+    return `<div class="pp-cathead${open ? '' : ' pp-closed'}" data-i="${j}" data-preset-cat="${ppEsc(r.cat)}" style="top:${j * H}px;height:${H}px;border-left-color:${col.fg};" title="Click to ${open ? 'collapse' : 'expand'} — drop tags here to move them into ${ppEsc(r.cat)}">` +
+        `<span class="pp-caret">${open ? '▾' : '▸'}</span>` +
+        `<span class="pp-catname" style="color:${col.fg};">${ppEsc(r.cat)}</span>` +
+        `<span class="pp-catn">${r.n}</span>` +
+        (r.n ? `<span class="pp-add sel pp-cat-add" data-act="sel" title="Add ALL ${r.n} tag(s) of &quot;${ppEsc(r.cat)}&quot; to the selected images">➕</span>` +
+               `<span class="pp-add all pp-cat-add" data-act="all" title="Add ALL ${r.n} tag(s) of &quot;${ppEsc(r.cat)}&quot; to ALL images">🌐</span>` : '') +
+        `</div>`;
+}
+function ppRowHTML(j) {
+    const r = PP.rows[PP.filtered[j]];
+    if (!r) return '';
+    if (r.kind === 'cat') return ppHeadHTML(j, r);
+    const tag = r.tag, cat = r.cat;
+    const col = ppColors(cat);
+    const sel = presetSelectedTags.has(tag);
+    let cls = 'master-tag-item pp-tag', warn = '';
+    if (sel) {
+        cls += ' selected-master';
         if (window.enableConflictWarnings && typeof window.checkTagStatusWithActive === 'function') {
-            const status = window.checkTagStatusWithActive(tag);
-            if (status.conflicts.length > 0) {
-                item.classList.add('conflict');
-                const w = ppEl('span', '', `⚠️ Conflict: ${status.conflicts.join(', ')}`);
-                w.className = 'conflict-warning'; w.title = `Conflict with: ${status.conflicts.join(', ')}`;
-                left.appendChild(w);
-            } else if (status.similars.length > 0) {
-                item.classList.add('similar');
-                const w = ppEl('span', '', `🟨 Similar: ${status.similars.join(', ')}`);
-                w.className = 'similar-warning'; w.title = `Similar/Redundant to: ${status.similars.join(', ')}`;
-                left.appendChild(w);
+            const st = window.checkTagStatusWithActive(tag);
+            if (st.conflicts.length > 0) {
+                cls += ' conflict';
+                const t = ppEsc(`Conflict with: ${st.conflicts.join(', ')}`);
+                warn = `<span class="conflict-warning" title="${t}">⚠️ Conflict: ${ppEsc(st.conflicts.join(', '))}</span>`;
+            } else if (st.similars.length > 0) {
+                cls += ' similar';
+                const t = ppEsc(`Similar/Redundant to: ${st.similars.join(', ')}`);
+                warn = `<span class="similar-warning" title="${t}">🟨 Similar: ${ppEsc(st.similars.join(', '))}</span>`;
             }
         }
     }
-    item.appendChild(left);
+    let mark = '', markTitle = '';
+    if (PP.markTotal > 0) {
+        const n = PP.marks ? (PP.marks.get(tag) || 0) : 0;
+        if (n === PP.markTotal) { mark = '✓'; markTitle = `On all ${PP.markTotal} selected image(s)`; }
+        else if (n > 0) { mark = '◐'; markTitle = `On ${n} of ${PP.markTotal} selected image(s)`; }
+    }
+    const H = PP.rowH;
+    return `<div class="${cls}" ${PP.grouped ? 'draggable="true" ' : ''}data-i="${j}" data-preset-tag="${ppEsc(tag)}" data-preset-cat="${ppEsc(cat)}" style="top:${j * H}px;height:${H}px;border-left-color:${col.fg};">` +
+        `<div style="display:flex; align-items:center; overflow:hidden; flex:1; min-width:0;">` +
+        `<span class="pp-count" title="Times used in current dataset">${PP.counts.get(tag) || 0}</span>` +
+        `<span class="tag-name" title="${ppEsc(tag)}" style="color:#2dd4bf; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; min-width:44px;">${ppEsc(tag)}</span>` +
+        `<span class="pp-mark" title="${ppEsc(markTitle)}">${mark}</span>${warn}</div>` +
+        `<span class="pp-cat-badge" style="color:${col.fg}; background:${col.bg}; border-color:${col.bd};" title="Category: ${ppEsc(cat)} — click to move this tag to another category">${ppEsc(cat)}</span>` +
+        ppWikiHTML(tag) +
+        `<span class="pp-add sel" title="Add &quot;${ppEsc(tag)}&quot; to the selected images">➕</span>` +
+        `<span class="pp-add all" title="Add &quot;${ppEsc(tag)}&quot; to ALL images">🌐</span>` +
+        `<span class="pp-del" title="Remove this tag from presets (Undo available)">✕</span></div>`;
+}
 
-    const badge = ppEl('span', `color:${col.fg}; background:${col.bg}; border-color:${col.bd};`, cat);
-    badge.className = 'pp-cat-badge'; badge.title = `Category: ${cat} — click to move this tag to another category`;
-    badge.onclick = (e) => {
+// Real height of one row (depends on the font-size setting). Needs the panel to be visible.
+function ppMeasure() {
+    const container = ppContainer();
+    if (!container || !PP.vp || !container.offsetParent) return false;
+    const probe = document.createElement('div');
+    probe.className = 'master-tag-item pp-tag';
+    probe.style.cssText = 'position:static; visibility:hidden;';
+    probe.innerHTML = '<span class="tag-name">Mg</span><span class="pp-add">➕</span>';
+    PP.vp.appendChild(probe);
+    const h = Math.ceil(probe.getBoundingClientRect().height);
+    probe.remove();
+    if (!h) return false;
+    PP.needMeasure = false;
+    if (h !== PP.rowH) { PP.rowH = h; PP.vp.style.height = (PP.filtered.length * h) + 'px'; }
+    return true;
+}
+
+// Draws the rows in view. force = rebuild them (selection / markers / wiki changed); otherwise only the missing ones.
+function ppPaint(force) {
+    const container = ppContainer();
+    if (!container || !PP.vp) return;
+    if (PP.needMeasure) ppMeasure();
+    const H = PP.rowH, n = PP.filtered.length;
+    PP.vp.style.height = (n * H) + 'px';
+    const vh = container.clientHeight || 600;
+    const first = Math.max(0, Math.floor(container.scrollTop / H) - PP_BUF);
+    const last = Math.min(n - 1, Math.ceil((container.scrollTop + vh) / H) + PP_BUF);
+    if (!force && first === PP.first && last === PP.last) return;
+    if (force) { PP.vp.textContent = ''; PP.nodes.clear(); }
+    else PP.nodes.forEach((el, j) => { if ((j < first || j > last) && !el.classList.contains('dragging')) { el.remove(); PP.nodes.delete(j); } });
+    let html = '';
+    const need = [];
+    for (let j = first; j <= last; j++) if (!PP.nodes.has(j)) { html += ppRowHTML(j); need.push(j); }
+    if (html) {
+        const tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        Array.from(tpl.content.children).forEach(el => { PP.nodes.set(+el.dataset.i, el); });
+        PP.vp.appendChild(tpl.content);
+    }
+    PP.first = first; PP.last = last;
+    document.dispatchEvent(new Event('pp:painted'));   // other plugins add their own icons to the rows (rule_similar)
+}
+function ppSchedulePaint() { if (!PP.raf) PP.raf = requestAnimationFrame(() => { PP.raf = 0; ppPaint(false); }); }
+// Redraws the visible rows without re-reading the data (selection, counts, markers).
+function ppRepaint() { if (PP.vp) ppPaint(true); }
+
+/* ---------- ONE delegated click handler for the whole list ---------- */
+function ppOnListClick(e) {
+    const head = e.target.closest ? e.target.closest('.pp-cathead') : null;
+    if (head) { ppOnHeadClick(e, head); return; }
+    const row = e.target.closest ? e.target.closest('.pp-tag') : null;
+    if (!row) return;
+    const j = +row.dataset.i;
+    const r = PP.rows[PP.filtered[j]];
+    if (!r) return;
+    const tag = r.tag, cat = r.cat, t = e.target;
+
+    const wk = t.closest('[data-wk]');
+    if (wk) { e.stopPropagation(); ppOpenWiki(wk.dataset.wk, tag.trim().toLowerCase()); return; }
+
+    const add = t.closest('.pp-add');
+    if (add) {
+        e.stopPropagation();
+        row.classList.add('pp-flash');
+        setTimeout(() => row.classList.remove('pp-flash'), 180);
+        window.applyPresetTags([tag], add.classList.contains('all') ? 'all' : 'selected');
+        return;
+    }
+
+    if (t.closest('.pp-del')) {
+        e.stopPropagation();
+        (async () => {
+            await window.deletePresetTag(tag, true);
+            presetSelectedTags.delete(tag);
+            await ppAfterMutation();
+            ppSetStatus(`Removed "${tag}" from presets`, async () => {
+                await ppSetCategory(tag, cat);
+                await ppAfterMutation();
+                ppSetStatus(`Restored "${tag}".`);
+            });
+        })();
+        return;
+    }
+
+    const badge = t.closest('.pp-cat-badge');
+    if (badge) {
         e.stopPropagation();
         const pick = document.createElement('select'); pick.className = 'pp-cat-select';
-        const names = allCats.includes('Uncategorized') ? allCats : [...allCats, 'Uncategorized'];
+        const names = PP.cats.includes('Uncategorized') ? PP.cats : [...PP.cats, 'Uncategorized'];
         names.forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = k; pick.appendChild(o); });
         pick.value = cat;
         let done = false;
         pick.onchange = async () => {
             done = true;
             const target = pick.value;
-            if (target === cat) { window.renderPresetTags(); return; }
+            if (target === cat) { ppRepaint(); return; }
             await ppSetCategory(tag, target);
             await ppEnsureCategoryMarker(target);
             await ppAfterMutation();
@@ -1034,68 +1174,125 @@ function ppBuildTagRow(tag, cat, count, index, renderedTags, allCats) {
                 ppSetStatus(`"${tag}" is back in "${cat}".`);
             });
         };
-        pick.onblur = () => { if (!done) window.renderPresetTags(); };
+        pick.onblur = () => { if (!done) ppRepaint(); };
         pick.onclick = (ev) => ev.stopPropagation();
-        item.replaceChild(pick, badge);
+        badge.replaceWith(pick);
         pick.focus();
         if (typeof pick.showPicker === 'function') { try { pick.showPicker(); } catch (err) {} }
-    };
-    item.appendChild(badge);
+        return;
+    }
 
-    const mkAdd = (glyph, target, tip, extra) => {
-        const b = ppEl('span', '', glyph); b.className = 'pp-add ' + extra; b.title = tip;
-        b.onclick = (e) => {
-            e.stopPropagation();
-            item.classList.add('pp-flash');
-            setTimeout(() => item.classList.remove('pp-flash'), 180);
-            window.applyPresetTags([tag], target);
-        };
-        return b;
-    };
-    item.appendChild(mkAdd('➕', 'selected', `Add "${tag}" to the selected images`, 'sel'));
-    item.appendChild(mkAdd('🌐', 'all', `Add "${tag}" to ALL images`, 'all'));
+    if (t.closest('.conflict-warning, .similar-warning, .select-ignored')) return;
 
-    const del = ppEl('span', '', '✕'); del.className = 'pp-del'; del.title = 'Remove this tag from presets (Undo available)';
-    del.onclick = async (e) => {
-        e.stopPropagation();
-        await window.deletePresetTag(tag, true);
-        presetSelectedTags.delete(tag);
-        await ppAfterMutation();
-        ppSetStatus(`Removed "${tag}" from presets`, async () => {
-            await ppSetCategory(tag, cat);
-            await ppAfterMutation();
-            ppSetStatus(`Restored "${tag}".`);
-        });
-    };
-    item.appendChild(del);
-
-    item.onclick = (e) => {
-        if (e.target.classList.contains('conflict-warning') || e.target.classList.contains('similar-warning')) return;
-        if (e.target.closest('.pp-cat-badge, .pp-cat-select, .pp-del, .pp-add, .tag-db-info, .tag-e621-info, .tag-both-info')) return;
-
-        if (e.shiftKey && presetSelectedTags.size > 0) {
-            const start = Math.min(lastSelectedPresetIndex, index), end = Math.max(lastSelectedPresetIndex, index);
-            for (let i = start; i <= end; i++) presetSelectedTags.add(renderedTags[i]);
-        } else {
-            if (presetSelectedTags.has(tag)) presetSelectedTags.delete(tag); else presetSelectedTags.add(tag);
-            lastSelectedPresetIndex = index;
-        }
-        window.renderPresetTags();
-        window.updatePresetSelectionActions();
-    };
-    ppApplyWikiIcons(item);
-    return item;
+    // plain click: select / unselect (shift = range over the rows currently listed)
+    if (e.shiftKey && presetSelectedTags.size > 0) {
+        const a = Math.min(lastSelectedPresetIndex, j), b = Math.max(lastSelectedPresetIndex, j);
+        for (let k = a; k <= b; k++) { const rr = PP.rows[PP.filtered[k]]; if (rr && rr.kind === 'tag') presetSelectedTags.add(rr.tag); }
+    } else {
+        if (presetSelectedTags.has(tag)) presetSelectedTags.delete(tag); else presetSelectedTags.add(tag);
+        lastSelectedPresetIndex = j;
+    }
+    ppRepaint();
+    window.updatePresetSelectionActions();
 }
+
+/* ---------- category bars: collapse / expand, add the whole category ---------- */
+function ppOnHeadClick(e, head) {
+    const cat = head.dataset.presetCat;
+    const add = e.target.closest('.pp-cat-add');
+    if (add) {
+        e.stopPropagation();
+        const tags = PP.rows.filter(r => r.kind === 'tag' && r.cat === cat).map(r => r.tag);
+        window.applyPresetTags(tags, add.dataset.act === 'all' ? 'all' : 'selected');
+        return;
+    }
+    if (window.presetTagNameFilter) return;          // while searching, categories are shown expanded
+    const st = window.presetCategoryCollapseState = window.presetCategoryCollapseState || {};
+    if (st[cat]) delete st[cat]; else st[cat] = true;
+    if (typeof window.saveSetting === 'function') window.saveSetting('preset-cat-collapse', st);
+    ppApplyFilterDOM(true);
+}
+
+/* ---------- drag tags into the bars (move to that category) ---------- */
+function ppDragClear() {
+    PP.drag = null;
+    const c = ppContainer();
+    if (c) c.querySelectorAll('.pp-drop, .pp-drop-row, .dragging').forEach(el => el.classList.remove('pp-drop', 'pp-drop-row', 'dragging'));
+}
+function ppOnDragStart(e) {
+    const row = e.target.closest ? e.target.closest('.pp-tag') : null;
+    if (!row || !PP.grouped) return;
+    const tag = row.dataset.presetTag;
+    PP.drag = (presetSelectedTags.has(tag) && presetSelectedTags.size > 1) ? Array.from(presetSelectedTags) : [tag];
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', PP.drag.join(', ')); } catch (err) {}
+    row.classList.add('dragging');
+}
+function ppOnDragOver(e) {
+    if (!PP.drag) return;
+    const container = ppContainer();
+    const rect = container.getBoundingClientRect();
+    if (e.clientY < rect.top + 36) container.scrollTop -= 14;            // auto-scroll near the edges
+    else if (e.clientY > rect.bottom - 36) container.scrollTop += 14;
+    const tgt = e.target.closest ? e.target.closest('.pp-cathead, .pp-tag') : null;
+    if (!tgt) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    container.querySelectorAll('.pp-drop, .pp-drop-row').forEach(el => el.classList.remove('pp-drop', 'pp-drop-row'));
+    tgt.classList.add(tgt.classList.contains('pp-cathead') ? 'pp-drop' : 'pp-drop-row');
+}
+async function ppOnDrop(e) {
+    const tgt = e.target.closest ? e.target.closest('.pp-cathead, .pp-tag') : null;
+    const tags = PP.drag;
+    if (!tgt || !tags) { ppDragClear(); return; }
+    e.preventDefault();
+    const cat = tgt.dataset.presetCat;
+    const before = new Map();
+    PP.rows.forEach(r => { if (r.kind === 'tag') before.set(r.tag, r.cat); });
+    const moving = tags.filter(t => before.has(t) && before.get(t) !== cat);
+    ppDragClear();
+    if (moving.length === 0) return;
+    for (const t of moving) await ppSetCategory(t, cat);
+    await ppEnsureCategoryMarker(cat);
+    await ppAfterMutation();
+    ppSetStatus(moving.length === 1 ? `Moved "${moving[0]}" to "${cat}".` : `Moved ${moving.length} tags to "${cat}".`, async () => {
+        for (const t of moving) await ppSetCategory(t, before.get(t));
+        await ppAfterMutation();
+        ppSetStatus(`Moved back ${moving.length} tag(s).`);
+    });
+}
+
+function ppEnsureViewport(container) {
+    if (PP.vp && PP.vp.isConnected && PP.vp.parentNode === container) return PP.vp;
+    PP.vp = document.createElement('div');
+    PP.vp.id = 'pp-vport';
+    container.replaceChildren(PP.vp);
+    const nm = document.createElement('div'); nm.className = 'pp-empty pp-nomatch'; nm.style.display = 'none'; nm.textContent = 'No tag matches your search.';
+    container.appendChild(nm);
+    PP.nodes.clear(); PP.first = PP.last = -1; PP.needMeasure = true;
+    if (!PP.wired) {
+        PP.wired = true;
+        container.addEventListener('click', ppOnListClick);
+        container.addEventListener('dragstart', ppOnDragStart);
+        container.addEventListener('dragover', ppOnDragOver);
+        container.addEventListener('drop', ppOnDrop);
+        container.addEventListener('dragend', ppDragClear);
+        container.addEventListener('scroll', ppSchedulePaint, { passive: true });
+        if (typeof ResizeObserver === 'function') new ResizeObserver(() => { if (PP.vp) { PP.needMeasure = true; ppSchedulePaint(); } }).observe(container);
+    }
+    return PP.vp;
+}
+
 window.renderPresetTags = async function () {
     ensurePresetShell();
-    const container = document.getElementById('preset-tag-list');
+    const container = ppContainer();
     if (!container) return;
 
-    // Fetch FIRST, rebuild the DOM after (avoids an empty-panel flash).
+    // Fetch FIRST, rebuild after (avoids an empty-panel flash).
     const items = await getCachedPresetTags();
     window._presetTagsSet = new Set(items.map(i => i.tag).filter(t => !t.startsWith('_sys_cat_')));
     const { byCat, keys } = await ppGetOrderedCategories(items);
-    const counts = ppComputeTagCounts();
+    PP.counts = ppComputeTagCounts();
 
     // Drop selected tags that no longer exist
     Array.from(presetSelectedTags).forEach(t => { if (!window._presetTagsSet.has(t)) presetSelectedTags.delete(t); });
@@ -1126,42 +1323,57 @@ window.renderPresetTags = async function () {
         menuKeys.sort((a, b) => a === 'Uncategorized' ? 1 : b === 'Uncategorized' ? -1 : dir(ui.sortCat) * a.localeCompare(b, undefined, { sensitivity: 'base' }));
     }
     const hidden = new Set(ui.hiddenCats);
+    const grouped = ui.view !== 'flat';
     let rows = [];
-    if (ui.sortCat !== 'off') {
+    if (grouped) {
+        // one collapsible bar per category (also the empty ones, so tags can be dropped into them)
+        const order = menuKeys.slice();
+        if (!order.includes('Uncategorized')) order.push('Uncategorized');
+        order.forEach(cat => {
+            if (hidden.has(cat)) return;
+            const tags = (byCat.get(cat) || []).slice();
+            if (ui.sortName !== 'off') tags.sort(byName(ui.sortName));
+            rows.push({ kind: 'cat', cat, n: tags.length });
+            tags.forEach(tag => rows.push({ kind: 'tag', tag, cat }));
+        });
+    } else if (ui.sortCat !== 'off') {
         menuKeys.forEach(cat => {
             if (hidden.has(cat)) return;
             const tags = (byCat.get(cat) || []).slice();
             if (ui.sortName !== 'off') tags.sort(byName(ui.sortName));
-            tags.forEach(tag => rows.push({ tag, cat }));
+            tags.forEach(tag => rows.push({ kind: 'tag', tag, cat }));
         });
     } else {
         const catOf = new Map();
         byCat.forEach((tags, cat) => tags.forEach(t => catOf.set(t, cat)));
-        items.forEach(it => { if (!it.tag.startsWith('_sys_cat_') && !hidden.has(catOf.get(it.tag))) rows.push({ tag: it.tag, cat: catOf.get(it.tag) }); });
+        items.forEach(it => { if (!it.tag.startsWith('_sys_cat_') && !hidden.has(catOf.get(it.tag))) rows.push({ kind: 'tag', tag: it.tag, cat: catOf.get(it.tag) }); });
         if (ui.sortName !== 'off') rows.sort((x, y) => byName(ui.sortName)(x.tag, y.tag));
     }
+    rows.forEach(r => { if (r.kind === 'tag') r.hay = (r.tag + ' ' + r.cat).toLowerCase(); });
+    PP.grouped = grouped;
+    PP.rows = rows; PP.cats = menuKeys; PP.colors.clear();
 
-    const frag = document.createDocumentFragment();
-    if (items.filter(i => !i.tag.startsWith('_sys_cat_')).length === 0) {
-        frag.appendChild(ppEl('div', '', 'No presets saved yet. Type a tag below and press Enter, or use the 💾 icon next to any tag.')).className = 'pp-empty';
-    } else if (rows.length === 0) {
-        frag.appendChild(ppEl('div', '', 'All categories are hidden. Open ☰ Filter & sort to show them again.')).className = 'pp-empty';
+    const input = document.getElementById('preset-add-input');
+    window.presetTagNameFilter = (window.presetSearchMode && input) ? input.value.trim().toLowerCase() : '';
+
+    if (items.filter(i => !i.tag.startsWith('_sys_cat_')).length === 0 || rows.length === 0 || (!grouped && !rows.some(r => r.kind === 'tag'))) {
+        PP.vp = null; PP.nodes.clear(); PP.filtered = []; PP.first = PP.last = -1;
+        const msg = ppEl('div', '', items.filter(i => !i.tag.startsWith('_sys_cat_')).length === 0
+            ? 'No presets saved yet. Type a tag below and press Enter, or use the 💾 icon next to any tag.'
+            : 'All categories are hidden. Open ☰ Filter & sort to show them again.');
+        msg.className = 'pp-empty';
+        container.replaceChildren(msg);
     } else {
-        const rendered = rows.map(r => r.tag);
-        rows.forEach((r, i) => frag.appendChild(ppBuildTagRow(r.tag, r.cat, counts.get(r.tag) || 0, i, rendered, menuKeys)));
-        const nm = ppEl('div', 'display:none;', 'No tag matches your search.'); nm.className = 'pp-empty pp-nomatch';
-        frag.appendChild(nm);
+        ppEnsureViewport(container);
+        ppComputeMarks();
+        PP.needMeasure = true;
+        ppApplyFilterDOM(true);        // filters + paints the visible rows
     }
-    container.replaceChildren(frag);
 
     ppBuildViewMenu(menuKeys, byCat);
     ppUpdateViewButton(keys.length);
     ppQueueWikiLookup(Array.from(window._presetTagsSet));
     ppSyncControls();
-    const input = document.getElementById('preset-add-input');
-    window.presetTagNameFilter = (window.presetSearchMode && input) ? input.value.trim().toLowerCase() : '';
-    ppApplyFilterDOM();
-    window.updatePresetMarkers();
     window.updatePresetSelectionActions();
 };
 
@@ -1183,6 +1395,8 @@ async function ppLoadUISettings() {
         const sn = okDir(await window.getSetting('preset-sort-name', null));
         window._presetUI.sortCat = sc || (old === 'name' ? 'off' : 'asc');
         window._presetUI.sortName = sn || 'asc';
+        const vw = await window.getSetting('preset-view', 'grouped');
+        window._presetUI.view = vw === 'flat' ? 'flat' : 'grouped';
         const hid = await window.getSetting('preset-hidden-cats', []);
         window._presetUI.hiddenCats = Array.isArray(hid) ? hid : [];
         const hcbx = document.getElementById('cb-highlight-always');

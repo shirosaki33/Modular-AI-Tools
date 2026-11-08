@@ -360,7 +360,8 @@ window.saveImageToDisk = async function(img) {
         await writable.write(contentToSave);
         await writable.close();
 
-        if (datasetConfig[img.baseName]) datasetConfig[img.baseName].type = 'tags';
+        // only the dataset on screen: a background task may be saving images of another dataset
+        if (img.parentDirHandle === window.currentImagesHandle && datasetConfig[img.baseName]) datasetConfig[img.baseName].type = 'tags';
         if (window.NLCodec) await window.NLCodec.persistMap(img, enc.map);
         window.markClean(img);
         return true;
@@ -376,6 +377,23 @@ window.toggleActiveFormat = async function() {
     const currentExt = (imageFiles[firstIdx] && imageFiles[firstIdx].ext) || 'txt';
     const newExt = currentExt === 'json' ? 'txt' : 'json';
     const changedImages = [];
+    // Images with no caption file yet: nothing to convert, just choose the format the file will be created in
+    const allNew = Array.from(selectedIndices).every(i => imageFiles[i] && !imageFiles[i].hasFile);
+    if (allNew) {
+        selectedIndices.forEach(idx => {
+            const img = imageFiles[idx];
+            if (!img) return;
+            img.ext = newExt;
+            datasetConfig[img.baseName] = datasetConfig[img.baseName] || {};
+            datasetConfig[img.baseName].ext = newExt;
+        });
+        const hidden = document.getElementById('topbar-save-format'); if (hidden) hidden.value = newExt;
+        window.markDatasetEdited();
+        if (typeof window.refreshListStatus === 'function') window.refreshListStatus();
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        if (window.showAlert) window.showAlert(`New caption files will be created as .${newExt}.`, 'success');
+        return;
+    }
 
     selectedIndices.forEach(idx => {
         const img = imageFiles[idx];
@@ -402,9 +420,19 @@ window.updateConvertFormatButton = function() {
     if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0 || typeof imageFiles === 'undefined') {
         btn.style.display = 'none'; return;
     }
-    const withFile = Array.from(selectedIndices).map(i => imageFiles[i]).filter(img => img && img.hasFile);
-    if (withFile.length === 0) { btn.style.display = 'none'; return; }
+    const sel = Array.from(selectedIndices).map(i => imageFiles[i]).filter(Boolean);
+    const withFile = sel.filter(img => img.hasFile);
+    if (sel.length === 0) { btn.style.display = 'none'; return; }
 
+    if (withFile.length === 0) {
+        // No caption file yet: the button shows the format the file will be CREATED in, click to switch it
+        const cur = sel[0].ext === 'json' ? 'json' : 'txt';
+        const other = cur === 'json' ? 'txt' : 'json';
+        btn.textContent = `📄 New .${cur}`;
+        btn.title = `${sel.length > 1 ? 'The caption files of the selected images' : 'The caption file of this image'} will be created as .${cur} — click to create ${sel.length > 1 ? 'them' : 'it'} as .${other} instead`;
+        btn.style.display = 'inline-block';
+        return;
+    }
     const currentExt = withFile[0].ext || 'txt';
     const targetExt = currentExt === 'json' ? 'txt' : 'json';
     btn.textContent = withFile.length > 1 ? `🔄 All To .${targetExt}` : `🔄 To .${targetExt}`;
@@ -664,14 +692,15 @@ window.loadSelectedDirectory = async function() {
 window.refreshDataset = async function() {
     if (!window.currentImagesHandle && !window.rootHandle) return;
     const selectedBaseNames = Array.from(selectedIndices).map(i => imageFiles[i].baseName);
-    const val3 = document.getElementById('sub-dir-3') ? document.getElementById('sub-dir-3').value : '';
-    const val2 = document.getElementById('sub-dir-2') ? document.getElementById('sub-dir-2').value : '';
-    const val1 = document.getElementById('sub-dir-1') ? document.getElementById('sub-dir-1').value : '';
+    // deepest folder level with a value (levels 1..10, see ⚙️ Folder depth)
+    let deepest = 0;
+    for (let n = 1; n <= window.TM_MAX_FOLDER_DEPTH; n++) {
+        const sel = document.getElementById('sub-dir-' + n);
+        if (sel && sel.style.display !== 'none' && sel.value) deepest = n;
+    }
 
     try {
-        if (val3 && document.getElementById('sub-dir-3').style.display !== 'none') { await window.loadSubDir3(); }
-        else if (val2 && document.getElementById('sub-dir-2').style.display !== 'none') { await window.loadSubDir2(); }
-        else if (val1 && document.getElementById('sub-dir-1').style.display !== 'none') { await window.loadSubDir1(); }
+        if (deepest > 0) { await window.loadSubDir(deepest); }
         else if (window.rootHandle) { await window.loadGallery(window.rootHandle); }
     } catch (e) {
         console.error('refreshDataset failed:', e);
@@ -697,7 +726,12 @@ function revokeImageFileUrls(files) {
     const pop = document.getElementById('image-popout');
     if (pop) pop.removeAttribute('src');
     if (typeof window.releaseImageThumbs === 'function') window.releaseImageThumbs(files);
-    files.forEach(img => { if (img && img.url) { try { URL.revokeObjectURL(img.url); } catch (e) {} } });
+    files.forEach(img => {
+        if (!img || !img.url) return;
+        // a background task (⏳) still uses this image: its URL is freed when the task ends
+        if (window.TM && window.TM.tasks && window.TM.tasks.holds(img)) { img._tmUrlOrphan = true; return; }
+        try { URL.revokeObjectURL(img.url); } catch (e) {}
+    });
 }
 
 /* ---------------------------------------------------------------------
@@ -727,8 +761,43 @@ function _fillSubDirSelect(sel, names, headerHtml) {
     sel.appendChild(frag);
 }
 
-/* ---------- CARREGAR PASTA (raiz ou subpasta nível 1–3) ----------
-   Antes eram 4 cópias quase iguais (loadGallery / loadSubDir1/2/3). */
+/* ---------- CARREGAR PASTA (raiz ou subpasta nível 1..N) ----------
+   (2026-11) Folder depth is a setting (⚙️ > 📂 Folders > Folder depth, 1–10, default 3):
+   one dropdown per level, created on demand (#sub-dir-1 … #sub-dir-10).
+   window.subHandles[n] = Map(name -> handle) of the folders listed in level n. */
+window.TM_MAX_FOLDER_DEPTH = 10;
+window.tmFolderDepth = window.tmFolderDepth || 3;
+window.subHandles = window.subHandles || [];
+(function initSubHandles() {
+    for (let n = 1; n <= window.TM_MAX_FOLDER_DEPTH; n++) if (!window.subHandles[n]) window.subHandles[n] = new Map();
+    // compat: the old names point at the same maps
+    try { sub1Handles = window.subHandles[1]; sub2Handles = window.subHandles[2]; sub3Handles = window.subHandles[3]; } catch (e) {}
+    window.sub1Handles = window.subHandles[1]; window.sub2Handles = window.subHandles[2]; window.sub3Handles = window.subHandles[3];
+})();
+function _subSelect(n, create) {
+    let sel = document.getElementById('sub-dir-' + n);
+    if (!sel && create) {
+        const prev = _subSelect(n - 1, false) || document.getElementById('dir-list');
+        sel = document.createElement('select');
+        sel.id = 'sub-dir-' + n;
+        sel.className = 'folder-select';
+        sel.style.display = 'none';
+        sel.title = `Folder level ${n}`;
+        sel.innerHTML = '<option value="">-- Current Folder --</option>';
+        prev.insertAdjacentElement('afterend', sel);
+    }
+    if (sel && !sel._tmBound) { sel._tmBound = true; sel.onchange = () => window.loadSubDir(n); }
+    return sel;
+}
+// hides and clears every level deeper than n
+function _clearLevelsFrom(n) {
+    for (let k = n; k <= window.TM_MAX_FOLDER_DEPTH; k++) {
+        window.subHandles[k].clear();
+        const sel = _subSelect(k, false);
+        if (sel) sel.style.display = 'none';
+    }
+}
+
 async function _loadFolderLevel(targetHandle, level, onSubdirs) {
     // Corpo protegido: em caso de erro, avisa e ainda chama finishLoading()
     // para a UI nunca ficar num estado travado/mudo.
@@ -736,6 +805,7 @@ async function _loadFolderLevel(targetHandle, level, onSubdirs) {
         if (typeof window.saveAllImages === 'function') await window.saveAllImages(true);
         if (window.TM && typeof window.TM.flushDatasetConfig === 'function') await window.TM.flushDatasetConfig();
         window.currentImagesHandle = targetHandle;
+        window._tmFolderLoading = true;   // saves done while loading are not "work" (see tagmanager_nav.js)
 
         await window.loadDatasetConfig(targetHandle);
         await window.loadPendingTagsStore(targetHandle);
@@ -744,22 +814,29 @@ async function _loadFolderLevel(targetHandle, level, onSubdirs) {
         imageFiles = []; masterTagSet.clear(); masterSelectedTags.clear(); activeSelectedTags.clear(); selectedIndices.clear();
 
         const fileEntries = [];
+        const psdEntries = [];
         const subdirs = new Map();
+        const depth = Math.max(1, Math.min(window.TM_MAX_FOLDER_DEPTH, window.tmFolderDepth || 3));
         for await (const entry of targetHandle.values()) {
             if (entry.kind === 'file' && entry.name.match(/\.(png|jpg|jpeg|webp)$/i)) {
                 fileEntries.push(entry);
-            } else if (entry.kind === 'directory' && level < 3 && !window.isSystemDirName(entry.name)) {
+            } else if (entry.kind === 'file' && /\.(psd|psb|xcf)$/i.test(entry.name)) {
+                psdEntries.push(entry);   // PSD / PSB / XCF Import (tagmanager_psd.js)
+            } else if (entry.kind === 'directory' && level < depth && !window.isSystemDirName(entry.name)) {
                 subdirs.set(entry.name, entry);
             }
         }
         const configNeedsSave = await window.processImageEntriesBatched(fileEntries, targetHandle);
         if (configNeedsSave) await window.saveDatasetConfig(targetHandle);
         if (onSubdirs) onSubdirs(subdirs);
+        if (window.TMPsd && typeof window.TMPsd.setFound === 'function') window.TMPsd.setFound(targetHandle, psdEntries);
     } catch (e) {
         console.error(`Loading folder (level ${level}) failed:`, e);
         if (window.showAlert) window.showAlert((level === 0 ? 'Error loading folder: ' : 'Error loading subfolder: ') + (e.message || e), 'error');
     }
+    window._tmFolderLoading = false;
     window.finishLoading();
+    if (typeof window.tmOnFolderLoaded === 'function') { try { window.tmOnFolderLoaded(targetHandle, level); } catch (e) {} }
 }
 
 function _showSubdirSelect(sel, handlesMap, subdirs, headerHtml) {
@@ -779,53 +856,69 @@ window.loadGallery = async function(dirHandle) {
         if (window.TM && typeof window.TM.flushDatasetConfig === 'function') await window.TM.flushDatasetConfig();
     } catch (e) { console.warn('Saving before folder change failed:', e); }
     window.rootHandle = dirHandle;
-    window.sub1Handles.clear();
-    if (window.sub2Handles) window.sub2Handles.clear();
-    if (window.sub3Handles) window.sub3Handles.clear();
+    _clearLevelsFrom(1);
 
     document.getElementById('btn-refresh').style.display = 'inline-block';
-    const sel1 = document.getElementById('sub-dir-1');
-    const sel2 = document.getElementById('sub-dir-2');
-    const sel3 = document.getElementById('sub-dir-3');
-    sel1.style.display = 'none'; sel2.style.display = 'none'; if (sel3) sel3.style.display = 'none';
 
     await _loadFolderLevel(dirHandle, 0, subdirs =>
-        _showSubdirSelect(sel1, window.sub1Handles, subdirs, '<option value="">-- Root --</option>'));
+        _showSubdirSelect(_subSelect(1, true), window.subHandles[1], subdirs, '<option value="">-- Root --</option>'));
 };
 
-window.loadSubDir1 = async function() {
-    const val = document.getElementById('sub-dir-1').value;
-    const sel2 = document.getElementById('sub-dir-2');
-    const sel3 = document.getElementById('sub-dir-3');
-    if (!val) { await window.loadGallery(window.rootHandle); return; }
-
-    window.sub2Handles.clear();
-    if (window.sub3Handles) window.sub3Handles.clear();
-    sel2.style.display = 'none';
-    if (sel3) sel3.style.display = 'none';
-    sel2.innerHTML = `<option value="">-- [ ${_escOpt(val)} ] --</option>`;
-
-    await _loadFolderLevel(window.sub1Handles.get(val), 1, subdirs =>
-        _showSubdirSelect(sel2, window.sub2Handles, subdirs));
+// Level n dropdown changed: open that folder (empty value = the folder of level n-1).
+window.loadSubDir = async function(n) {
+    const sel = _subSelect(n, false);
+    const val = sel ? sel.value : '';
+    if (!val) {
+        if (n <= 1) { await window.loadGallery(window.rootHandle); return; }
+        await window.loadSubDir(n - 1);
+        return;
+    }
+    _clearLevelsFrom(n + 1);
+    const next = n + 1 <= window.TM_MAX_FOLDER_DEPTH ? _subSelect(n + 1, true) : null;
+    if (next) next.innerHTML = `<option value="">-- [ ${_escOpt(val)} ] --</option>`;
+    await _loadFolderLevel(window.subHandles[n].get(val), n, next ? (subdirs => _showSubdirSelect(next, window.subHandles[n + 1], subdirs)) : null);
 };
+window.loadSubDir1 = () => window.loadSubDir(1);
+window.loadSubDir2 = () => window.loadSubDir(2);
+window.loadSubDir3 = () => window.loadSubDir(3);
 
-window.loadSubDir2 = async function() {
-    const val = document.getElementById('sub-dir-2').value;
-    const sel3 = document.getElementById('sub-dir-3');
-    if (!val) { await window.loadSubDir1(); return; }
-
-    if (window.sub3Handles) window.sub3Handles.clear();
-    if (sel3) { sel3.style.display = 'none'; sel3.innerHTML = `<option value="">-- [ ${_escOpt(val)} ] --</option>`; }
-
-    await _loadFolderLevel(window.sub2Handles.get(val), 2, subdirs => {
-        if (window.sub3Handles) _showSubdirSelect(sel3, window.sub3Handles, subdirs);
-    });
+// Path of the folder open now, as the names chosen in each level (used by ⏪ Previous dataset).
+window.tmCurrentFolderPath = function () {
+    const out = [];
+    for (let n = 1; n <= window.TM_MAX_FOLDER_DEPTH; n++) {
+        const sel = document.getElementById('sub-dir-' + n);
+        if (!sel || sel.style.display === 'none' || !sel.value) break;
+        out.push(sel.value);
+    }
+    return out;
 };
-
-window.loadSubDir3 = async function() {
-    const val = document.getElementById('sub-dir-3').value;
-    if (!val) { await window.loadSubDir2(); return; }
-    await _loadFolderLevel(window.sub3Handles.get(val), 3, null);
+// Opens root + path (array of folder names, one per level). Stops at the first name that is missing.
+window.tmOpenFolderPath = async function (root, path) {
+    if (!root) return false;
+    if (root !== window.rootHandle) {
+        if ((await root.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+            if ((await root.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
+        }
+        const savedKey = typeof window.findSavedHandleKey === 'function' ? await window.findSavedHandleKey(root) : null;
+        window.rootHandleKey = savedKey;
+        const dl = document.getElementById('dir-list');
+        if (dl) dl.value = savedKey || '';
+        _setSavedFolderButtons(!!savedKey);
+        const cfd = document.getElementById('current-folder-display');
+        if (cfd) cfd.textContent = `📂 ${root.name}`;
+    }
+    window._tmSkipHistory = true;
+    try {
+        if (!path || !path.length) { await window.loadGallery(root); return true; }
+        await window.loadGallery(root);
+        for (let i = 0; i < path.length && i < window.TM_MAX_FOLDER_DEPTH; i++) {
+            const sel = _subSelect(i + 1, false);
+            if (!sel || !window.subHandles[i + 1].has(path[i])) return i > 0;
+            sel.value = path[i];
+            await window.loadSubDir(i + 1);
+        }
+        return true;
+    } finally { window._tmSkipHistory = false; }
 };
 
 window.detectFormat = function(text) {
@@ -940,12 +1033,15 @@ window.loadDatasetConfig = async function(dirHandle) {
     window.updateLastEditedUI();
 }
 
-window.saveDatasetConfig = async function(dirHandle) {
+window.saveDatasetConfig = async function(dirHandle, cfg, files) {
     if (!dirHandle) return;
     try {
+        // only created once the dataset has a tag (see TM.configWriteAllowed)
+        if (window.TM && typeof window.TM.configWriteAllowed === 'function' && !(await window.TM.configWriteAllowed(dirHandle, files))) return;
         const configHandle = await dirHandle.getFileHandle('_tagger_config.json', { create: true });
         const writable = await configHandle.createWritable();
-        await writable.write(JSON.stringify(datasetConfig, null, 2));
+        const data = cfg || datasetConfig;   // cfg: config of another dataset (background task)
+        await writable.write(JSON.stringify(data, null, 2));
         await writable.close();
     } catch(e) {}
 }
@@ -958,19 +1054,20 @@ window.loadPendingTagsStore = async function(dirHandle) {
     } catch(e) { pendingTagsStore = {}; }
 }
 
-window.savePendingTagsStore = async function(dirHandle) {
+window.savePendingTagsStore = async function(dirHandle, store) {
     if (!dirHandle) return;
+    const ps = store || pendingTagsStore;   // store: pending suggestions of another dataset (background task)
     try {
-        Object.keys(pendingTagsStore).forEach(k => {
-            if (!pendingTagsStore[k] || pendingTagsStore[k].length === 0) delete pendingTagsStore[k];
+        Object.keys(ps).forEach(k => {
+            if (!ps[k] || ps[k].length === 0) delete ps[k];
         });
-        if (Object.keys(pendingTagsStore).length === 0) {
+        if (Object.keys(ps).length === 0) {
             try { await dirHandle.removeEntry('_pending_tags.json'); } catch(e) {}
             return;
         }
         const h = await dirHandle.getFileHandle('_pending_tags.json', { create: true });
         const writable = await h.createWritable();
-        await writable.write(JSON.stringify(pendingTagsStore, null, 2));
+        await writable.write(JSON.stringify(ps, null, 2));
         await writable.close();
     } catch(e) {}
 }

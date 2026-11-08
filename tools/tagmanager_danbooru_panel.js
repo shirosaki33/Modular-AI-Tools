@@ -300,20 +300,60 @@
     const dbpStoreOn = () => dbpFileOn() && dbpMode() !== 'off';
     // { text, ts, full } from local/wiki_full.json (separate file: tagmanager_wiki_full.js) or null
     const dbpFullFromFile = (siteKey, tag) => dbpFileOn() ? window.WikiFull.get(siteKey, tag) : null;
-    function dbpOfflineBadge(ts, full) {
-        if (full !== false && ts && (Date.now() - ts) < 15000) return '';   // just read from the site a moment ago, not from the file
-        const when = ts ? new Date(ts).toLocaleString('en-US') : 'unknown date';
-        const kind = full === false ? 'Short summary (first 800 characters) from the local file; the site could not be reached.' : 'Read from the local file, no internet needed.';
-        return `<div class="dbp-offline" title="${kind}\nSaved: ${DBP_ESC(when)}">${full === false ? 'offline · summary' : 'offline'}</div><br>`;
+    /* Offline first: a text saved in the local file is always used (no request) — the site is only asked when
+       nothing is saved, when the saved text needs an update (only the summary while 💾 Wiki text = Full) or when it is
+       an old broken summary. */
+    function dbpUseFile(fromFile) {
+        return !!(fromFile && fromFile.text && !fromFile.broken && (fromFile.full || dbpMode() !== 'full'));
     }
+    function dbpOfflineBadge(ts, full) {
+        const when = ts ? new Date(ts).toLocaleString('en-US') : 'unknown date';
+        const kind = full === false ? 'Short summary (first 800 characters) read from the local file — no request to the site.' : 'Full text read from the local file — no request to the site.';
+        return `<span class="dbp-offline dbp-offline-move" title="${kind}\nSaved: ${DBP_ESC(when)}">${full === false ? 'offline · summary' : 'offline'}</span>`;
+    }
+    /* The offline tag goes next to the source title ("Danbooru  offline · summary"), easier to see. */
+    (function dbpMoveOfflineBadges() {
+        const move = () => document.querySelectorAll('.dbp-offline-move').forEach(b => {
+            b.classList.remove('dbp-offline-move');
+            const card = b.closest('.dbp-card, .tool-modal, .modal-overlay');
+            let title = card && (card.querySelector('.dbp-card-head > span:first-child') || card.querySelector('h3 > span:first-child') || card.querySelector('h3'));
+            if (!title) return;
+            title.querySelectorAll('.dbp-offline').forEach(o => { if (o !== b) o.remove(); });
+            b.style.marginLeft = '8px';
+            b.style.verticalAlign = 'middle';
+            b.style.marginBottom = '0';
+            title.appendChild(b);
+            // the tag leaves when the card shows another tag
+            // the tag leaves as soon as the card shows something else (another tag, "not found", loading…)
+            const body = card.querySelector('.dbp-card-body') || card.querySelector('.dbp-desc');
+            const desc = card.querySelector('.dbp-desc');
+            const watch = [body, desc].filter(Boolean);
+            if (watch.length) {
+                const mo = new MutationObserver(() => { b.remove(); mo.disconnect(); });
+                setTimeout(() => watch.forEach(w => mo.observe(w, { childList: true })), 0);
+            }
+        });
+        new MutationObserver(() => { if (document.querySelector('.dbp-offline-move')) move(); }).observe(document.documentElement, { childList: true, subtree: true });
+    })();
     // Shows what is saved when the live wiki could not be loaded. Returns true when something was shown.
     function dbpShowSavedText(descEl, fromFile, info, fix) {
-        const text = fromFile ? fromFile.text : ((info && info.hasWikiInfo && info.description) || '');
+        let text = fromFile ? fromFile.text : ((info && info.hasWikiInfo && info.description) || '');
         if (!text) return false;
+        // Summaries saved by the old cleaner lost the linked words ("such as ]s, ]s"): the leftover brackets
+        // become "…" and a note says it is replaced by the clean version as soon as the site answers.
+        let broken = false;
+        if ((!fromFile || fromFile.full === false) && /[\[\]]/.test(text) && !/\[\[|\]\]/.test(text)) {
+            broken = true;
+            if (typeof window.TMCleanWikiSummary === 'function') text = window.TMCleanWikiSummary(text);   // description only (no Examples / See also / images)
+            text = text.replace(/\s*\[\s*\]\s*/g, ' … ').replace(/\](\w*)/g, '…').replace(/\[/g, '…');
+        }
         descEl.dataset.original = text;
         let html = window.formatDanbooruDText(text);
+        if (broken) html += '<div style="font-size:10px; color:#888; margin-top:6px;">⚠️ Old summary: some linked words were lost (…). It is replaced by the clean version automatically when the site is online.</div>';
         if (fix) html = fix(html);
-        descEl.innerHTML = (fromFile ? dbpOfflineBadge(fromFile.ts, fromFile.full) : '') + html;
+        // from the wiki file, or (no file entry) from the tag cache: both are offline copies
+        descEl.innerHTML = (fromFile ? dbpOfflineBadge(fromFile.ts, fromFile.full)
+            : `<span class="dbp-offline dbp-offline-move" title="Saved summary from the tag cache; the site could not be reached.">offline · summary</span>`) + html;
         return true;
     }
 
@@ -490,8 +530,11 @@
                             <option value="full">Full (text + links)</option>
                         </select> <span class="dbp-opt-note">(localhost only — saved in local/wiki_full.json)</span></label>
                     <label class="dbp-opt-local" id="dbpOptIdleLbl" title="While the app has nothing to do (no scan, Fill wiki or search running), it quietly fires small batches of requests on Danbooru and e621. First it fills in the info that saved tags still lack (counts, categories, wiki flags, wiki text per 💾 Wiki text). When nothing is missing it walks each site's tag list from the most used tag down and adds every tag that is not in the cache files yet — any tag, not only the ones in your dataset. Works in Tag Manager and Prompt Helper."><input type="checkbox" id="dbpOptIdleFill"> 🤖 Auto-fill when idle <span class="dbp-opt-note" id="dbpIdleStatus">(fills missing info and adds new tags while the app is idle)</span></label>
-                    <label class="dbp-opt-local" title="Show the Danbooru availability dot (green / yellow / red) in the All Dataset Tags header. Off = the dot is hidden and Danbooru is no longer pinged every minute."><input type="checkbox" id="dbpOptStatusDb"> 🟢 Danbooru status</label>
-                    <label class="dbp-opt-e6" title="Show the e621 availability dot (green / yellow / red) in the All Dataset Tags header. Off = the dot is hidden and e621 is no longer pinged every minute."><input type="checkbox" id="dbpOptStatusE6"> 🟢 e621 status</label>
+                    <label class="dbp-opt-local" title="Show the Danbooru availability dot (green / yellow / red) in the All Dataset Tags header. Off = the dot is hidden and Danbooru is no longer checked. While Danbooru is offline / having issues no request is sent to it; it is checked again every 5 min."><input type="checkbox" id="dbpOptStatusDb"> 🟢 Danbooru status</label>
+                    <label class="dbp-opt-e6" title="Show the e621 availability dot (green / yellow / red) in the All Dataset Tags header. Off = the dot is hidden and e621 is no longer checked. While e621 is offline / having issues no request is sent to it; it is checked again every 5 min."><input type="checkbox" id="dbpOptStatusE6"> 🟢 e621 status</label>
+                    <label title="How many tags each site shows in the autocomplete suggestions (Danbooru first, then e621). Default 5 / 5. If one site has fewer, the other fills the rest. 0 = that site is not suggested.">🔤 Autocomplete:
+                        <span style="color:#4db8ff;">Danbooru</span> <input type="number" id="dbpAcCountDb" min="0" max="50" step="1" style="width:46px;">
+                        <span style="color:#f48fb1;">e621</span> <input type="number" id="dbpAcCountE6" min="0" max="50" step="1" style="width:46px;"></label>
                 </div>
 
                 <details class="dbp-alias-opts" id="dbpAliasOpts">
@@ -715,9 +758,9 @@
 
         // Expand save mode: the full text is already in the local file — no request, flagged "offline".
         const fromFile = dbpFullFromFile(site.key, key);
-        if (fromFile && fromFile.full) {
+        if (dbpUseFile(fromFile)) {
             descEl.dataset.original = fromFile.text;
-            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text).split('https://danbooru.donmai.us/').join(`https://${host}/`);
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts, fromFile.full) + window.formatDanbooruDText(fromFile.text).split('https://danbooru.donmai.us/').join(`https://${host}/`);
             trBtn.style.display = 'inline-block';
             trBtn.onclick = () => translateDescNode(descEl);
             return;
@@ -871,6 +914,21 @@
                 if (window.danbooruWikiMode !== 'off' && typeof window.runDanbooruBackgroundScan === 'function') window.runDanbooruBackgroundScan();
             };
         }
+
+        [['dbpAcCountDb', 'AUTOCOMPLETE_DB_COUNT', 'autocomplete-count-danbooru'], ['dbpAcCountE6', 'AUTOCOMPLETE_E6_COUNT', 'autocomplete-count-e621']].forEach(([id, key, setting]) => {
+            const inp = document.getElementById(id);
+            if (!inp) return;
+            inp.value = window[key] != null ? window[key] : 5;
+            inp.onchange = async () => {
+                let n = parseInt(inp.value, 10);
+                if (!isFinite(n) || n < 0) n = 5;
+                n = Math.min(50, n);
+                inp.value = n;
+                window[key] = n;
+                await window.saveSetting(setting, n);
+                if (window.SharedSettings) { try { window.SharedSettings.set(setting, n); } catch (e) {} }
+            };
+        });
 
         [['dbpOptStatusDb', 'danbooru'], ['dbpOptStatusE6', 'e621']].forEach(([id, site]) => {
             const cb = document.getElementById(id);
@@ -1094,9 +1152,9 @@
         }
 
         const fromFile = dbpFullFromFile('danbooru', tagLower);
-        if (fromFile && fromFile.full) {
+        if (dbpUseFile(fromFile)) {
             descEl.dataset.original = fromFile.text;
-            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text);
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts, fromFile.full) + window.formatDanbooruDText(fromFile.text);
             return;
         }
 
@@ -1183,9 +1241,9 @@
         }
 
         const fromFile = dbpFullFromFile('e621', tagLower);
-        if (fromFile && fromFile.full) {
+        if (dbpUseFile(fromFile)) {
             descEl.dataset.original = fromFile.text;
-            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text);
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts, fromFile.full) + window.formatDanbooruDText(fromFile.text);
             return;
         }
 
@@ -1273,9 +1331,9 @@
         }
 
         const fromFile = dbpFullFromFile(site, tagLower);
-        if (fromFile && fromFile.full) {
+        if (dbpUseFile(fromFile)) {
             descEl.dataset.original = fromFile.text;
-            descEl.innerHTML = dbpOfflineBadge(fromFile.ts) + window.formatDanbooruDText(fromFile.text);
+            descEl.innerHTML = dbpOfflineBadge(fromFile.ts, fromFile.full) + window.formatDanbooruDText(fromFile.text);
             return;
         }
         try {
@@ -1463,6 +1521,14 @@
         if (window.showAlert) window.showAlert(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} complete: ${migrated} description(s) moved to wiki_full.json, ${saved} of ${total} wiki text(s) downloaded/updated.`, saved === total ? 'success' : 'warn');
     };
 
+    // True when at least one of the enabled sites is Online (checks the status first). Offline = no scan at all.
+    async function anyBooruUp() {
+        if (!window.BooruStatus) return true;
+        const ids = ['danbooru'].concat(window.showE621 ? ['e621'] : []);
+        for (const id of ids) { if (await window.BooruStatus.ensure(id)) return true; }
+        return false;
+    }
+
     window.runDanbooruInfoScan = async function (force = false) {
         if (!window.danbooruInfoEnabled) {
             if (window.showAlert) window.showAlert('Tag Interrogator is disabled in Settings.', 'warn');
@@ -1477,6 +1543,10 @@
             return;
         }
 
+        if (!(await anyBooruUp())) {
+            if (window.showAlert) window.showAlert('Danbooru / e621 are offline — scan not started (nothing to fetch). Try again when the site is back.', 'warn');
+            return;
+        }
         const tags = collectInfoScanTags();
         if (tags.length === 0) {
             if (window.showAlert) window.showAlert('No tags to scan in this dataset.', 'info');
@@ -1678,6 +1748,7 @@
     window.runDanbooruBackgroundScan = async function () {
         if (!window.danbooruInfoEnabled) return;
         if (window._dbInfoScanRunning) return;
+        if (!(await anyBooruUp())) return;   // offline: no scan, no wasted work
 
         const tags = collectInfoScanTags();
         if (tags.length === 0) return;

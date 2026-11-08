@@ -66,7 +66,7 @@
     function skList() { return document.getElementById('image-list'); }
     function skDatasetKey() {
         const parts = [window.rootHandle ? window.rootHandle.name : ''];
-        ['sub-dir-1', 'sub-dir-2', 'sub-dir-3'].forEach(id => {
+        Array.from({ length: window.TM_MAX_FOLDER_DEPTH || 3 }, (_, i) => 'sub-dir-' + (i + 1)).forEach(id => {
             const el = document.getElementById(id);
             parts.push(el && el.style.display !== 'none' ? (el.value || '') : '');
         });

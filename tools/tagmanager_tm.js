@@ -229,8 +229,21 @@
        trocar de pasta nunca grava a config de um dataset na pasta de outro;
        e loadGallery/loadSubDir* chamam TM.flushDatasetConfig() antes de trocar. */
     let cfgTimer = null, cfgPending = null, cfgWaiters = [];
+    /* (2026-11) _tagger_config.json is only CREATED once the dataset has at least one tag:
+       a folder with only images (no captions / no tags) gets no config file. An existing
+       file is always updated. */
+    TM.datasetHasTags = function (files) {
+        const list = files || (typeof imageFiles !== 'undefined' ? imageFiles : []);
+        return list.some(img => img && img.content && String(img.content).replace(/[\s,]/g, '') !== '');
+    };
+    TM.configWriteAllowed = async function (handle, files) {
+        if (!handle) return false;
+        try { await handle.getFileHandle('_tagger_config.json'); return true; } catch (e) {}
+        return TM.datasetHasTags(files);
+    };
     async function writeConfig(job) {
         try {
+            if (!(await TM.configWriteAllowed(job.handle))) return;
             const h = await job.handle.getFileHandle('_tagger_config.json', { create: true });
             const w = await h.createWritable();
             await w.write(JSON.stringify(job.config, null, 2));

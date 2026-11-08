@@ -20,6 +20,7 @@ window.buildTypeBadge = function(img) {
     return `🏷️ Tags (${c.tags}) · 📝 NL (${c.nl}) (.${img.ext || 'txt'})`;
 };
 
+// (2026-11) The "Filter Images by Type" button was removed from the Dataset panel; the filter stays on ALL.
 window.cycleImageFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
     const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
@@ -58,40 +59,53 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
 }
 
 /* =========================================================================
-   MINIATURAS LEVES (memória)
-   Antes o <img> da lista apontava para a imagem ORIGINAL; o Chrome guarda na
-   RAM cada imagem já exibida decodificada em tamanho cheio (1024×1536 ≈ 6 MB),
-   mesmo mostrada com 70 px — um dataset grande ocupava GBs e nada era solto.
-   Agora: quando a linha chega perto da área visível (IntersectionObserver), a
-   imagem é decodificada UMA vez, reduzida para a largura da miniatura e guardada
-   como um JPEG pequeno (img._thumbBlobUrl). A decodificação cheia é liberada na
-   hora (bitmap.close()). Na mesma passada a resolução real vai para img._resolution.
-   - Largura gerada = degrau de 128 px ≥ tamanho do slider × devicePixelRatio
-     (slider maior → gera de novo, maior). Imagem menor que isso: usa a original.
-   - window.releaseImageThumbs(files): solta tudo de um dataset (troca de pasta).
-   - JANELA DINÂMICA (igual às galerias): só as linhas visíveis + PRELOAD linhas
-     acima e abaixo têm miniatura; o resto é solto (blob revogado, src removido)
-     e refeito quando a linha volta. Só solta com mais de KEEP_MIN vivas. A linha mantém a altura (aspect-ratio da resolução real),
-     então a lista não pula. Linhas fora da tela também não são pintadas
-     (content-visibility), o que deixa o scroll leve com milhares de imagens.
+   IMAGE PREVIEWS BY BLOCKS (memory + fast navigation)
+   ---------------------------------------------------------------------
+   The list rows are split into BLOCKS of N images (⚙️ Settings > 🖼️ Image
+   list > Images per block). Only the block(s) around the visible area have
+   thumbnails in memory; every other block is released (blob revoked, src
+   removed) and rebuilt when it comes back.
+     - Smaller blocks = less RAM, but far jumps need to load blocks more often
+       (slower to search). Bigger blocks = more RAM and each block takes longer
+       to load, but jumping/searching inside it is faster.
+     - The NEXT / PREVIOUS block is preloaded when the visible area gets close
+       to the block edge (EDGE rows), so scrolling never shows empty rows.
+     - Thumbnails are small JPEGs (decoded once, reduced to the slider width,
+       full bitmap closed right away). The real resolution goes to img._resolution.
+   JUMP (bucket / similar / conflict / any "go to image"):
+     window.tmJumpToImage(index) -> 1) locates the image in the list,
+     2) checks if it is in a block that is not loaded, 3) loads THAT block
+     completely (all heights final), 4) only then moves the list to the image.
+     This fixes the wrong/failed preview when navigating fast (the old smooth
+     scroll landed on rows whose height was still changing).
+   Stale work is dropped: a queued thumbnail whose block is no longer wanted,
+   or that belongs to an older dataset, is skipped instead of decoded.
 ========================================================================= */
 ;(function () {
-    const QUEUE_LIMIT = 4;               // decodificações simultâneas
-    const KEEP_MIN = 25;                 // abaixo disso nada é solto
-    const PRELOAD = 15;                  // linhas carregadas antes e depois das visíveis
+    const QUEUE_LIMIT = 4;               // simultaneous decodes
+    const EDGE = 8;                      // rows from the block edge that trigger the neighbor preload
+    const MAX_RETRY = 2;                 // failed decodes are retried, then the original is used
+    const BLOCK_KEY = 'image-block-size';
+    const BLOCK_DEFAULT = 100, BLOCK_MIN = 20, BLOCK_MAX = 2000;
+    let blockSize = BLOCK_DEFAULT;
     let running = 0;
-    const queue = [];
+    let queue = [];
     let syncRAF = null;
     let hooked = false;
-    const live = new Set();              // imagens com miniatura gerada (blob vivo)
+    let gen = 0;                          // bumps on dataset change: older jobs are dropped
+    let jumping = 0;                      // seq of the jump in progress (0 = none)
+    let jumpSeq = 0;                      // never resets: only the newest jump may move the list
+    const live = new Set();              // images with a thumbnail blob alive
+    let wantedBlocks = new Set();
+    const rowBlock = new WeakMap();      // img -> block index (last computed)
 
     (function css() {
         const st = document.createElement('style');
-        st.textContent = `#image-list > .list-item { content-visibility: auto; contain-intrinsic-size: auto calc(var(--thumb-size) + 18px); }`;
+        // No content-visibility: its estimated heights made jumps land on the wrong image.
+        st.textContent = `#image-list > .list-item .list-item-thumb-wrap > img:not([src]) { aspect-ratio: var(--tm-ph-ratio, 1); background: #161616; }`;
         document.head.appendChild(st);
     })();
 
-    // Mantém a altura da linha com ou sem src (sem isso a lista pula ao soltar).
     function keepRatio(img, el) {
         if (el && img._resolution && img._resolution.w && img._resolution.h) el.style.aspectRatio = img._resolution.w + ' / ' + img._resolution.h;
     }
@@ -104,29 +118,68 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
         if (el) { keepRatio(img, el); el.removeAttribute('src'); }
     }
 
-    /* Linhas visíveis (busca binária pela posição) -> carrega [primeira-PRELOAD, última+PRELOAD]
-       e solta as miniaturas fora disso. Roda no scroll / resize / render / filtro. */
     function visibleRows() {
         if (typeof imageFiles === 'undefined') return [];
-        return imageFiles.filter(img => img._thumbEl && img.element && img.element.isConnected && img.element.style.display !== 'none' && img.element.offsetParent !== null);
+        return imageFiles.filter(img => img._thumbEl && img.element && img.element.isConnected && img.element.style.display !== 'none' && !img.hidden);
     }
+
+    // Rows split in blocks (by position among the rows shown, so filters keep blocks dense).
+    function blocksOf(rows) {
+        const out = [];
+        for (let i = 0; i < rows.length; i += blockSize) out.push(rows.slice(i, i + blockSize));
+        rows.forEach((img, i) => rowBlock.set(img, Math.floor(i / blockSize)));
+        return out;
+    }
+
+    function visibleRange(list, rows) {
+        const lr = list.getBoundingClientRect();
+        const top = lr.top, bottom = lr.bottom;
+        let lo = 0, hi = rows.length - 1;
+        while (lo < hi) {
+            const m = (lo + hi) >> 1;
+            if (rows[m].element.getBoundingClientRect().bottom <= top) lo = m + 1; else hi = m;
+        }
+        const first = lo;
+        let last = first;
+        while (last + 1 < rows.length && rows[last + 1].element.getBoundingClientRect().top < bottom) last++;
+        return { first, last };
+    }
+
     function syncWindow() {
         syncRAF = null;
         const list = document.getElementById('image-list');
-        if (!list) return;
+        if (!list || list.offsetParent === null) return;
         const rows = visibleRows();
         if (!rows.length) return;
-        const top = list.scrollTop, bottom = top + list.clientHeight;
-        const y = img => img.element.offsetTop - list.offsetTop;
-        let lo = 0, hi = rows.length - 1;
-        while (lo < hi) { const m = (lo + hi) >> 1; if (y(rows[m]) + rows[m].element.offsetHeight <= top) lo = m + 1; else hi = m; }
-        const first = lo;
-        let last = first;
-        while (last + 1 < rows.length && y(rows[last + 1]) < bottom) last++;
-        const a = Math.max(0, first - PRELOAD), b = Math.min(rows.length - 1, last + PRELOAD);
+        const blocks = blocksOf(rows);
+        const { first, last } = visibleRange(list, rows);
+        const bFirst = Math.floor(first / blockSize), bLast = Math.floor(last / blockSize);
         const want = new Set();
-        for (let i = a; i <= b; i++) { want.add(rows[i]); request(rows[i]); }
-        if (live.size > KEEP_MIN) Array.from(live).forEach(img => { if (!want.has(img)) releaseOne(img); });
+        for (let b = bFirst; b <= bLast; b++) want.add(b);
+        // Preload the neighbor block when close to the edge.
+        if (first - bFirst * blockSize < EDGE && bFirst > 0) want.add(bFirst - 1);
+        if ((bLast + 1) * blockSize - 1 - last < EDGE && bLast + 1 < blocks.length) want.add(bLast + 1);
+        wantedBlocks = want;
+        // Request the visible rows first, then the rest of the wanted blocks (nearest first).
+        const order = [];
+        for (let i = first; i <= last; i++) order.push(rows[i]);
+        Array.from(want).sort((a, b) => Math.abs(a - bFirst) - Math.abs(b - bFirst)).forEach(b => {
+            (blocks[b] || []).forEach(img => order.push(img));
+        });
+        order.forEach(img => request(img));
+        // Release every thumbnail outside the wanted blocks.
+        Array.from(live).forEach(img => {
+            const b = rowBlock.get(img);
+            if (jumping && img._jumpWanted) return;
+            if (b === undefined || !want.has(b) || !img.element || !img.element.isConnected || img.element.style.display === 'none') releaseOne(img);
+        });
+        // Drop queued jobs that are no longer wanted.
+        queue = queue.filter(img => { const ok = isWanted(img); if (!ok) { img._thumbQueued = false; resolveWaiters(img); } return ok; });
+    }
+    function isWanted(img) {
+        if (jumping && img._jumpWanted) return true;
+        const b = rowBlock.get(img);
+        return b !== undefined && wantedBlocks.has(b) && img.element && img.element.isConnected && img.element.style.display !== 'none';
     }
     function scheduleSync() {
         if (!syncRAF) syncRAF = requestAnimationFrame(syncWindow);
@@ -138,7 +191,6 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
         hooked = true;
         list.addEventListener('scroll', scheduleSync, { passive: true });
         window.addEventListener('resize', scheduleSync);
-        // Filtros escondem / mostram linhas (style.display) -> recalcula.
         new MutationObserver(scheduleSync).observe(list, { attributes: true, attributeFilter: ['style', 'class'], subtree: true, childList: true });
     }
 
@@ -149,12 +201,23 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
     }
 
     function setThumbSrc(img, el, url) {
-        if (el && el.src !== url) el.src = url;
+        if (el && el.getAttribute('src') !== url) el.src = url;
     }
 
-    async function makeThumb(img) {
+    // Promises waiting for a thumbnail (used by the jump)
+    function resolveWaiters(img) {
+        const w = img._thumbWaiters;
+        if (!w) return;
+        img._thumbWaiters = null;
+        w.forEach(fn => { try { fn(); } catch (e) {} });
+    }
+    function isFresh(img) {
+        return img._thumbBuiltFor === img.url && (img._thumbWidth || 0) >= targetWidth();
+    }
+
+    async function makeThumb(img, myGen) {
         const el = img._thumbEl;
-        if (!el || !el.isConnected) { img._thumbQueued = false; return; }
+        if (myGen !== gen || !el || !el.isConnected || !isWanted(img)) { img._thumbQueued = false; resolveWaiters(img); return; }
         const width = targetWidth();
         const sourceUrl = img.url;
         try {
@@ -176,39 +239,127 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
                 if (small) url = URL.createObjectURL(small);
             }
             bmp.close();
-            // A imagem pode ter mudado (crop do bucket) ou o dataset trocado enquanto isso.
-            if (img.url !== sourceUrl || img._thumbEl !== el) { if (url !== sourceUrl) URL.revokeObjectURL(url); return; }
-            if (img._thumbBlobUrl) URL.revokeObjectURL(img._thumbBlobUrl);
+            // The image may have changed (bucket crop), the row may be another one, or the dataset changed.
+            if (myGen !== gen || img.url !== sourceUrl || img._thumbEl !== el || el._tmImg !== img) {
+                if (url !== sourceUrl) URL.revokeObjectURL(url);
+                return;
+            }
+            if (img._thumbBlobUrl && img._thumbBlobUrl !== url) URL.revokeObjectURL(img._thumbBlobUrl);
             img._thumbBlobUrl = url !== sourceUrl ? url : null;
             img._thumbBuiltFor = sourceUrl;
             img._thumbWidth = width;
+            img._thumbFail = 0;
             keepRatio(img, el);
             setThumbSrc(img, el, url);
-            if (img._thumbBlobUrl) { live.add(img); scheduleSync(); }
+            if (img._thumbBlobUrl) live.add(img);
             if (img._onThumbSize) img._onThumbSize();
         } catch (e) {
-            setThumbSrc(img, el, sourceUrl);   // formato que o createImageBitmap não lê: usa a original
+            img._thumbFail = (img._thumbFail || 0) + 1;
+            if (img._thumbFail > MAX_RETRY && myGen === gen && img._thumbEl === el) {
+                // Format createImageBitmap cannot read: show the original (counts as built).
+                img._thumbBuiltFor = sourceUrl; img._thumbWidth = 99999;
+                setThumbSrc(img, el, sourceUrl);
+            }
         } finally {
             img._thumbQueued = false;
+            resolveWaiters(img);
         }
     }
 
     function pump() {
         while (running < QUEUE_LIMIT && queue.length) {
             const img = queue.shift();
+            const myGen = gen;
             running++;
-            makeThumb(img).finally(() => { running--; pump(); });
+            makeThumb(img, myGen).finally(() => { running--; pump(); });
         }
     }
 
-    function request(img) {
-        const fresh = img._thumbBuiltFor === img.url && (img._thumbWidth || 0) >= targetWidth();
-        if (fresh) { if (img._thumbBlobUrl) setThumbSrc(img, img._thumbEl, img._thumbBlobUrl); else setThumbSrc(img, img._thumbEl, img.url); return; }
-        if (img._thumbQueued || !img._thumbEl) return;
+    function request(img, front) {
+        if (!img._thumbEl) return;
+        if (isFresh(img)) {
+            setThumbSrc(img, img._thumbEl, img._thumbBlobUrl || img.url);
+            if (img._thumbBlobUrl) live.add(img);
+            return;
+        }
+        if (img._thumbQueued) {
+            if (front) { const i = queue.indexOf(img); if (i > 0) { queue.splice(i, 1); queue.unshift(img); } }
+            return;
+        }
         img._thumbQueued = true;
-        queue.push(img);
+        if (front) queue.unshift(img); else queue.push(img);
         pump();
     }
+
+    // Loads a list of rows completely (resolves when every one is built or failed).
+    function loadRows(rows, timeoutMs) {
+        const waits = rows.map(img => new Promise(res => {
+            if (isFresh(img)) { request(img); return res(); }
+            (img._thumbWaiters = img._thumbWaiters || []).push(res);
+            request(img, true);
+            if (!img._thumbQueued && isFresh(img)) resolveWaiters(img);
+        }));
+        return Promise.race([Promise.all(waits), new Promise(r => setTimeout(r, timeoutMs || 10000))]);
+    }
+
+    /* JUMP: locate -> load the target block completely -> move the list to the image. */
+    window.tmJumpToImage = async function (index, opts) {
+        opts = opts || {};
+        if (typeof imageFiles === 'undefined') return false;
+        const target = imageFiles[index];
+        const list = document.getElementById('image-list');
+        if (!target || !list) return false;
+        if (!target.element || !target.element.isConnected || target.element.style.display === 'none' || target.hidden) {
+            if (!opts.silent && window.showAlert) window.showAlert(`"${target.name || 'Image'}" is hidden by the current filter / hide.`, 'info');
+            return false;
+        }
+        const myGen = gen;
+        const rows = visibleRows();
+        blocksOf(rows);
+        const pos = rows.indexOf(target);
+        if (pos === -1) return false;
+        const b = Math.floor(pos / blockSize);
+        const blockRows = rows.slice(b * blockSize, (b + 1) * blockSize);
+        const token = ++jumpSeq;
+        jumping = token;
+        blockRows.forEach(img => { img._jumpWanted = token; });
+        wantedBlocks = new Set([b]);
+        const needLoad = blockRows.some(img => !isFresh(img));
+        if (needLoad) {
+            // Only the target block is wanted now: drop every other queued job, target first.
+            queue = queue.filter(img => { const ok = img._jumpWanted === token; if (!ok) { img._thumbQueued = false; resolveWaiters(img); } return ok; });
+            const ordered = [target].concat(blockRows.filter(x => x !== target).sort((x, y) => Math.abs(rows.indexOf(x) - pos) - Math.abs(rows.indexOf(y) - pos)));
+            await loadRows(ordered, 10000);
+        }
+        blockRows.forEach(img => { if (img._jumpWanted === token) img._jumpWanted = 0; });
+        if (token !== jumpSeq || myGen !== gen) return false;   // another jump started / dataset changed
+        jumping = 0;
+        const go = () => {
+            if (token !== jumpSeq) return;                       // a newer jump owns the list now
+            const el = target.element;
+            if (!el || !el.isConnected) return;
+            const lr = list.getBoundingClientRect(), r = el.getBoundingClientRect();
+            const delta = (r.top - lr.top) - (lr.height - r.height) / 2;
+            if (Math.abs(delta) > 1) list.scrollTop += delta;
+        };
+        go();
+        await new Promise(r => requestAnimationFrame(() => { go(); requestAnimationFrame(() => { go(); r(); }); }));
+        if (token !== jumpSeq) return false;
+        if (typeof window.tmRememberListScroll === 'function') window.tmRememberListScroll();
+        scheduleSync();
+        return true;
+    };
+
+    // Select an image (single selection), render the editor and jump to it.
+    window.tmSelectAndJump = function (index) {
+        if (typeof imageFiles === 'undefined' || !imageFiles[index]) return;
+        if (typeof selectedIndices !== 'undefined') { selectedIndices.clear(); selectedIndices.add(index); }
+        try { if (typeof lastSelectedIndex !== 'undefined') lastSelectedIndex = index; } catch (e) {}
+        if (typeof activeSelectedTags !== 'undefined' && activeSelectedTags.clear) activeSelectedTags.clear();
+        if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        return window.tmJumpToImage(index);
+    };
 
     window.attachImageThumb = function (img, el) {
         el._tmImg = img;
@@ -218,23 +369,66 @@ window.handleListClick = function(index, shiftKey, ctrlKey) {
     };
 
     window._thumbLiveCount = () => live.size;
-
-    // Slider de tamanho: miniaturas visíveis menores que o novo tamanho são refeitas.
-    window.refreshImageThumbsForSize = function () {
-        scheduleSync();          // request() refaz as da janela que ficaram menores que o novo tamanho
+    window.tmGetImageBlockSize = () => blockSize;
+    window.tmSetImageBlockSize = function (v, skipSave) {
+        let n = parseInt(v, 10);
+        if (!isFinite(n)) n = BLOCK_DEFAULT;
+        n = Math.max(BLOCK_MIN, Math.min(BLOCK_MAX, n));
+        blockSize = n;
+        const inp = document.getElementById('image-block-size');
+        if (inp && String(inp.value) !== String(n)) inp.value = n;
+        if (!skipSave && typeof window.saveSetting === 'function') window.saveSetting(BLOCK_KEY, n);
+        scheduleSync();
     };
 
+    window.refreshImageThumbsForSize = function () { scheduleSync(); };
+
     window.releaseImageThumbs = function (files) {
-        queue.length = 0;
+        gen++;
+        queue.forEach(img => { img._thumbQueued = false; resolveWaiters(img); });
+        queue = [];
         live.clear();
+        wantedBlocks = new Set();
         (files || []).forEach(img => {
             if (!img) return;
             if (img._thumbBlobUrl) { try { URL.revokeObjectURL(img._thumbBlobUrl); } catch (e) {} }
             if (img._thumbEl) { img._thumbEl.removeAttribute('src'); img._thumbEl._tmImg = null; }
-            img._thumbBlobUrl = null; img._thumbEl = null; img._thumbBuiltFor = null;
+            img._thumbBlobUrl = null; img._thumbEl = null; img._thumbBuiltFor = null; img._thumbQueued = false;
             img._onThumbSize = null; img.element = null;
         });
     };
+
+    // ⚙️ setting: Images per block
+    function injectBlockSetting() {
+        const dd = document.getElementById('settings-dropdown');
+        if (!dd || document.getElementById('image-block-size')) return;
+        const grp = document.createElement('div');
+        grp.id = 'settings-image-block-group';
+        grp.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
+        grp.innerHTML = `
+            <div class="settings-group-label">🖼️ Image list</div>
+            <label title="The image list loads previews in blocks of this many images. Fewer images per block = less RAM, but jumping to far images loads blocks more often (slower to search). More images per block = more RAM and each block takes longer to load, but searching / jumping is faster.">Images per block:
+                <input type="number" id="image-block-size" min="${BLOCK_MIN}" max="${BLOCK_MAX}" step="10" style="width: 64px;">
+            </label>
+            <div style="font-size:10px; color:#777; line-height:1.35; margin-top:-3px;">Smaller block = less RAM, slower to search.<br>Bigger block = more RAM, slower to load, faster to search.</div>`;
+        const hr = document.createElement('hr');
+        hr.style.cssText = 'border: 0; border-top: 1px solid #333; margin: 5px 0;';
+        const first = dd.querySelector('.settings-group-label');
+        // right after the General group (before the next <hr>)
+        let anchor = first ? first.nextElementSibling : null;
+        while (anchor && anchor.tagName !== 'HR') anchor = anchor.nextElementSibling;
+        if (anchor) { dd.insertBefore(hr, anchor); dd.insertBefore(grp, anchor); }
+        else { dd.appendChild(hr); dd.appendChild(grp); }
+        const inp = document.getElementById('image-block-size');
+        inp.value = blockSize;
+        inp.onchange = () => window.tmSetImageBlockSize(inp.value);
+    }
+    window.addEventListener('DOMContentLoaded', async () => {
+        injectBlockSetting();
+        try {
+            if (typeof window.getSetting === 'function') window.tmSetImageBlockSize(await window.getSetting(BLOCK_KEY, BLOCK_DEFAULT), true);
+        } catch (e) {}
+    });
 })();
 
 window.renderImageList = function() {
@@ -459,6 +653,36 @@ window.updateUnhideButton = function() {
     const btn = document.getElementById('btn-unhide-all');
     const hasHidden = window.hiddenImagesStore.size > 0 || imageFiles.some(img => img.hidden);
     if (btn) btn.style.display = hasHidden ? 'inline-block' : 'none';
+    const inv = document.getElementById('btn-invert-hidden');
+    if (inv) inv.style.display = hasHidden ? 'inline-block' : 'none';
+};
+
+/* 🔀 Invert (next to 👁️‍🗨️ Unhide, after Hide / Focus): the hidden images come
+   back and the ones that were visible are hidden. */
+window.invertHiddenImages = function() {
+    if (!imageFiles.some(img => img.hidden)) return;
+    let shown = 0, hidden = 0;
+    imageFiles.forEach((img, i) => {
+        if (img.hidden) {
+            img.hidden = false;
+            window.hiddenImagesStore.delete(img.baseName);
+            shown++;
+        } else {
+            img.hidden = true;
+            window.hiddenImagesStore.add(img.baseName);
+            if (img.element) img.element.classList.remove('selected');
+            selectedIndices.delete(i);
+            hidden++;
+        }
+    });
+    if (window._compactCollapsedGroups && typeof window._compactCollapsedGroups.clear === 'function') window._compactCollapsedGroups.clear();
+    window.updateUnhideButton();
+    window.renderImageList();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    window.updateListSelectionVisuals();
+    window.showAlert(`Inverted: ${shown} image(s) shown, ${hidden} hidden.`, "success");
 };
 
 window.enterFocusMode = function() {
@@ -526,6 +750,23 @@ async function _fileExists(dirHandle, name) {
     try { await dirHandle.getFileHandle(name); return true; } catch (e) { return false; }
 }
 
+/* Progress counter on a toolbar button ("⏳ i/N"), the same one the other
+   functions use (Archive, Auto Bucket...). done() puts the icon back. */
+function _btnProgress(onclickName, fallbackId) {
+    const btn = (fallbackId && document.getElementById(fallbackId)) || document.querySelector(`button[onclick*="${onclickName}"]`);
+    const orig = btn ? btn.textContent : '';
+    const origTitle = btn ? btn.title : '';
+    return {
+        set(i, n, label) {
+            if (!btn) return;
+            btn.disabled = true;
+            btn.textContent = `⏳ ${i}/${n}`;
+            btn.title = (label || 'Working') + ` — ${i} of ${n}`;
+        },
+        done() { if (btn) { btn.disabled = false; btn.textContent = orig; btn.title = origTitle; } }
+    };
+}
+
 window.confirmRename = async function() {
     if(selectedIndices.size === 0) return;
     const newBaseName = document.getElementById('rename-input').value.trim();
@@ -572,6 +813,12 @@ window.confirmRename = async function() {
         }
     }
 
+    // ⏳ Background task from here on: keeps this dataset's folder / config / stores, so it finishes even if
+    // another dataset is opened meanwhile.
+    const _ctx = window.TM.tasks.captureDataset();
+    _ctx.files = activePlans.map(p => p.img);
+    const cfg = _ctx.config, pStore = _ctx.pending, hStore = window.hiddenImagesStore;
+    return window.TM.tasks.run({ title: `Rename ${activePlans.length} image(s)`, icon: '✏️', ctx: _ctx, silentEnd: true }, async (task) => {
     // ---------- FASE 1: checagem de colisão contra arquivos FORA do lote ----------
     const oldNamesInBatch = new Set();
     plans.forEach(p => { oldNamesInBatch.add(p.oldName); oldNamesInBatch.add(p.oldTextName); });
@@ -612,8 +859,13 @@ window.confirmRename = async function() {
         return cacheDir;
     }
 
+    const prog = _btnProgress('openRenameModal');
+    const total = activePlans.length;
+    try {
     // ---------- FASE A: copia TODOS os originais do lote para o staging ----------
+    let stepA = 0;
     for (const p of activePlans) {
+        prog.set(++stepA, total, 'Rename: backing up the originals'); task.progress(stepA, total * 2, 'backing up');
         try {
             p.cacheDir = await getCacheDir(p.img.parentDirHandle);
             await _copyFileInto(p.img.parentDirHandle, p.oldName, p.cacheDir, p.oldName);
@@ -638,8 +890,10 @@ window.confirmRename = async function() {
     // ---------- FASE B: escreve os nomes finais a partir das cópias staged ----------
     let renamedCount = 0;
     let failedCount = 0;
+    let stepB = 0;
     for (const p of activePlans) {
         const { img, oldName, newImgName, newTextName, finalBaseName, textFormat, cacheDir } = p;
+        prog.set(++stepB, total, 'Renaming'); task.progress(total + stepB, total * 2, 'renaming');
         try {
             await _copyFileInto(cacheDir, oldName, img.parentDirHandle, newImgName);
 
@@ -664,25 +918,25 @@ window.confirmRename = async function() {
             try { await cacheDir.removeEntry(oldName); } catch(e) {}
             if (p.stagedText) { try { await cacheDir.removeEntry(p.oldTextName); } catch(e) {} }
 
-            if (datasetConfig[img.baseName]) {
-                datasetConfig[finalBaseName] = datasetConfig[img.baseName];
-                if (img.baseName !== finalBaseName) delete datasetConfig[img.baseName];
+            if (cfg[img.baseName]) {
+                cfg[finalBaseName] = cfg[img.baseName];
+                if (img.baseName !== finalBaseName) delete cfg[img.baseName];
             }
             if (p.nlMap && window.NLCodec) {
                 await window.NLCodec.moveEntries(img.parentDirHandle, img.baseName, finalBaseName, p.nlMap);
-                if (datasetConfig[finalBaseName]) delete datasetConfig[finalBaseName].nl;
+                if (cfg[finalBaseName]) delete cfg[finalBaseName].nl;
             }
             // Renomear reorganiza a lista: limpa a ordem manual do Reorder Mode.
-            if (datasetConfig[finalBaseName] && typeof datasetConfig[finalBaseName].order === 'number') {
-                delete datasetConfig[finalBaseName].order;
+            if (cfg[finalBaseName] && typeof cfg[finalBaseName].order === 'number') {
+                delete cfg[finalBaseName].order;
             }
-            if (pendingTagsStore[img.baseName]) {
-                pendingTagsStore[finalBaseName] = pendingTagsStore[img.baseName];
-                if (img.baseName !== finalBaseName) delete pendingTagsStore[img.baseName];
+            if (pStore[img.baseName]) {
+                pStore[finalBaseName] = pStore[img.baseName];
+                if (img.baseName !== finalBaseName) delete pStore[img.baseName];
             }
-            if (window.hiddenImagesStore.has(img.baseName)) {
-                window.hiddenImagesStore.delete(img.baseName);
-                window.hiddenImagesStore.add(finalBaseName);
+            if (hStore.has(img.baseName)) {
+                hStore.delete(img.baseName);
+                hStore.add(finalBaseName);
             }
             img.name = newImgName; img.baseName = finalBaseName;
             renamedCount++;
@@ -696,12 +950,17 @@ window.confirmRename = async function() {
         window.showAlert(`⚠️ ${failedCount} file(s) could not be renamed — the originals are safely kept in the "_rename_cache" folder, nothing was lost.`, 'error', 8000);
     }
 
+    const here = await window.TM.tasks.isCurrent(_ctx.handle);
     if(renamedCount > 0) {
-        await window.markDatasetEdited();
-        if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(window.currentImagesHandle);
+        if (here) await window.markDatasetEdited();
+        else { cfg.lastEdited = new Date().toLocaleString(); await window.saveDatasetConfig(_ctx.handle, cfg, _ctx.files); }
+        if (typeof window.savePendingTagsStore === 'function') await window.savePendingTagsStore(_ctx.handle, pStore);
         if (failedCount === 0) window.showAlert(`Renamed ${renamedCount} files!`, "success");
     }
-    if ((renamedCount > 0 || failedCount > 0) && typeof window.refreshDataset === 'function') await window.refreshDataset();
+    task.result = `${renamedCount} renamed${failedCount ? `, ${failedCount} failed` : ''}`;
+    if (here && (renamedCount > 0 || failedCount > 0) && typeof window.refreshDataset === 'function') await window.refreshDataset();
+    } finally { prog.done(); }
+    }).promise;
 }
 
 window.openCloneModal = function() {
@@ -722,13 +981,22 @@ window.confirmClone = async function() {
     const indices = Array.from(selectedIndices);
     let clonedCount = 0;
 
-    const existingBaseNames = new Set(imageFiles.map(f => f.baseName));
-
-    for (let idx of indices) {
-        const img = imageFiles[idx];
+    const _ctx = window.TM.tasks.captureDataset();
+    _ctx.files = indices.map(i => imageFiles[i]);
+    const cfg = _ctx.config;
+    const allNames = imageFiles.map(f => f.baseName);
+    return window.TM.tasks.run({ title: `Clone ${indices.length} image(s) ×${count}`, icon: '📋', ctx: _ctx, silentEnd: true }, async (task) => {
+    const existingBaseNames = new Set(allNames);
+    const prog = _btnProgress('openCloneModal');
+    const total = indices.length * count;
+    let step = 0;
+    try {
+    for (const img of _ctx.files) {
+        if (task.cancelled) break;
         const oldExt = img.name.substring(img.name.lastIndexOf('.') + 1);
 
         for (let n = 1; n <= count; n++) {
+            prog.set(++step, total, 'Copying'); task.progress(step, total);
             let paddedN = String(n).padStart(3, '0');
             let newBaseName = `${img.baseName}_${paddedN}`;
             let bump = 1;
@@ -764,24 +1032,28 @@ window.confirmClone = async function() {
                     } catch (e) {}
                 }
 
-                if (datasetConfig[img.baseName]) {
-                    datasetConfig[newBaseName] = { ...datasetConfig[img.baseName] };
-                    delete datasetConfig[newBaseName].order; // clone entra na ordenação alfabética normal
+                if (cfg[img.baseName]) {
+                    cfg[newBaseName] = { ...cfg[img.baseName] };
+                    delete cfg[newBaseName].order; // clone entra na ordenação alfabética normal
                 }
                 if (img._cloneNlMap && img._cloneNlMap.length && window.NLCodec) {
                     await window.NLCodec.setEntries(img.parentDirHandle, newBaseName, img._cloneNlMap);
                 }
-                if (datasetConfig[newBaseName]) delete datasetConfig[newBaseName].nl;
+                if (cfg[newBaseName]) delete cfg[newBaseName].nl;
                 delete img._cloneNlMap;
                 clonedCount++;
             } catch (e) { console.error("Clone Error:", e); }
         }
     }
+    } finally { prog.done(); }
 
+    task.result = `${clonedCount} file(s) cloned`;
     if (clonedCount > 0) {
-        if (typeof window.saveDatasetConfig === 'function') await window.saveDatasetConfig(window.currentImagesHandle || window.rootHandle);
-        await window.markDatasetEdited();
+        const here = await window.TM.tasks.isCurrent(_ctx.handle);
+        if (typeof window.saveDatasetConfig === 'function') await window.saveDatasetConfig(_ctx.handle, cfg, _ctx.files);
+        if (here) await window.markDatasetEdited();
         window.showAlert(`Cloned ${clonedCount} file(s)!`, "success");
-        if (typeof window.refreshDataset === 'function') await window.refreshDataset();
+        if (here && typeof window.refreshDataset === 'function') await window.refreshDataset();
     }
+    }).promise;
 }

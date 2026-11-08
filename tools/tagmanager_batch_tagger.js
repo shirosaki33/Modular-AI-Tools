@@ -96,7 +96,7 @@ if (typeof ort !== 'undefined' && ort.env && ort.env.wasm) {
 // Same list used by the folder dropdowns (tagmanager_ui_core.js).
 function isSystemFolderName(name) {
     if (typeof window.isSystemDirName === 'function') return window.isSystemDirName(name);
-    return name === '_trash' || name === '_archive' || name === '_rename_cache';
+    return name === '_trash' || name === '_archive' || name === '_rename_cache' || name === '_store_configs';
 }
 
 
@@ -1066,347 +1066,370 @@ window.startBatchTagging = async function() {
         if(window.showAlert) window.showAlert("⚠️ Review Mode isn't supported together with Recursive Mode — saving tags directly to disk instead.", "warn");
     }
 
-    window.isBatchCancelled = false;
-    const btn = document.getElementById('btn-start-batch'); btn.disabled = true;
-    const cancelBtn = document.getElementById('btn-cancel-batch');
-    if(cancelBtn) {
-        cancelBtn.style.display = 'block';
-        cancelBtn.textContent = '⏹ Cancel';
+    // ⏳ Background task: keeps its own folder / image list / pending store, so it goes on when another
+    // dataset is opened. Uses the GPU: waits for any other GPU task first.
+    if (window._autoCaptionTask) {
+        if(window.showAlert) window.showAlert("Auto-Caption is already running (see ⏳ Tasks). Wait for it or stop it first.", "warn");
+        return;
     }
-
-    const format = document.getElementById('save-format').value;
-
-    document.getElementById('progress-container').style.display = 'block';
-    document.getElementById('progress-text').style.display = 'block';
-    const progressBar = document.getElementById('progress-bar');
-    const progressText = document.getElementById('progress-text');
-    const setProgress = (processed) => {
-        progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
-        progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
-        window.TMHeaderBatch.progress(processed, targetFiles.length);
-    };
-    window._batchFailedCaptions = 0;
-
-    // Leave the popout: the header button now shows x / N (click it to come back).
-    if (typeof window.closeModal === 'function') window.closeModal('view-auto');
-    window.TMHeaderBatch.start(targetFiles.length);
-
+    const TM = window.TM;
+    const _ctx = TM.tasks.captureDataset(targetHandle);
+    _ctx.files = targetFiles;
+    const pStore = _ctx.pending;
+    const rStore = _ctx.pendingRemove;
+    window._autoCaptionTask = TM.tasks.run({
+        title: 'Auto-Caption' + (isRecursive ? ' (recursive)' : ''), icon: '🤖', gpu: true, ctx: _ctx,
+        onCancel: () => window.stopBatchTagging()
+    }, async (task) => {
     try {
-        if (mode === 'tags') {
-            const threshold = parseFloat(document.getElementById('threshold').value);
-            const prefix = document.getElementById('prefix').value.trim();
-            const excludeStr = document.getElementById('exclude') ? document.getElementById('exclude').value.trim() : '';
-            const excludeArray = excludeStr.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+        window.isBatchCancelled = false;
+        const btn = document.getElementById('btn-start-batch'); btn.disabled = true;
+        const cancelBtn = document.getElementById('btn-cancel-batch');
+        if(cancelBtn) {
+            cancelBtn.style.display = 'block';
+            cancelBtn.textContent = '⏹ Cancel';
+        }
 
-            const select = document.getElementById('model-select');
-            const selectedModelObj = availableModelsObjects[select.value];
+        const format = document.getElementById('save-format').value;
 
-            if (!onnxSession || currentSessionModel !== selectedModelObj.displayName) {
-                if(window.showAlert) window.showAlert(`Loading ${selectedModelObj.fileName}... this might take a while.`, 'info');
-                onnxSession = await createOnnxSession(selectedModelObj, hwMode);
-                currentSessionModel = selectedModelObj.displayName;
-            }
+        document.getElementById('progress-container').style.display = 'block';
+        document.getElementById('progress-text').style.display = 'block';
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const setProgress = (processed) => {
+            progressBar.style.width = `${(processed / targetFiles.length) * 100}%`;
+            progressText.textContent = `${processed} / ${targetFiles.length} Processed`;
+            window.TMHeaderBatch.progress(processed, targetFiles.length);
+            task.progress(processed, targetFiles.length);
+        };
+        window._batchFailedCaptions = 0;
 
-            if (useSecondModel) {
-                if (selectedModelObj2.displayName === selectedModelObj.displayName) {
-                    if (onnxSession2 && onnxSession2 !== onnxSession) {
-                        try { await onnxSession2.release(); } catch (e) {}
-                    }
-                    onnxSession2 = onnxSession;
-                    currentSessionModel2 = currentSessionModel;
-                } else if (!onnxSession2 || currentSessionModel2 !== selectedModelObj2.displayName || onnxSession2 === onnxSession) {
-                    if (onnxSession2 && onnxSession2 !== onnxSession) {
-                        try { await onnxSession2.release(); } catch (e) {}
-                        onnxSession2 = null;
-                    }
-                    if(window.showAlert) window.showAlert(`Loading second model ${selectedModelObj2.fileName}... this might take a while.`, 'info');
-                    onnxSession2 = await createOnnxSession(selectedModelObj2, hwMode);
-                    currentSessionModel2 = selectedModelObj2.displayName;
-                }
-            }
+        // Leave the popout: the header button now shows x / N (click it to come back).
+        if (typeof window.closeModal === 'function') window.closeModal('view-auto');
+        window.TMHeaderBatch.start(targetFiles.length);
 
-            let processed = 0;
-            const prefixArray = prefix ? prefix.split(',').map(t => t.trim()).filter(t => t) : [];
+        try {
+            if (mode === 'tags') {
+                const threshold = parseFloat(document.getElementById('threshold').value);
+                const prefix = document.getElementById('prefix').value.trim();
+                const excludeStr = document.getElementById('exclude') ? document.getElementById('exclude').value.trim() : '';
+                const excludeArray = excludeStr.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
 
-            for (let idx = 0; idx < targetFiles.length; idx++) {
-                if (window.isBatchCancelled) {
-                    if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
-                    break;
-                }
+                const select = document.getElementById('model-select');
+                const selectedModelObj = availableModelsObjects[select.value];
 
-                const imgObj = targetFiles[idx];
-                if (imgObj.hidden) continue;
-                const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
-
-                let finalTags;
-                try {
-                    finalTags = await inferTags(onnxSession, tagsDB, imgObj.url, threshold, excludeArray);
-                } catch (e) {
-                    console.error('[Tagger] Failed on', imgObj.name, e);
-                    window._batchFailedCaptions++;
-                    processed++; setProgress(processed);
-                    continue;
+                if (!onnxSession || currentSessionModel !== selectedModelObj.displayName) {
+                    if(window.showAlert) window.showAlert(`Loading ${selectedModelObj.fileName}... this might take a while.`, 'info');
+                    onnxSession = await createOnnxSession(selectedModelObj, hwMode);
+                    currentSessionModel = selectedModelObj.displayName;
                 }
 
-                if (prefixArray.length) {
-                    finalTags = [...prefixArray, ...finalTags.filter(t => !prefixArray.includes(t))];
-                }
-
-                // Passe 2: só entra tag que o segundo modelo previu e o primeiro não tinha.
-                if (useSecondModel && onnxSession2 && tagsDB2.length) {
-                    try {
-                        const extra = await inferTags(onnxSession2, tagsDB2, imgObj.url, threshold2, excludeArray);
-                        const have = new Set(finalTags.map(t => String(t).toLowerCase()));
-                        extra.forEach(t => {
-                            const key = String(t).toLowerCase();
-                            if (!have.has(key)) {
-                                finalTags.push(t);
-                                have.add(key);
-                            }
-                        });
-                    } catch (e) { console.warn('[Tagger] Second model failed on', imgObj.name, e); }
-                }
-
-                if (reviewModeActive) {
-                    const existingTags = (imgObj.content || '').split(',').map(t => t.trim()).filter(t => t);
-                    const existingSet = new Set(existingTags);
-                    imgObj.pendingAdd = finalTags.filter(t => !existingSet.has(t));
-
-                    if (typeof pendingTagsStore !== 'undefined') {
-                        if (imgObj.pendingAdd.length > 0) pendingTagsStore[baseName] = imgObj.pendingAdd;
-                        else delete pendingTagsStore[baseName];
-                    }
-
-                    // Tags que JÁ EXISTEM mas o tagger não confirmou nesta passada:
-                    // ficam marcadas para revisão (tagmanager_review_unconfirmed.js).
-                    // "NL:" e tags da lista Exclude são ignoradas.
-                    if (typeof window.pendingRemoveStore === 'undefined') window.pendingRemoveStore = {};
-                    const finalSet = new Set(finalTags);
-                    imgObj.pendingRemove = existingTags.filter(t =>
-                        !finalSet.has(t) && !t.startsWith('NL:') && !(window.checkIfNL && window.checkIfNL(t)) && !excludeArray.includes(t.toLowerCase())
-                    );
-                    if (imgObj.pendingRemove.length > 0) window.pendingRemoveStore[baseName] = imgObj.pendingRemove;
-                    else delete window.pendingRemoveStore[baseName];
-
-                    processed++; setProgress(processed);
-                    continue;
-                }
-
-                imgObj.pendingAdd = [];
-                if (typeof pendingTagsStore !== 'undefined') delete pendingTagsStore[baseName];
-
-                imgObj.content = finalTags.join(', ');
-                imgObj.type = 'tags';
-                imgObj.hasFile = true;
-                imgObj.ext = format;
-                imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
-
-                await window.saveImageToDisk(imgObj);
-
-                if(window.masterTagSet) finalTags.forEach(t => masterTagSet.add(t));
-
-                processed++; setProgress(processed);
-            }
-
-            if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle);
-
-        } else if (mode === 'nl-vlm' || mode === 'ollama-vision' || mode === 'pytorch') {
-            const isOllamaMode = mode === 'ollama-vision';
-            const ollamaPrompt = isOllamaMode ? (document.getElementById('ollama-prompt').value.trim() || OLLAMA_PROMPT_NL) : '';
-            const ollamaBaseUrl = getOllamaBaseUrl();
-            const ollamaModelName = isOllamaMode ? document.getElementById('ollama-model-select').value : '';
-            const ollamaOutputMode = isOllamaMode ? document.getElementById('ollama-output-mode').value : 'nl';
-            const ollamaMaxSide = isOllamaMode ? (parseInt(document.getElementById('ollama-max-side').value, 10) || 0) : 0;
-            let processed = 0;
-
-            // Engine modes (WebGPU / PyTorch): download + load the model once, before the first image.
-            let engineReady = true;
-            if (isEngineMode) {
-                window.TMVlm.setBatchBusy(true);
-                if(window.showAlert) window.showAlert("Preparing the model... the first run may need a download.", "info");
-                window.TMHeaderBatch.loading(true);
-                try {
-                    await window.TMVlm.prepare();
-                    window.TMHeaderBatch.loading(false);
-                    window.TMHeaderBatch.progress(0, targetFiles.length);
-                } catch (e) {
-                    window.TMHeaderBatch.loading(false);
-                    engineReady = false;
-                    window.isBatchCancelled = true;   // also hides the "complete" message at the end
-                    if (e && e.cancelled) {
-                        if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
-                    } else {
-                        console.error(e);
-                        if(window.showAlert) window.showAlert("Could not load the model: " + ((e && e.message) || e), "error");
+                if (useSecondModel) {
+                    if (selectedModelObj2.displayName === selectedModelObj.displayName) {
+                        if (onnxSession2 && onnxSession2 !== onnxSession) {
+                            try { await onnxSession2.release(); } catch (e) {}
+                        }
+                        onnxSession2 = onnxSession;
+                        currentSessionModel2 = currentSessionModel;
+                    } else if (!onnxSession2 || currentSessionModel2 !== selectedModelObj2.displayName || onnxSession2 === onnxSession) {
+                        if (onnxSession2 && onnxSession2 !== onnxSession) {
+                            try { await onnxSession2.release(); } catch (e) {}
+                            onnxSession2 = null;
+                        }
+                        if(window.showAlert) window.showAlert(`Loading second model ${selectedModelObj2.fileName}... this might take a while.`, 'info');
+                        onnxSession2 = await createOnnxSession(selectedModelObj2, hwMode);
+                        currentSessionModel2 = selectedModelObj2.displayName;
                     }
                 }
-            }
 
-            for (let idx = 0; idx < targetFiles.length; idx++) {
-                if (!engineReady) break;
-                if (window.isBatchCancelled) {
-                    if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
-                    break;
-                }
+                let processed = 0;
+                const prefixArray = prefix ? prefix.split(',').map(t => t.trim()).filter(t => t) : [];
 
-                const imgObj = targetFiles[idx];
-                if (imgObj.hidden) continue;
-                const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
-                let finalContent = "";
-                let captionFailed = false;
-                let resultKind = 'nl';
-
-                if (isEngineMode) {
-                    const r = await window.TMVlm.captionImage(imgObj);
-                    if (r.cancelled) {
-                        window.isBatchCancelled = true;
+                for (let idx = 0; idx < targetFiles.length; idx++) {
+                    if (window.isBatchCancelled) {
                         if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
                         break;
                     }
-                    finalContent = r.text || '';
-                    captionFailed = !!r.failed;
-                    resultKind = r.kind || 'nl';
-                    if (r.failed) {
-                        console.error('[Auto-Caption] Caption failed for', imgObj.name, '-', r.error);
-                        if (r.fatal) {
-                            if(window.showAlert) window.showAlert('Model error: ' + r.error + ' — batch stopped.', 'error');
-                            window.isBatchCancelled = true;
-                            break;
-                        }
-                    }
-                } else {
-                    const r = await captionViaOllama(imgObj.url, {
-                        baseUrl: ollamaBaseUrl,
-                        model: ollamaModelName,
-                        prompt: ollamaPrompt,
-                        maxSide: ollamaMaxSide,
-                        temperature: 0.1
-                    });
-                    finalContent = r.text;
-                    captionFailed = r.failed;
-                    resultKind = ollamaOutputMode === 'tags' ? 'tags' : 'nl';
-                    if (r.failed) {
-                        console.error('[Ollama] Caption failed for', imgObj.name, '-', r.error);
-                        if (r.fatal) {
-                            if(window.showAlert) window.showAlert('Ollama error: ' + r.error + ' — batch stopped.', 'error');
-                            window.isBatchCancelled = true;
-                            break;
-                        }
-                    }
-                }
 
-                // Falha isolada numa imagem: NUNCA grava mensagem de erro como legenda.
-                if (captionFailed) {
-                    window._batchFailedCaptions++;
+                    const imgObj = targetFiles[idx];
+                    if (imgObj.hidden) continue;
+                    const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
+
+                    let finalTags;
+                    try {
+                        finalTags = await inferTags(onnxSession, tagsDB, imgObj.url, threshold, excludeArray);
+                    } catch (e) {
+                        console.error('[Tagger] Failed on', imgObj.name, e);
+                        window._batchFailedCaptions++;
+                        processed++; setProgress(processed);
+                        continue;
+                    }
+
+                    if (prefixArray.length) {
+                        finalTags = [...prefixArray, ...finalTags.filter(t => !prefixArray.includes(t))];
+                    }
+
+                    // Passe 2: só entra tag que o segundo modelo previu e o primeiro não tinha.
+                    if (useSecondModel && onnxSession2 && tagsDB2.length) {
+                        try {
+                            const extra = await inferTags(onnxSession2, tagsDB2, imgObj.url, threshold2, excludeArray);
+                            const have = new Set(finalTags.map(t => String(t).toLowerCase()));
+                            extra.forEach(t => {
+                                const key = String(t).toLowerCase();
+                                if (!have.has(key)) {
+                                    finalTags.push(t);
+                                    have.add(key);
+                                }
+                            });
+                        } catch (e) { console.warn('[Tagger] Second model failed on', imgObj.name, e); }
+                    }
+
+                    if (reviewModeActive) {
+                        const existingTags = (imgObj.content || '').split(',').map(t => t.trim()).filter(t => t);
+                        const existingSet = new Set(existingTags);
+                        imgObj.pendingAdd = finalTags.filter(t => !existingSet.has(t));
+
+                        if (pStore) {
+                            if (imgObj.pendingAdd.length > 0) pStore[baseName] = imgObj.pendingAdd;
+                            else delete pStore[baseName];
+                        }
+
+                        // Tags que JÁ EXISTEM mas o tagger não confirmou nesta passada:
+                        // ficam marcadas para revisão (tagmanager_review_unconfirmed.js).
+                        // "NL:" e tags da lista Exclude são ignoradas.
+                                            const finalSet = new Set(finalTags);
+                        imgObj.pendingRemove = existingTags.filter(t =>
+                            !finalSet.has(t) && !t.startsWith('NL:') && !(window.checkIfNL && window.checkIfNL(t)) && !excludeArray.includes(t.toLowerCase())
+                        );
+                        if (imgObj.pendingRemove.length > 0) rStore[baseName] = imgObj.pendingRemove;
+                        else delete rStore[baseName];
+
+                        processed++; setProgress(processed);
+                        continue;
+                    }
+
+                    imgObj.pendingAdd = [];
+                    if (pStore) delete pStore[baseName];
+
+                    imgObj.content = finalTags.join(', ');
+                    imgObj.type = 'tags';
+                    imgObj.hasFile = true;
+                    imgObj.ext = format;
+                    imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
+
+                    await window.saveImageToDisk(imgObj);
+
+                    if(window.masterTagSet && TM.tasks.sameLoad(task.ctx)) finalTags.forEach(t => masterTagSet.add(t));
+
                     processed++; setProgress(processed);
-                    continue;
                 }
 
-                // Saída em TAGS (lista separada por vírgula, estilo booru)
-                if (resultKind === 'tags') {
-                    const parsedTags = parseTagsFromLLM(finalContent);
-                    const existingList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()).filter(t => t) : [];
-                    const existingLower = new Set(existingList.map(t => t.toLowerCase()));
-                    const newTags = parsedTags.filter(t => !existingLower.has(t));
+                if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle, pStore);
+
+            } else if (mode === 'nl-vlm' || mode === 'ollama-vision' || mode === 'pytorch') {
+                const isOllamaMode = mode === 'ollama-vision';
+                const ollamaPrompt = isOllamaMode ? (document.getElementById('ollama-prompt').value.trim() || OLLAMA_PROMPT_NL) : '';
+                const ollamaBaseUrl = getOllamaBaseUrl();
+                const ollamaModelName = isOllamaMode ? document.getElementById('ollama-model-select').value : '';
+                const ollamaOutputMode = isOllamaMode ? document.getElementById('ollama-output-mode').value : 'nl';
+                const ollamaMaxSide = isOllamaMode ? (parseInt(document.getElementById('ollama-max-side').value, 10) || 0) : 0;
+                let processed = 0;
+
+                // Engine modes (WebGPU / PyTorch): download + load the model once, before the first image.
+                let engineReady = true;
+                if (isEngineMode) {
+                    window.TMVlm.setBatchBusy(true);
+                    if(window.showAlert) window.showAlert("Preparing the model... the first run may need a download.", "info");
+                    window.TMHeaderBatch.loading(true);
+                    try {
+                        await window.TMVlm.prepare();
+                        window.TMHeaderBatch.loading(false);
+                        window.TMHeaderBatch.progress(0, targetFiles.length);
+                    } catch (e) {
+                        window.TMHeaderBatch.loading(false);
+                        engineReady = false;
+                        window.isBatchCancelled = true;   // also hides the "complete" message at the end
+                        if (e && e.cancelled) {
+                            if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
+                        } else {
+                            console.error(e);
+                            if(window.showAlert) window.showAlert("Could not load the model: " + ((e && e.message) || e), "error");
+                        }
+                    }
+                }
+
+                for (let idx = 0; idx < targetFiles.length; idx++) {
+                    if (!engineReady) break;
+                    if (window.isBatchCancelled) {
+                        if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
+                        break;
+                    }
+
+                    const imgObj = targetFiles[idx];
+                    if (imgObj.hidden) continue;
+                    const baseName = imgObj.baseName || imgObj.name.substring(0, imgObj.name.lastIndexOf('.'));
+                    let finalContent = "";
+                    let captionFailed = false;
+                    let resultKind = 'nl';
+
+                    if (isEngineMode) {
+                        const r = await window.TMVlm.captionImage(imgObj);
+                        if (r.cancelled) {
+                            window.isBatchCancelled = true;
+                            if(window.showAlert) window.showAlert("Batch process canceled by user.", "info");
+                            break;
+                        }
+                        finalContent = r.text || '';
+                        captionFailed = !!r.failed;
+                        resultKind = r.kind || 'nl';
+                        if (r.failed) {
+                            console.error('[Auto-Caption] Caption failed for', imgObj.name, '-', r.error);
+                            if (r.fatal) {
+                                if(window.showAlert) window.showAlert('Model error: ' + r.error + ' — batch stopped.', 'error');
+                                window.isBatchCancelled = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        const r = await captionViaOllama(imgObj.url, {
+                            baseUrl: ollamaBaseUrl,
+                            model: ollamaModelName,
+                            prompt: ollamaPrompt,
+                            maxSide: ollamaMaxSide,
+                            temperature: 0.1
+                        });
+                        finalContent = r.text;
+                        captionFailed = r.failed;
+                        resultKind = ollamaOutputMode === 'tags' ? 'tags' : 'nl';
+                        if (r.failed) {
+                            console.error('[Ollama] Caption failed for', imgObj.name, '-', r.error);
+                            if (r.fatal) {
+                                if(window.showAlert) window.showAlert('Ollama error: ' + r.error + ' — batch stopped.', 'error');
+                                window.isBatchCancelled = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Falha isolada numa imagem: NUNCA grava mensagem de erro como legenda.
+                    if (captionFailed) {
+                        window._batchFailedCaptions++;
+                        processed++; setProgress(processed);
+                        continue;
+                    }
+
+                    // Saída em TAGS (lista separada por vírgula, estilo booru)
+                    if (resultKind === 'tags') {
+                        const parsedTags = parseTagsFromLLM(finalContent);
+                        const existingList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()).filter(t => t) : [];
+                        const existingLower = new Set(existingList.map(t => t.toLowerCase()));
+                        const newTags = parsedTags.filter(t => !existingLower.has(t));
+
+                        if (reviewModeActive) {
+                            if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
+                            newTags.forEach(t => { if (!imgObj.pendingAdd.includes(t)) imgObj.pendingAdd.push(t); });
+                            if (pStore) {
+                                if (imgObj.pendingAdd.length > 0) pStore[baseName] = imgObj.pendingAdd;
+                                else delete pStore[baseName];
+                            }
+                        } else {
+                            imgObj.type = 'tags';
+                            imgObj.content = [...existingList, ...newTags].join(', ');
+                            imgObj.hasFile = true;
+                            imgObj.ext = format;
+                            imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
+                            await window.saveImageToDisk(imgObj);
+                            if (window.masterTagSet && TM.tasks.sameLoad(task.ctx)) newTags.forEach(t => masterTagSet.add(t));
+                        }
+
+                        processed++; setProgress(processed);
+                        continue;
+                    }
+
+                    // "Request additional details": the model answered "camera view, description".
+                    // Final order: master token, camera view (real tags), then the description as NL.
+                    let leadTags = [];
+                    const extraCfg = (isEngineMode && window.TMVlm && window.TMVlm.extra) ? window.TMVlm.extra() : null;
+                    if (extraCfg && extraCfg.enabled) {
+                        const parts = splitCameraView(finalContent);
+                        finalContent = parts.description;
+                        leadTags = [extraCfg.token, parts.camera].filter(Boolean);
+                    }
+
+                    // Linguagem natural: vira uma tag "NL:" (vírgulas reais viram "，"
+                    // para não quebrar o split(',') das tags).
+                    const nlTag = finalContent ? finalContent.replace(/\s*[\r\n]+\s*/g, ' ').replace(/,/g, '，').trim() : '';
+                    if (nlTag && window.NLCodec) window.NLCodec.markNL(nlTag); // NL marcada pela regra, sem "NL:" na lista
 
                     if (reviewModeActive) {
                         if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
-                        newTags.forEach(t => { if (!imgObj.pendingAdd.includes(t)) imgObj.pendingAdd.push(t); });
-                        if (typeof pendingTagsStore !== 'undefined') {
-                            if (imgObj.pendingAdd.length > 0) pendingTagsStore[baseName] = imgObj.pendingAdd;
-                            else delete pendingTagsStore[baseName];
-                        }
-                    } else {
-                        imgObj.type = 'tags';
-                        imgObj.content = [...existingList, ...newTags].join(', ');
-                        imgObj.hasFile = true;
-                        imgObj.ext = format;
-                        imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
-                        await window.saveImageToDisk(imgObj);
-                        if (window.masterTagSet) newTags.forEach(t => masterTagSet.add(t));
+                        const existingTagsList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()) : [];
+                        [...leadTags, nlTag].filter(Boolean).forEach(tg => {
+                            if (!existingTagsList.includes(tg) && !imgObj.pendingAdd.includes(tg)) imgObj.pendingAdd.push(tg);
+                        });
+                        if (pStore && imgObj.pendingAdd.length) pStore[baseName] = imgObj.pendingAdd;
+                        processed++; setProgress(processed);
+                        continue;
                     }
 
+                    const existingTags = imgObj.content ? imgObj.content.trim() : "";
+                    imgObj.type = 'tags';
+                    const haveLower = new Set(existingTags.split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+                    const lead = [...leadTags.filter(tg => !haveLower.has(tg.toLowerCase())), nlTag].filter(Boolean).join(', ');
+                    imgObj.content = lead ? (existingTags ? `${lead}, ${existingTags}` : lead) : existingTags;
+                    imgObj.hasFile = true;
+                    imgObj.ext = format;
+                    imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
+
+                    await window.saveImageToDisk(imgObj);
+
                     processed++; setProgress(processed);
-                    continue;
                 }
 
-                // "Request additional details": the model answered "camera view, description".
-                // Final order: master token, camera view (real tags), then the description as NL.
-                let leadTags = [];
-                const extraCfg = (isEngineMode && window.TMVlm && window.TMVlm.extra) ? window.TMVlm.extra() : null;
-                if (extraCfg && extraCfg.enabled) {
-                    const parts = splitCameraView(finalContent);
-                    finalContent = parts.description;
-                    leadTags = [extraCfg.token, parts.camera].filter(Boolean);
-                }
-
-                // Linguagem natural: vira uma tag "NL:" (vírgulas reais viram "，"
-                // para não quebrar o split(',') das tags).
-                const nlTag = finalContent ? finalContent.replace(/\s*[\r\n]+\s*/g, ' ').replace(/,/g, '，').trim() : '';
-                if (nlTag && window.NLCodec) window.NLCodec.markNL(nlTag); // NL marcada pela regra, sem "NL:" na lista
-
-                if (reviewModeActive) {
-                    if (!imgObj.pendingAdd) imgObj.pendingAdd = [];
-                    const existingTagsList = imgObj.content ? imgObj.content.split(',').map(t => t.trim()) : [];
-                    [...leadTags, nlTag].filter(Boolean).forEach(tg => {
-                        if (!existingTagsList.includes(tg) && !imgObj.pendingAdd.includes(tg)) imgObj.pendingAdd.push(tg);
-                    });
-                    if (typeof pendingTagsStore !== 'undefined' && imgObj.pendingAdd.length) pendingTagsStore[baseName] = imgObj.pendingAdd;
-                    processed++; setProgress(processed);
-                    continue;
-                }
-
-                const existingTags = imgObj.content ? imgObj.content.trim() : "";
-                imgObj.type = 'tags';
-                const haveLower = new Set(existingTags.split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
-                const lead = [...leadTags.filter(tg => !haveLower.has(tg.toLowerCase())), nlTag].filter(Boolean).join(', ');
-                imgObj.content = lead ? (existingTags ? `${lead}, ${existingTags}` : lead) : existingTags;
-                imgObj.hasFile = true;
-                imgObj.ext = format;
-                imgObj.parentDirHandle = imgObj.parentDirHandle || targetHandle;
-
-                await window.saveImageToDisk(imgObj);
-
-                processed++; setProgress(processed);
+                if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle, pStore);
             }
 
-            if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(targetHandle);
-        }
+            if (!window.isBatchCancelled && !reviewModeActive) {
+                const failedN = window._batchFailedCaptions || 0;
+                if (failedN > 0) {
+                    if(window.showAlert) window.showAlert(`Batch finished, but ${failedN} image(s) failed and were skipped (existing captions untouched). Check the console.`, "warn");
+                } else {
+                    if(window.showAlert) window.showAlert("Batch processing complete!", "success");
+                }
+                window._batchFailedCaptions = 0;
+            }
+        } catch (e) {
+            console.error(e);
+            if(window.showAlert) window.showAlert("Critical error. Check the console.", 'error');
+        } finally {
+            window.TMHeaderBatch.end();
+            btn.disabled = false;
+            if(cancelBtn) cancelBtn.style.display = 'none';
 
-        if (!window.isBatchCancelled && !reviewModeActive) {
-            const failedN = window._batchFailedCaptions || 0;
-            if (failedN > 0) {
-                if(window.showAlert) window.showAlert(`Batch finished, but ${failedN} image(s) failed and were skipped (existing captions untouched). Check the console.`, "warn");
+            if (isRecursive) revokeRecursiveBatchUrls();
+
+            if (window.TMVlm) { window.TMVlm.setBatchBusy(false); window.TMVlm.hideProgress(); }
+
+            // Another dataset is open now: its screen is not touched (that dataset is re-read when you open it again).
+            if (!(await TM.tasks.isCurrent(targetHandle)) && !isRecursive) {
+                /* nothing to refresh on screen — but Auto-Do must run when that dataset is opened again */
+                if (typeof window.rearmAutoDoFor === 'function') { try { await window.rearmAutoDoFor(targetHandle, _ctx.config); } catch (e) {} }
+            } else if (reviewModeActive) {
+                if(window.refreshListStatus) window.refreshListStatus();
+                if(typeof window.renderImageList === 'function') window.renderImageList();
+                if(window.renderMasterTagList) window.renderMasterTagList();
+                if(typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
+                if(typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
+                if(window.showAlert) window.showAlert("Suggestions generated! Review the ghost tags (💡) and accept the ones you want.", "info");
+            } else if(typeof window.refreshDataset === 'function') {
+                window._autoDoAfterCaptionAt = Date.now();   // re-arms Auto-Do for the refresh below (the batch now runs as a background task, so the startBatchTagging hook can't see it end)
+                await window.refreshDataset();
             } else {
-                if(window.showAlert) window.showAlert("Batch processing complete!", "success");
+                if(window.refreshListStatus) window.refreshListStatus();
+                if(window.renderMasterTagList && mode === 'tags') window.renderMasterTagList();
+                if(typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
             }
-            window._batchFailedCaptions = 0;
         }
-    } catch (e) {
-        console.error(e);
-        if(window.showAlert) window.showAlert("Critical error. Check the console.", 'error');
-    } finally {
-        window.TMHeaderBatch.end();
-        btn.disabled = false;
-        if(cancelBtn) cancelBtn.style.display = 'none';
-
-        if (isRecursive) revokeRecursiveBatchUrls();
-
-        if (window.TMVlm) { window.TMVlm.setBatchBusy(false); window.TMVlm.hideProgress(); }
-
-        if (reviewModeActive) {
-            if(window.refreshListStatus) window.refreshListStatus();
-            if(typeof window.renderImageList === 'function') window.renderImageList();
-            if(window.renderMasterTagList) window.renderMasterTagList();
-            if(typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
-            if(typeof window.updateSuggestFilterVisibility === 'function') window.updateSuggestFilterVisibility();
-            if(window.showAlert) window.showAlert("Suggestions generated! Review the ghost tags (💡) and accept the ones you want.", "info");
-        } else if(typeof window.refreshDataset === 'function') {
-            await window.refreshDataset();
-        } else {
-            if(window.refreshListStatus) window.refreshListStatus();
-            if(window.renderMasterTagList && mode === 'tags') window.renderMasterTagList();
-            if(typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && window.renderEditor) window.renderEditor();
-        }
-    }
+    } finally { window._autoCaptionTask = null; }
+    });
 }

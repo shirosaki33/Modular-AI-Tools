@@ -339,6 +339,11 @@
                 window.renderMasterTagList = wrapped2;
             }
         }
+        // User Presets is a virtual list: rows are drawn/redrawn while scrolling -> add the icons after every paint
+        if (!window._ignoreSimilarPaintHook) {
+            window._ignoreSimilarPaintHook = true;
+            document.addEventListener('pp:painted', () => injectIgnoreSimilarIcons(document.getElementById('preset-tag-list')));
+        }
         if (typeof window.renderPresetTags === 'function' && !window.renderPresetTags.__ignoreSimilarWrapped) {
             const origP = window.renderPresetTags;
             const wrappedP = async function (...args) {

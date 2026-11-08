@@ -105,7 +105,11 @@ window.checkIfNL = function(tag) {
         primeira palavra (first) e TERMINA com a última (last); se houver
         mais de um, fica o mais perto da posição gravada (start/end).
         -> junta o texto ATUAL do arquivo numa NL e o mapa é regravado.
-     3) Reserva global (user_config 'nl-known-texts'), texto exato.
+     3) Reserva DO DATASET (_nl_known_texts.json na própria pasta), texto exato.
+        (2026-11: saiu de local/nl_known_texts.json, que crescia sem fim com
+        tudo o que era digitado. O arquivo antigo só é LIDO: uma frase que
+        aparece numa legenda migra para a reserva da pasta; ele nunca mais é
+        gravado e pode ser apagado.)
    Legado: mapas antigos em _tagger_config.json (datasetConfig[base].nl)
    ainda são lidos e migram pro _nl_manager.json no próximo save.
 ========================================================================= */
@@ -153,15 +157,16 @@ window.NLCodec = (function () {
         return diskText.replace(/,/g, '，');
     }
 
-    function decodeEx(text, map) {
+    function decodeEx(text, map, knownObj) {
         let s = String(text || '');
         const res = { text: s, recovered: [], lost: [] };
         if (!s) return res;
         const entries = (map || []).filter(e => e && e.text && e.raw);
+        const k = knownObj || activeKnown || {};
 
-        // Reserva global: só o que não está no mapa e aparece no texto.
+        // Reserva do dataset: só o que não está no mapa e aparece no texto.
         const inMap = new Set(entries.map(m => m.text));
-        const extra = Object.keys(known).filter(t => !inMap.has(t) && s.includes(t)).map(t => ({ raw: known[t], text: t, _global: true }));
+        const extra = Object.keys(k).filter(t => !inMap.has(t) && s.includes(t)).map(t => ({ raw: k[t], text: t, _global: true }));
 
         // 1) texto exato (maiores primeiro)
         const pending = [];
@@ -258,7 +263,7 @@ window.NLCodec = (function () {
         return _chain;
     }
     function setEntries(dirHandle, baseName, map) {
-        remember(map);
+        remember(map, dirHandle);
         return writeFolder(dirHandle, d => {
             const before = JSON.stringify(d.images[baseName] || []);
             if (map && map.length) d.images[baseName] = map; else delete d.images[baseName];
@@ -266,7 +271,7 @@ window.NLCodec = (function () {
         });
     }
     function moveEntries(dirHandle, oldBase, newBase, map) {
-        remember(map);
+        remember(map, dirHandle);
         return writeFolder(dirHandle, d => {
             if (oldBase !== newBase) delete d.images[oldBase];
             if (map && map.length) d.images[newBase] = map; else delete d.images[newBase];
@@ -289,31 +294,74 @@ window.NLCodec = (function () {
     async function decodeFor(dirHandle, baseName, text, legacyMap) {
         await ready;
         const map = (await entriesFor(dirHandle, baseName)) || legacyMap || null;
-        const r = decodeEx(text, map);
+        const k = await loadKnown(dirHandle);
+        // Old global reserve (read only): a sentence found in this caption migrates to the dataset reserve.
+        const s = String(text || '');
+        if (s && legacyKnown) {
+            let moved = false;
+            Object.keys(legacyKnown).forEach(t => { if (!k[t] && s.includes(t)) { k[t] = legacyKnown[t]; moved = true; } });
+            if (moved) scheduleKnownWrite(dirHandle);
+        }
+        const r = decodeEx(text, map, k);
         r.fromLegacy = !!(legacyMap && legacyMap.length && !(await entriesFor(dirHandle, baseName)));
         return r;
     }
 
-    /* ---------- reserva global (user_config) ---------- */
-    const KNOWN_KEY = 'nl-known-texts';
-    let known = {};
-    let knownTimer = null;
+    /* ---------- reserva POR DATASET (_nl_known_texts.json na pasta) ---------- */
+    const KNOWN_FILE = '_nl_known_texts.json';
+    const KNOWN_KEY = 'nl-known-texts';            // old global reserve (local/nl_known_texts.json) — read only
+    let legacyKnown = null;
+    let activeKnown = {};                          // reserve of the dataset in use (decode without a folder)
+    const knownByDir = new Map();                  // dirHandle -> Promise<object>
+    const knownTimers = new Map();
     const ready = (async () => {
         try {
             if (!window.LocalStore && typeof window.getSetting !== 'function') return;
-            // own file (local/nl_known_texts.json) on localhost: it is big and must not live in user_config.json
             const v = window.LocalStore ? await window.LocalStore.get(KNOWN_KEY, {}) : await window.getSetting(KNOWN_KEY, {});
-            known = (typeof v === 'string' ? JSON.parse(v || '{}') : v) || {};
-        } catch (e) { known = {}; }
+            const o = (typeof v === 'string' ? JSON.parse(v || '{}') : v) || {};
+            legacyKnown = Object.keys(o).length ? o : null;
+        } catch (e) { legacyKnown = null; }
     })();
-    function remember(map) {
-        let changed = false;
-        (map || []).forEach(({ raw, text }) => {
-            if (text && raw && text.includes(',') && known[text] !== raw) { known[text] = raw; changed = true; }
+    function loadKnown(dirHandle) {
+        if (!dirHandle) return Promise.resolve(activeKnown);
+        if (knownByDir.has(dirHandle)) return knownByDir.get(dirHandle);
+        const p = (async () => {
+            try {
+                const h = await dirHandle.getFileHandle(KNOWN_FILE);
+                const d = JSON.parse(await (await h.getFile()).text());
+                if (d && typeof d === 'object') return d.texts && typeof d.texts === 'object' ? d.texts : d;
+            } catch (e) {}
+            return {};
+        })();
+        knownByDir.set(dirHandle, p);
+        p.then(o => { if (dirHandle === (window.currentImagesHandle || window.rootHandle)) activeKnown = o; });
+        return p;
+    }
+    function scheduleKnownWrite(dirHandle) {
+        if (!dirHandle) return;
+        clearTimeout(knownTimers.get(dirHandle));
+        knownTimers.set(dirHandle, setTimeout(async () => {
+            knownTimers.delete(dirHandle);
+            try {
+                const o = await loadKnown(dirHandle);
+                if (!Object.keys(o).length) return;          // nothing to keep: no file
+                const h = await dirHandle.getFileHandle(KNOWN_FILE, { create: true });
+                const w = await h.createWritable();
+                await w.write(JSON.stringify({ version: 1, texts: o }, null, 2));
+                await w.close();
+            } catch (e) { console.warn('[NL Manager] could not write ' + KNOWN_FILE, e); }
+        }, 400));
+    }
+    function remember(map, dirHandle) {
+        const dir = dirHandle || window.currentImagesHandle || window.rootHandle;
+        if (!dir) return;
+        loadKnown(dir).then(k => {
+            let changed = false;
+            (map || []).forEach(({ raw, text }) => {
+                if (text && raw && text.includes(',') && k[text] !== raw) { k[text] = raw; changed = true; }
+            });
+            if (changed) scheduleKnownWrite(dir);
         });
-        if (!changed) return;
-        clearTimeout(knownTimer);
-        knownTimer = setTimeout(() => { if (window.LocalStore) window.LocalStore.set(KNOWN_KEY, known); else if (typeof window.saveSetting === 'function') window.saveSetting(KNOWN_KEY, known); }, 300);
     }
 
     // Compat (modo recursivo antigo).
@@ -325,7 +373,12 @@ window.NLCodec = (function () {
     }
 
     // Recarregar a pasta sempre relê o _nl_manager.json.
-    if (window.TM && typeof window.TM.on === 'function') window.TM.on('config:loaded', () => cache.clear());
+    if (window.TM && typeof window.TM.on === 'function') window.TM.on('config:loaded', () => {
+        cache.clear();
+        const dir = window.currentImagesHandle || window.rootHandle;
+        activeKnown = {};
+        if (dir) loadKnown(dir);
+    });
 
     return { FILE, stripPrefix, markNL, encode, decode, decodeEx, decodeFor, hasLegacyMarkers, loadFolder, entriesFor, setEntries, moveEntries, persistMap, readFolderConfig, ready, clearCache: () => cache.clear() };
 })();

@@ -77,13 +77,14 @@
         S.running = true;
         try {
             const extra = (typeof api.extraPool === 'function' ? api.extraPool() : []) || [];
-            let did = 0, worked = 0, left = 0, added = 0, crawlFailed = false;
+            let did = 0, worked = 0, left = 0, added = 0, crawlFailed = false, offline = 0;
 
             for (const key of Object.keys(SITES)) {
                 const site = SITES[key];
                 const counts = fn(site.counts), wiki = fn(site.wiki), crawl = fn(site.crawl);
                 if (!counts || !wiki || !site.on()) continue;
                 if (appBusy()) break;
+                if (window.BooruStatus && !(await window.BooruStatus.ensure(key))) { offline++; continue; }   // site down: no scanning, no requests
 
                 const pool = Array.from(new Set(Object.keys(site.cache() || {}).concat(extra)));
                 const pending = pendingOf(key, pool);
@@ -93,8 +94,9 @@
                     // 1) fill in what saved tags still lack
                     const batch = pending.slice(0, BATCH);
                     did += batch.length;
-                    await counts(batch, false);
-                    await wiki(batch, false);
+                    const r1 = await counts(batch, false);
+                    const r2 = (r1 && r1.offline) ? r1 : await wiki(batch, false);
+                    if ((r1 && r1.offline) || (r2 && r2.offline)) { offline++; did -= batch.length; continue; }   // site went down meanwhile: not a failure of the tags
                     const still = new Set(pendingOf(key, batch).map(lc));
                     batch.forEach(t => {
                         const k = lc(t);
@@ -115,7 +117,10 @@
                 }
             }
 
-            if (did === 0) {
+            if (did === 0 && offline) {
+                setStatus('paused — Danbooru / e621 offline (checked again soon)');
+                S.nextAt = Date.now() + 60000;
+            } else if (did === 0) {
                 setStatus('on — everything is up to date');
                 S.nextAt = Date.now() + DONE_RECHECK;
             } else {
@@ -151,6 +156,13 @@
         S.listeners.forEach(fn => { try { fn(S.status); } catch (e) {} });
         document.dispatchEvent(new CustomEvent('idlefill:ready'));
     }
+    // a site that comes back Online: forget the backoff built up while it was down and go on right away
+    const lastState = {};
+    window.addEventListener('booru-status', e => {
+        const d = e && e.detail; if (!d) return;
+        const was = lastState[d.id]; lastState[d.id] = d.state;
+        if (S.on && d.state === 'online' && was && was !== 'online') { S.backoff = 0; S.nextAt = 0; }   // only on the change to Online
+    });
     setInterval(tick, TICK);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(boot, 800));
     else setTimeout(boot, 800);

@@ -230,6 +230,15 @@
     }
 
     /* ---------- HELPERS DE ARQUIVO ---------- */
+    // Copies a file (keeps the source untouched).
+    async function copyFileBetween(srcDir, destDir, name) {
+        const file = await (await srcDir.getFileHandle(name)).getFile();
+        const destHandle = await destDir.getFileHandle(name, { create: true });
+        const writable = await destHandle.createWritable();
+        await writable.write(await file.arrayBuffer());
+        await writable.close();
+    }
+
     async function fileExistsIn(dir, name) {
         try { await dir.getFileHandle(name); return true; } catch (e) { return false; }
     }
@@ -298,8 +307,8 @@
     }
 
     // Pasta que contém os arquivos arquivados (e a subpasta "original") deste dataset.
-    async function getArchiveRootFor(parent, create = true) {
-        const root = window.rootHandle;
+    async function getArchiveRootFor(parent, create = true, rootOverride) {
+        const root = rootOverride || window.rootHandle;   // rootOverride: root of a background task's dataset
         if (root && await isGlobalMode(root)) {
             const rel = await relPathFromRoot(root, parent);
             if (rel) return ensureGlobalDir(root, rel, create);
@@ -307,8 +316,8 @@
         return parent.getDirectoryHandle('_archive', { create });
     }
 
-    async function folderLabelFor(parent) {
-        const root = window.rootHandle;
+    async function folderLabelFor(parent, rootOverride) {
+        const root = rootOverride || window.rootHandle;
         if (root && await isGlobalMode(root)) {
             const rel = await relPathFromRoot(root, parent);
             if (rel) return rel.length ? rel.join('/') : (root.name || '(root)');
@@ -736,7 +745,9 @@
        label (opcional): rótulo interno; sem ele vale o da ferramenta em
        andamento (window._archiveAutoLabel) ou "excluded". Ignorado quando a
        imagem vira a original. */
-    window.moveToArchive = async function (img, label) {
+    // root (optional): root folder of the dataset the image belongs to — background tasks (⏳) pass the one
+    // they started with, so Global-mode archives keep working after another root folder is opened.
+    window.moveToArchive = async function (img, label, root) {
         if (!img || !img.parentDirHandle) {
             console.error('moveToArchive: missing image or parentDirHandle', img);
             if (window.showAlert) window.showAlert(`❌ Could not archive "${img && img.name ? img.name : 'file'}": no folder handle available.`, 'error');
@@ -747,7 +758,7 @@
                 if ((await img.parentDirHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') return false;
             }
 
-            const archiveRoot = await getArchiveRootFor(img.parentDirHandle, true);
+            const archiveRoot = await getArchiveRootFor(img.parentDirHandle, true, root);
 
             let originalDir = null;
             try { originalDir = await archiveRoot.getDirectoryHandle(ORIGINAL_DIR); } catch (e) {}
@@ -782,7 +793,7 @@
                 originalBaseName: img.baseName,
                 originalExt: img.ext,
                 parentDirHandle: img.parentDirHandle,
-                folderLabel: await folderLabelFor(img.parentDirHandle),
+                folderLabel: await folderLabelFor(img.parentDirHandle, root),
                 label: asOriginal ? ORIGINAL_LABEL : (cleanLabel(label) || cleanLabel(window._archiveAutoLabel) || DEFAULT_LABEL),
                 isOriginal: asOriginal,
                 // Mapa NL (tags NL internas ↔ texto limpo do .txt) — volta pro config ao restaurar.
@@ -800,6 +811,68 @@
             return false;
         }
     };
+	
+	/* ---------- ARQUIVAR AS IMAGENS SELECIONADAS (botão 📦 da lista) ----------
+   Antes vivia no tagmanager_trash.js (removido). Move cada imagem selecionada
+   (+ legenda) para o _archive com o rótulo "excluded", em sequência. */
+let _archiving = false;
+window.archiveSelectedImages = async function () {
+    if (_archiving) return;
+    if (typeof selectedIndices === 'undefined' || typeof imageFiles === 'undefined' || selectedIndices.size === 0) {
+        if (window.showAlert) window.showAlert('Select at least one image first!', 'warn');
+        return;
+    }
+    const imgs = Array.from(selectedIndices).sort((a, b) => a - b)
+        .map(i => imageFiles[i]).filter(img => img && !img.hidden);
+    if (imgs.length === 0) return;
+
+    if (!confirm(`Move ${imgs.length} image(s) and their captions to the 📦 Archive?\n\nThey leave the dataset but can be restored anytime from the Archive panel.`)) return;
+
+    _archiving = true;
+    const btn = document.getElementById('btn-archive-selected');
+    if (btn) btn.disabled = true;
+    let ok = 0;
+    const failed = [];
+    // ⏳ background task: keeps going (on this dataset) if another dataset is opened
+    const ctx = window.TM && window.TM.tasks ? window.TM.tasks.captureDataset() : null;
+    let task = null;
+    const runIt = async (t) => {
+    task = t;
+    try {
+        // A legenda é movida do DISCO: grava antes as edições ainda não salvas
+        // (e o _nl_manager.json), senão o Archive guardaria uma versão velha.
+        for (const img of imgs) {
+            if (img.dirty && img.hasFile && typeof window.saveImageToDisk === 'function') {
+                try { await window.saveImageToDisk(img); } catch (e) {}
+            }
+        }
+        for (let i = 0; i < imgs.length; i++) {
+            if (task && task.cancelled) break;
+            if (btn) btn.textContent = `⏳ ${i + 1}/${imgs.length}`;
+            if (task) task.progress(i + 1, imgs.length);
+            const done = await window.moveToArchive(imgs[i], 'excluded', ctx && ctx.root);
+            if (done) ok++; else failed.push(imgs[i].name);
+        }
+    } finally {
+        _archiving = false;
+        if (btn) { btn.disabled = false; btn.textContent = '📦'; }
+    }
+
+    const here = !ctx || await window.TM.tasks.isCurrent(ctx.handle);
+    if (ok > 0 && here) {
+        selectedIndices.clear();
+        if (typeof window.refreshDataset === 'function') await window.refreshDataset();
+        if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+    }
+    if (task) task.result = `${ok} archived${failed.length ? `, ${failed.length} failed` : ''}`;
+    if (window.showAlert) {
+        if (failed.length) window.showAlert(`Archived ${ok} image(s). ⚠️ ${failed.length} failed: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}`, 'warn', 7000);
+        else window.showAlert(`Archived ${ok} image(s) 📦`, 'success');
+    }
+    };
+    if (ctx) { ctx.files = imgs; return window.TM.tasks.run({ title: 'Archive images', icon: '📦', ctx, silentEnd: true }, runIt).promise; }
+    return runIt(null);
+};
 
     /* ---------- TROCA AO RESTAURAR A ORIGINAL ----------
        Se já existe no dataset uma imagem com o nome da original (a versão modificada):
@@ -816,7 +889,6 @@
 
     async function swapOriginalIntoDataset(entry) {
         const parent = entry.parentDirHandle;
-        await restoreNLMap(entry);
         const imgName = entry.archiveImageName;
         const base = entry.originalBaseName;
         const partial = [];
@@ -826,13 +898,44 @@
         const archiveRoot = await getArchiveRootFor(parent, true);
         const olds = await findRootCopies(parent, imgName);
 
-        // 1) modificada -> Archive normal
-        await moveFileBetween(parent, archiveRoot, imgName);
-        const modifiedTexts = [];
+        // Caption (prompt) currently in the dataset = the edited version's caption. It STAYS with the original image.
+        const modNlMap = window.NLCodec ? await window.NLCodec.entriesFor(parent, base) : null;
+        const currentTexts = [];
         for (const ext of ['.txt', '.json']) {
             const n = base + ext;
-            if (await fileExistsIn(parent, n)) { await moveFileBetween(parent, archiveRoot, n); modifiedTexts.push(n); }
+            if (await fileExistsIn(parent, n)) currentTexts.push(n);
         }
+
+        // 1) modified image -> Archive (its caption is COPIED, the dataset keeps the original)
+        await moveFileBetween(parent, archiveRoot, imgName);
+        const modifiedTexts = [];
+        for (const n of currentTexts) {
+            try { await copyFileBetween(parent, archiveRoot, n); modifiedTexts.push(n); }
+            catch (e) { console.warn('caption not copied to the Archive:', n, e); }
+        }
+
+        // 2) original image -> dataset (rolls step 1 back if it fails)
+        try {
+            await moveFileBetween(entry.archiveDirHandle, parent, imgName);
+        } catch (e) {
+            try { await moveFileBetween(archiveRoot, parent, imgName); } catch (e2) { console.error('rollback failed', e2); }
+            for (const n of modifiedTexts) { try { await archiveRoot.removeEntry(n); } catch (e3) {} }
+            throw e;
+        }
+
+        // 3) captions: the edited caption is kept; the original's old captions are dropped.
+        //    Only when the dataset had NO caption at all do the original's captions come back.
+        const keptCaption = currentTexts.length > 0;
+        if (keptCaption) {
+            for (const t of (entry.archiveTextNames || [])) { try { await entry.archiveDirHandle.removeEntry(t); } catch (e) {} }
+        } else {
+            await restoreNLMap(entry);
+            for (const t of (entry.archiveTextNames || [])) {
+                try { await moveFileBetween(entry.archiveDirHandle, parent, t); }
+                catch (e) { if (!e || e.name !== 'NotFoundError') { console.warn('caption not restored:', t, e); partial.push(t); } }
+            }
+        }
+
         await addArchiveManifestEntry({
             archiveDirHandle: archiveRoot,
             archiveImageName: imgName,
@@ -842,94 +945,22 @@
             originalExt: entry.originalExt,
             parentDirHandle: parent,
             folderLabel: entry.folderLabel || (parent && parent.name) || '',
-            label: cleanLabel(window._archiveAutoLabel) || 'modified',
+            label: cleanLabel(window._archiveAutoLabel) || 'edited',
             isOriginal: false,
+            nlMap: modNlMap || null,
             archivedAt: Date.now()
         });
         await cleanupSupersededCopies(olds, modifiedTexts);
 
-        // 2) original -> dataset
-        await moveFileBetween(entry.archiveDirHandle, parent, imgName);
-        for (const t of (entry.archiveTextNames || [])) {
-            try { await moveFileBetween(entry.archiveDirHandle, parent, t); }
-            catch (e) { if (!e || e.name !== 'NotFoundError') { console.warn('caption not restored:', t, e); partial.push(t); } }
-        }
-
-        // 3) some o registro da original
+        // 4) the original's record disappears (next time this image is archived it becomes the original again)
         await deleteArchiveManifestEntry(entry.id);
-        return { partial };
+        return { partial, keptCaption };
     }
-
-    /* ---------- ROTULAGEM AUTOMÁTICA DO FIX BUCKET ----------
-       O tagmanager_bucket_check.js chama window.moveToArchive(img) sem rótulo.
-       Em vez de editá-lo, envolvemos window.applyFixBucket: enquanto ele roda,
-       window._archiveAutoLabel = 'bucket' e o moveToArchive usa esse rótulo. */
-    function installBucketAutoLabel() {
-        if (typeof window.applyFixBucket !== 'function' || window.applyFixBucket.__archiveLabelWrapped) return;
-        const original = window.applyFixBucket;
-        const wrapped = async function () {
-            const prev = window._archiveAutoLabel;
-            window._archiveAutoLabel = 'bucket';
-            try { return await original.apply(this, arguments); }
-            finally { window._archiveAutoLabel = prev; }
-        };
-        wrapped.__archiveLabelWrapped = true;
-        window.applyFixBucket = wrapped;
-    }
-
-    /* ---------- AÇÃO EM MASSA (mesmo padrão de window.deleteSelectedImages, agora removido) ---------- */
-    window.archiveSelectedImages = async function () {
-        if (typeof selectedIndices === 'undefined' || selectedIndices.size === 0) return;
-
-        const _isGlobal = !!window.rootHandle && await isGlobalMode(window.rootHandle);
-        const _where = _isGlobal
-            ? `Archived files go to the GLOBAL Archive ("${window.rootHandle.name}/_archive/<dataset>") and`
-            : 'Archived files stay INSIDE THIS SAME DATASET FOLDER (in a hidden "_archive" subfolder — never moved elsewhere) and';
-        if (!confirm(`Move ${selectedIndices.size} image(s) and text data to the Archive (📦)?\n${_where} won't show up in the list. The first version of each image becomes its "original" (kept in _archive/original); later versions get the label "${DEFAULT_LABEL}". You can restore them anytime from the Archive panel, or permanently delete them from there when you no longer need them.`)) return;
-
-        const label = DEFAULT_LABEL;
-
-        const indices = Array.from(selectedIndices).sort((a, b) => b - a);
-        let archivedCount = 0;
-        let failedNames = [];
-
-        for (const i of indices) {
-            const img = imageFiles[i];
-            try {
-                if (img.dirty && typeof window.saveImageToDisk === 'function') await window.saveImageToDisk(img);
-                const ok = await window.moveToArchive(img, label);
-                if (!ok) { failedNames.push(img.name); continue; }
-                if (datasetConfig[img.baseName]) delete datasetConfig[img.baseName];
-                if (pendingTagsStore[img.baseName]) delete pendingTagsStore[img.baseName];
-                if (window.hiddenImagesStore.has(img.baseName)) window.hiddenImagesStore.delete(img.baseName);
-                archivedCount++;
-            } catch (e) {
-                console.error('archiveSelectedImages failed for', img && img.name, e);
-                failedNames.push(img ? img.name : '?');
-            }
-        }
-
-        if (archivedCount > 0) {
-            await window.markDatasetEdited();
-            if (typeof savePendingTagsStore === 'function') await savePendingTagsStore(window.currentImagesHandle);
-            if (window.showAlert) window.showAlert(`Archived ${archivedCount} file(s) 📦 (kept in this same dataset folder).`, 'success');
-            if (typeof window.refreshDataset === 'function') await window.refreshDataset();
-            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
-        }
-
-        // Feedback explícito em vez de silenciosamente ignorar falhas — antes,
-        // um item que falhasse (ex: permissão negada, arquivo bloqueado)
-        // simplesmente não aparecia em lugar nenhum, sem nenhum aviso.
-        if (failedNames.length > 0 && window.showAlert) {
-            window.showAlert(`⚠️ Could not archive ${failedNames.length} file(s): ${failedNames.slice(0, 5).join(', ')}${failedNames.length > 5 ? '...' : ''}`, 'error');
-        }
-    };
 
     /* ---------- RESTAURAR (volta pra pasta original, fora do Arquivo) ---------- */
     window.restoreArchiveEntry = async function (entry) {
         try {
             const parent = entry.parentDirHandle;
-            await restoreNLMap(entry);
             if ((await parent.queryPermission({ mode: 'readwrite' })) !== 'granted') {
                 if ((await parent.requestPermission({ mode: 'readwrite' })) !== 'granted') {
                     if (window.showAlert) window.showAlert('Permission denied for the original folder.', 'error');
@@ -941,7 +972,7 @@
             if (entry.isOriginal && await fileExistsIn(parent, entry.archiveImageName)) {
                 const r = await swapOriginalIntoDataset(entry);
                 if (window.showAlert) {
-                    window.showAlert(`Restored the original "${entry.originalName}". The version that was in the dataset moved to the Archive.`, 'success');
+                    window.showAlert(`Restored the original "${entry.originalName}". The version that was in the dataset moved to the Archive${r.keptCaption ? ' and the current caption was kept with the original image' : ''}.`, 'success');
                     if (r.partial.length > 0) window.showAlert(`⚠️ Caption file(s) not restored: ${r.partial.join(', ')}`, 'error');
                 }
                 _selectedIds.delete(entry.id);
@@ -954,6 +985,7 @@
                 await moveFileBetween(entry.archiveDirHandle, parent, fileName);
             };
 
+            await restoreNLMap(entry);
             await moveBack(entry.archiveImageName);
             for (const t of entry.archiveTextNames) await moveBack(t);
 
@@ -978,7 +1010,7 @@
 
     window.restoreArchiveEntries = async function (entries) {
         if (!entries || entries.length === 0) return;
-        if (!confirm(`Restore ${entries.length} item(s) from the Archive back to the dataset folder?\n\nItems whose file name already exists in the folder will be skipped and stay in the Archive — except originals, which swap places with the version in the folder (that version moves to the Archive).`)) return;
+        if (!confirm(`Restore ${entries.length} item(s) from the Archive back to the dataset folder?\n\nItems whose file name already exists in the folder will be skipped and stay in the Archive — except originals, which swap places with the version in the folder (that version moves to the Archive and the current caption stays with the original image).`)) return;
 
         const btn = document.getElementById('archive-restore-selected');
         const restored = [];
@@ -994,7 +1026,6 @@
             if (btn) { btn.disabled = true; btn.textContent = `⏳ ${n + 1}/${entries.length}`; }
             try {
                 const parent = entry.parentDirHandle;
-                await restoreNLMap(entry);
                 if ((await parent.queryPermission({ mode: 'readwrite' })) !== 'granted') {
                     if ((await parent.requestPermission({ mode: 'readwrite' })) !== 'granted') {
                         failed.push(`${entry.originalName} (permission denied)`);
@@ -1024,6 +1055,7 @@
                     await entry.archiveDirHandle.removeEntry(fileName);
                 };
 
+                await restoreNLMap(entry);
                 await moveBack(entry.archiveImageName);
                 // A imagem já voltou: falha numa legenda NÃO pode deixar o registro órfão no manifesto.
                 for (const t of (entry.archiveTextNames || [])) {
@@ -1207,6 +1239,14 @@
 
         .list-archive-btn { background:#151515; border-color:#555; color:#aaa; }
 
+        /* ♻️ Restore original: stacked under the 📌 pin in the Dataset list */
+        .list-item-actions { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; }
+        .list-recycle-btn { background: transparent; border: none; color: #666; font-size: 15px; cursor: pointer; padding: 2px 4px; flex-shrink: 0; border-radius: 4px; line-height: 1; }
+        .list-recycle-btn:hover { color: #66ccff; transform: scale(1.1); }
+        #image-list.grid-mode .list-item-actions { position: absolute; top: 4px; right: 4px; }
+        #image-list.grid-mode .list-item-actions .list-pin-btn { position: static; }
+        #image-list.grid-mode .list-recycle-btn { background: rgba(0,0,0,0.55); border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
         /* Zoom PRÓPRIO do Archive (não reaproveita o #modal-image/#image-popout
            compartilhado pelo resto do app). Um z-index dedicado evita que o
            zoom renderize atrás do painel do Archive, já que o overlay dele é
@@ -1330,7 +1370,7 @@
                     <button onclick="window.closeModal('modal-archive')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
                 <div style="font-size:11px; color:#888; margin: -4px 0 10px;">
-                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. Items are labeled automatically by the tool that archived them (excluded / grayscale / bucket); click a label to rename it. The first version of each image is kept as its "original" (folder _archive/original); restoring it swaps it with the version currently in the dataset. "Delete Permanently" removes the archived copy for good — this cannot be undone.
+                    Archived files stay inside each dataset's own folder (in a hidden "_archive" subfolder), separate from the main set. Items are labeled automatically by the tool that archived them (excluded / grayscale / bucket); click a label to rename it. The first version of each image is kept as its "original" (folder _archive/original); restoring it swaps it with the version currently in the dataset (the current caption stays with the original image). The ♻️ button under the 📌 pin in the Dataset list does the same for one image. "Delete Permanently" removes the archived copy for good — this cannot be undone.
                 </div>
                 <div id="archive-mode-bar"></div>
                 <div id="archive-crumbs"></div>
@@ -1459,14 +1499,29 @@
 
     /* Pasta aberta no modo Global (array de nomes a partir da raiz). null = seguir o dataset atual. */
     let _viewPath = null;
+    /* "original" folder: the original versions (label "original") are shown as a separate
+       📁 original folder (like the Global mode folders); everything else stays in the list. */
+    let _origView = false;
 
     // Trilha clicável: 🌐 raiz / A / sub  (só no modo Global).
     function renderCrumbs(root, base) {
         const bar = document.getElementById('archive-crumbs');
         if (!bar) return;
-        if (!root) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+        if (!root && !_origView) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.style.display = 'flex';
         bar.innerHTML = '';
+        if (!root) {
+            // default (non-global) view inside the 📁 original folder: 📦 Archive / original
+            const back = document.createElement('span');
+            back.className = 'ac-seg';
+            back.style.cursor = 'pointer';
+            back.textContent = '📦 Archive';
+            back.onclick = () => { _origView = false; _selectedIds.clear(); renderArchiveList(); };
+            const sep = document.createElement('span'); sep.className = 'ac-sep'; sep.textContent = '/';
+            const cur = document.createElement('span'); cur.className = 'ac-seg current'; cur.textContent = '📁 original';
+            bar.appendChild(back); bar.appendChild(sep); bar.appendChild(cur);
+            return;
+        }
         const segs = [{ label: '🌐 ' + (root.name || 'root'), path: [] }, ...base.map((n, i) => ({ label: n, path: base.slice(0, i + 1) }))];
         segs.forEach((s, i) => {
             if (i > 0) { const sep = document.createElement('span'); sep.className = 'ac-sep'; sep.textContent = '/'; bar.appendChild(sep); }
@@ -1474,9 +1529,15 @@
             const last = i === segs.length - 1;
             c.className = 'ac-seg' + (last ? ' current' : '');
             c.textContent = s.label;
-            if (!last) c.onclick = () => { _viewPath = s.path; _selectedIds.clear(); renderArchiveList(); };
+            if (!last || _origView) c.onclick = () => { _viewPath = s.path; _origView = false; _selectedIds.clear(); renderArchiveList(); };
+            if (last && _origView) { c.classList.remove('current'); c.style.cursor = 'pointer'; }
             bar.appendChild(c);
         });
+        if (_origView) {
+            const sep = document.createElement('span'); sep.className = 'ac-sep'; sep.textContent = '/';
+            const cur = document.createElement('span'); cur.className = 'ac-seg current'; cur.textContent = '📁 original';
+            bar.appendChild(sep); bar.appendChild(cur);
+        }
     }
 
     async function renderArchiveList() {
@@ -1537,10 +1598,16 @@
             });
             folders = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }));
         }
+        // Originals go to their own 📁 original folder; the list keeps the other images.
+        const origOwn = ownItems.filter(e => e.isOriginal);
+        if (_origView && origOwn.length === 0) _origView = false;
+        ownItems = _origView ? origOwn : ownItems.filter(e => !e.isOriginal);
+
         updateFilterUI(scopeItems);
         renderCrumbs(globalOn ? root : null, base);
 
         const items = ownItems.filter(entryMatchesFilter);
+        const origShown = _origView ? 0 : origOwn.filter(entryMatchesFilter).length;
         const allItems = scopeItems;
         const info = document.getElementById('archive-filter-info');
         if (info) {
@@ -1556,9 +1623,17 @@
             f.className = 'archive-folder';
             f.title = 'Open this folder';
             f.innerHTML = `<span class="af-icon">📁</span><span class="af-name">${esc(name)}</span><span class="af-count">${count} item(s)</span><span class="af-go">›</span>`;
-            f.onclick = () => { _viewPath = [...base, name]; _selectedIds.clear(); renderArchiveList(); };
+            f.onclick = () => { _viewPath = [...base, name]; _origView = false; _selectedIds.clear(); renderArchiveList(); };
             list.appendChild(f);
         });
+        if (origShown > 0) {
+            const f = document.createElement('div');
+            f.className = 'archive-folder archive-folder-original';
+            f.title = 'Original versions of the images (label "original") — click to open';
+            f.innerHTML = `<span class="af-icon">📁</span><span class="af-name">original</span><span class="af-count">${origShown} item(s)</span><span class="af-go">›</span>`;
+            f.onclick = () => { _origView = true; _selectedIds.clear(); renderArchiveList(); };
+            list.insertBefore(f, list.firstChild);
+        }
 
         if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
 
@@ -1600,7 +1675,7 @@
 
         if (items.length === 0) {
             updateSelectBar();
-            if (folders.length === 0) {
+            if (folders.length === 0 && origShown === 0) {
                 list.innerHTML = allItems.length === 0
                     ? '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">Archive is empty for this dataset.</div>'
                     : '<div style="color:#555; font-size:12px; text-align:center; padding:20px;">No archived images with this label.</div>';
@@ -1689,6 +1764,7 @@
         btn.title = items.length > 0
             ? `${items.length} item(s) archived in THIS dataset — click to view`
             : 'View / restore archived images';
+        refreshRecycleButtons();
     };
 
     window.openArchiveModal = async function () {
@@ -1738,13 +1814,102 @@
         else bar.appendChild(btn);
     }
 
+    /* ---------- ♻️ RESTORE ORIGINAL (Dataset list, under the 📌 pin) ----------
+       Puts the ORIGINAL version of the image (kept in _archive/original) back in place of the current one.
+       The current caption (prompt) stays with the original image; the current image goes to the Archive. */
+    async function findOriginalEntry(img) {
+        const all = await getAllArchiveManifestEntries();
+        for (const e of all) {
+            if (!e.isOriginal || e.archiveImageName !== img.name || !e.parentDirHandle) continue;
+            try { if (await e.parentDirHandle.isSameEntry(img.parentDirHandle)) return e; } catch (err) {}
+        }
+        return null;
+    }
+
+    window.restoreOriginalForImage = async function (img) {
+        if (!img || !img.parentDirHandle || _converting) return;
+        const entry = await findOriginalEntry(img);
+        if (!entry) {
+            if (window.showAlert) window.showAlert(`No original version of "${img.name}" found in the Archive.`, 'warn');
+            refreshRecycleButtons();
+            return;
+        }
+        if (!confirm(`Restore the ORIGINAL version of "${img.name}"?\n\n• The original image replaces the current one.\n• The current caption (prompt) is kept with the original image.\n• The current image is moved to the Archive.`)) return;
+        try {
+            const parent = entry.parentDirHandle;
+            if ((await parent.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                if ((await parent.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                    if (window.showAlert) window.showAlert('Permission denied for the original folder.', 'error');
+                    return;
+                }
+            }
+            const r = await swapOriginalIntoDataset(entry);
+            if (window.showAlert) {
+                window.showAlert(`Restored the original "${img.name}"${r.keptCaption ? ' — current caption kept' : ''}. The previous version is in the Archive.`, 'success');
+                if (r.partial.length > 0) window.showAlert(`⚠️ Caption file(s) not restored: ${r.partial.join(', ')}`, 'error');
+            }
+            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+            if (typeof window.refreshDataset === 'function') await window.refreshDataset();
+        } catch (e) {
+            console.error('restoreOriginalForImage failed:', e);
+            if (window.showAlert) window.showAlert('Error restoring the original — nothing was lost, check the Archive panel.', 'error');
+        }
+    };
+
+    let _recycleToken = 0;
+    async function refreshRecycleButtons() {
+        const token = ++_recycleToken;
+        const cur = window.currentImagesHandle || window.rootHandle;
+        if (!cur || typeof imageFiles === 'undefined') return;
+        let all;
+        try { all = await getAllArchiveManifestEntries(); } catch (e) { return; }
+        const names = new Set();
+        for (const e of all) {
+            if (!e.isOriginal || !e.parentDirHandle) continue;
+            try { if (await e.parentDirHandle.isSameEntry(cur)) names.add(e.archiveImageName); } catch (err) {}
+            if (token !== _recycleToken) return;
+        }
+        imageFiles.forEach(img => {
+            const btn = img.element && img.element.querySelector('.list-recycle-btn');
+            if (btn) btn.style.display = names.has(img.name) ? 'inline-block' : 'none';
+        });
+    }
+
+    function injectRecycleButtons() {
+        if (typeof imageFiles === 'undefined') return;
+        imageFiles.forEach(img => {
+            if (!img.element || img.hidden) return;
+            let box = img.element.querySelector('.list-item-actions');
+            if (!box) {
+                box = document.createElement('div');
+                box.className = 'list-item-actions';
+                img.element.appendChild(box);
+            }
+            const pin = img.element.querySelector('.list-pin-btn');
+            if (pin && pin.parentNode !== box) box.insertBefore(pin, box.firstChild);
+            let btn = box.querySelector('.list-recycle-btn');
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.className = 'list-recycle-btn';
+                btn.textContent = '♻️';
+                btn.style.display = 'none';
+                btn.title = 'Restore the ORIGINAL version of this image (the current caption is kept)';
+                btn.onclick = (e) => { e.stopPropagation(); window.restoreOriginalForImage(img); };
+                btn.onmousedown = (e) => e.stopPropagation();
+                box.appendChild(btn);
+            }
+        });
+        refreshRecycleButtons();
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
+        if (window.TM && typeof window.TM.on === 'function') window.TM.on('render:list', injectRecycleButtons, 10);
         setTimeout(() => {
             injectArchiveTopbarButton();
             injectArchiveSelectionButton();
         }, 0);
         // Depois dos outros módulos (ordem de <script> não importa).
-        setTimeout(installBucketAutoLabel, 300);
+        if (typeof installBucketAutoLabel === 'function') setTimeout(installBucketAutoLabel, 300);   // (was missing: threw on every load)
 
         // Aplica o tamanho de miniatura salvo do Archive já no carregamento,
         // independente do modal ter sido aberto.

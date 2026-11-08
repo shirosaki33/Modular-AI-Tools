@@ -65,10 +65,47 @@
     const toKey = t => String(t || '').trim().toLowerCase().replace(/_/g, ' ');
     const toApi = t => String(t || '').trim().toLowerCase().replace(/ /g, '_');
     const wildcard = q => encodeURIComponent('*' + toApi(q) + '*');
+    /* Summary (💾 Wiki text = Short): only the tag DESCRIPTION, up to 800 characters.
+       DText links are resolved to their words first ([[long hair]] -> long hair,
+       [[long_hair|long]] -> long, "text":url -> text, {{search}} -> search) and only
+       then the markup is removed — the old version deleted everything inside [...]
+       and left "are ]" / "use ]" in the text. Everything from the first section
+       heading on (h4. See also, External links, Related tags…) is dropped, and so are
+       post / image embeds, tables, [expand] blocks and bare URLs. */
     const cleanWiki = body => {
-        const clean = String(body || '').replace(/\[.*?\]/g, '').trim();
-        return clean.slice(0, 800) + (clean.length > 800 ? '...' : '');
+        let s = String(body || '').replace(/\r\n?/g, '\n');
+        // description = text before the first heading (if the wiki starts with a heading, the block after it)
+        const parts = s.split(/^\s*h[1-6](?:#[\w-]+)?\.\s.*$/m);
+        s = (parts[0] && parts[0].trim()) ? parts[0] : (parts.find(p => p && p.trim()) || '');
+        s = s
+            .replace(/\[expand(?:=[^\]]*)?\][\s\S]*?\[\/expand\]/gi, ' ')
+            .replace(/\[table\][\s\S]*?\[\/table\]/gi, ' ')
+            .replace(/^\s*[*#]*\s*!(?:post|asset)\s*#\d+.*$/gim, '')           // image embeds
+            .replace(/!(?:post|asset)\s*#\d+/gi, '')
+            .replace(/\bthumb\s*#\d+/gi, '')                                  // e621 image embeds
+            .replace(/\[\[([^\]|]+)\|([^\]]*)\]\]/g, (m, a, b) => (b.trim() ? b : a.replace(/_/g, ' ')))   // [[tag|text]] / [[tag|]]
+            .replace(/\[\[([^\]]+)\]\]/g, (m, a) => a.replace(/_/g, ' '))       // [[tag]] (shown with spaces)
+            .replace(/\{\{([^}|]+)(?:\|([^}]*))?\}\}/g, (m, a, b) => (b && b.trim() ? b : a))
+            .replace(/"([^"\n]+)":\[[^\]\s]+\]/g, '$1')                        // "text":[url]
+            .replace(/"([^"\n]+)":(?:https?:\/\/|\/|#)[^\s<>"]*[^\s<>".,;:!?)]/g, '$1')   // "text":url
+            .replace(/\[url=[^\]]*\]([\s\S]*?)\[\/url\]/gi, '$1')
+            .replace(/<https?:\/\/[^>]+>/g, '')
+            .replace(/https?:\/\/\S+/g, '')
+            .replace(/\b(?:post|pool|topic|comment|forum|user|artist|wiki|favgroup|note|alias|implication|BUR)\s*#\d+/gi, '')
+            .replace(/\[\/?(?:b|i|u|s|tn|code|nodtext|spoilers?|quote|br|center|section)[^\]]*\]/gi, '')
+            .replace(/\[(?:\/)?[a-z]+(?:=[^\]]*)?\]/gi, '')                    // any other [tag] left
+            .replace(/^\s*[*#]+\s*$/gm, '')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/ +([,.;:!?)])/g, '$1')
+            .replace(/\( *\)/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+        if (s.length <= 800) return s;
+        const cut = s.slice(0, 800);
+        const sp = cut.lastIndexOf(' ');
+        return (sp > 600 ? cut.slice(0, sp) : cut).trim() + '...';
     };
+    window.TMCleanWikiSummary = cleanWiki;
 
     /* ---------- TAGS DESCONHECIDAS (lista compartilhada pelos dois sites) ----------
        window.unknownTagsCache[key] = { ts, danbooru?, dbVerified?, e621?, e621Verified? } */
@@ -363,8 +400,11 @@
         }
 
         /* ---------- LOTE: contagem + categoria ---------- */
+        // Site offline / having issues: nothing is scanned or requested (the status is checked first, see booru_status.js).
+        async function siteUp() { return !window.BooruStatus || await window.BooruStatus.ensure(cfg.id); }
         function fetchCountsBatch(tags, force = false) {
             return queueBatch(async () => {
+                if (!(await siteUp())) return { fetched: 0, offline: true };
                 const now = Date.now();
                 const toFetch = tags.filter(t => {
                     if (!t || t.startsWith('NL:')) return false;
@@ -442,7 +482,7 @@
             if (fullOn()) { if (w.full) window.WikiFull.set(cfg.id, key, w.full, now, true); }
             else {
                 const cur = window.WikiFull.get(cfg.id, key);
-                if (!cur || !cur.full) window.WikiFull.set(cfg.id, key, w.description, now, false);   // a saved full text is never downgraded
+                if (!cur || !cur.full) window.WikiFull.set(cfg.id, key, w.description, now, false);   // a saved full text is never downgraded (old broken summaries are replaced)
             }
         }
 
@@ -453,7 +493,7 @@
             if (!cache()[key]) return false;
             if (fullOn()) return window.WikiFull.set(cfg.id, key, body, Date.now(), true);
             const cur = window.WikiFull.get(cfg.id, key);
-            if (cur) return false;
+            if (cur && !cur.broken) return false;           // an old broken summary is replaced
             return window.WikiFull.set(cfg.id, key, cleanWiki(body), Date.now(), false);
         }
 
@@ -475,6 +515,7 @@
         /* ---------- LOTE: descrição da wiki ---------- */
         function fetchWikiBatch(tags, force = false, onEachTag, onProgress) {
             return queueBatch(async () => {
+                if (!(await siteUp())) return { fetched: 0, found: 0, offline: true };
                 const now = Date.now();
                 const toFetch = tags.filter(t => {
                     if (!t || t.startsWith('NL:')) return false;

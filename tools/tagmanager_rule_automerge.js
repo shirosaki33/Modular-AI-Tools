@@ -289,6 +289,15 @@
         }
     }
 
+    // Auto-Caption finished on a dataset that is NOT the one on screen: it will run Auto-Do once when it is opened again.
+    window.rearmAutoDoFor = async function (handle, cfg) {
+        try { if (handle) _autoDoSessionDone.delete(handle); } catch (e) {}
+        if (cfg && cfg.autoDoDone) {
+            delete cfg.autoDoDone;
+            if (handle && typeof window.saveDatasetConfig === 'function') { try { await window.saveDatasetConfig(handle, cfg); } catch (e) {} }
+        }
+    };
+
     // Used by the "↺ Re-arm" button: makes the current dataset count as "never opened".
     window.rearmAutoDoForCurrentDataset = async function () {
         const h = autoDoHandleKey();
@@ -367,7 +376,6 @@
         
         header.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <input type="checkbox" id="cb-auto-merge" ${isChecked ? 'checked' : ''} style="margin:0; cursor:pointer;" title="Auto-Run when a folder finishes loading">
                 <span>${meta.label}</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
@@ -375,7 +383,6 @@
                 <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} rules</span>
             </div>
         `;
-        header.querySelector('#cb-auto-merge').onchange = async (e) => { await window.saveSetting('rm_auto_merge', e.target.checked); };
         wrap.appendChild(header);
 
         /* USAGE RULE: automatic run only on first open + after Auto-Caption */
@@ -384,12 +391,12 @@
         optRow.innerHTML = `
             <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; flex:1;" title="ON: the automatic run happens only the first time a dataset is opened and right after an Auto-Caption batch. OFF: it runs every time a dataset loads.">
                 <input type="checkbox" id="cb-auto-once" ${isOnce ? 'checked' : ''} style="margin:2px 0 0 0; cursor:pointer;">
-                <span><b>Run automatically only once per dataset</b> — on its first open and right after Auto-Caption. After that it only runs with <b>▶ Run Auto-Do Now</b>. Uncheck to run on every dataset load.</span>
+                <span><b>Run automatically only once per dataset</b> — on its first open and right after Auto-Caption. After that it only runs with <b>▶ Run</b>. Uncheck to run on every dataset load.</span>
             </label>
-            <button id="btn-auto-rearm" title="Make the current dataset count as never opened, so the automatic run happens again on its next load" style="flex-shrink:0; background:#151515; border:1px solid #2e7d32; color:#4caf50; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:bold;">↺ Re-arm dataset</button>
+            <button id="btn-auto-runnow" title="Run Auto-Do now on the dataset that is open" style="flex-shrink:0; background:#00aa66; border:1px solid #00cc88; color:#000; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Run</button>
         `;
         optRow.querySelector('#cb-auto-once').onchange = async (e) => { await window.saveSetting('rm_auto_once', e.target.checked); };
-        optRow.querySelector('#btn-auto-rearm').onclick = () => window.rearmAutoDoForCurrentDataset();
+        optRow.querySelector('#btn-auto-runnow').onclick = () => { if (window.runAutoMergeOnDataset) window.runAutoMergeOnDataset(true); };
         wrap.appendChild(optRow);
 
         const hint = document.createElement('div');

@@ -215,7 +215,6 @@
         const cbId = 'cb-' + category + '-enable';
         header.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <input type="checkbox" id="${cbId}" ${isChecked ? 'checked' : ''} style="margin:0; cursor:pointer;">
                 <span>${meta.label}</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
@@ -224,13 +223,7 @@
             </div>
         `;
         
-        const cb = header.querySelector('#' + cbId);
-        if (cb) {
-            cb.onchange = async (e) => {
-                await window.saveSetting(settingKey, e.target.checked); 
-                window.RulesCore.applyUserRulesToGlobals();
-            };
-        }
+        // The on/off checkbox of this panel lives in the toggles bar at the top of the window (see buildToggleBar).
 
         wrap.appendChild(header);
 
@@ -418,9 +411,47 @@
         if (seq !== window.RulesUI._refreshSeq) return;
         body.innerHTML = '';
         for (const section of window.RulesUI.sections) {
+            // a panel switched off in the toggles bar is not drawn at all; the others share the freed space
+            const t = window.RulesUI.PANEL_TOGGLES.find(x => x.order === section.order);
+            if (t && !(await window.getSetting(t.key, t.def))) continue;
             const el = await section.fn(rows);
             if (seq !== window.RulesUI._refreshSeq) return;
             if (el) body.appendChild(el);
+        }
+    };
+
+    // One checkbox per panel (replaces the checkbox that used to sit inside each panel header).
+    // order = the number the panel was registered with (registerSection).
+    window.RulesUI.PANEL_TOGGLES = [
+        { order: 1,   cat: 'conflict',  key: 'rm_enable_red',       def: true,  fallback: '🚨 Conflicts (Red)' },
+        { order: 2,   cat: 'similar',   key: 'rm_enable_yellow',    def: true,  fallback: '🟨 Similar (Yellow)' },
+        { order: 2.5, cat: 'redundant', key: 'rm_enable_redundant', def: true,  fallback: '🔁 Redundant' },
+        { order: 3,   cat: 'automerge', key: 'rm_auto_merge',       def: false, fallback: '⚡ Auto-Do (Unified)' }
+    ];
+    window.RulesUI.buildToggleBar = async function() {
+        const left = document.querySelector('#modal-conflict-manager .tool-modal > div:first-child > div:first-child');
+        if (!left) return;
+        let bar = document.getElementById('rules-panel-toggles');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'rules-panel-toggles';
+            bar.style.cssText = 'display:flex; flex-wrap:wrap; gap:15px; margin-bottom:10px; background:#111; padding:6px 10px; border-radius:6px; border:1px solid #333;';
+            left.appendChild(bar);
+        }
+        bar.innerHTML = '';
+        for (const t of window.RulesUI.PANEL_TOGGLES) {
+            const meta = window.CATEGORY_META[t.cat];
+            const on = !!(await window.getSetting(t.key, t.def));
+            const lb = document.createElement('label');
+            lb.style.cssText = `font-size: 11px; color: ${meta ? meta.color : '#ccc'}; display: flex; align-items: center; gap: 6px; cursor: pointer;`;
+            lb.title = 'Turn this group of rules on/off. Off = the rules stop working and its box disappears from this window.';
+            lb.innerHTML = `<input type="checkbox" style="margin:0;" ${on ? 'checked' : ''}> ${meta ? meta.label : t.fallback}`;
+            lb.querySelector('input').onchange = async (e) => {
+                await window.saveSetting(t.key, e.target.checked);
+                if (window.RulesCore && window.RulesCore.applyUserRulesToGlobals) await window.RulesCore.applyUserRulesToGlobals();
+                await window.RulesUI.refreshModalBody();
+            };
+            bar.appendChild(lb);
         }
     };
 
@@ -430,6 +461,8 @@
             await window.RulesUI.refreshModalBody();
             window.openModal('modal-conflict-manager');
             
+            await window.RulesUI.buildToggleBar();
+
             // Add counters toggles logic to modal header if not exists
             const modalHeaderLeft = document.querySelector('#modal-conflict-manager .tool-modal > div:first-child > div:first-child');
             if (modalHeaderLeft && !document.getElementById('counter-checkboxes-container')) {
@@ -679,11 +712,8 @@
                 }
             }
         }
+        if (typeof window.tmSelectAndJump === 'function') { window.tmSelectAndJump(nextIdx); return; }
         if (typeof selectedIndices !== 'undefined') { selectedIndices.clear(); selectedIndices.add(nextIdx); }
-        if (typeof imageFiles !== 'undefined') {
-            const targetImg = imageFiles[nextIdx];
-            if (targetImg && targetImg.element) targetImg.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
         if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
         if (typeof window.renderEditor === 'function') window.renderEditor();
     };

@@ -43,6 +43,15 @@
    fica VERMELHO. Clicar nele abre uma confirmação e, ao aceitar, corrige TODAS
    as imagens ruins de uma vez no bucket recomendado de cada uma (aspect ratio
    mais próximo, corte centralizado, Lanczos-3). Cada original vai pro 📦 Archive.
+   (2026-11) 🪣 com imagens ruins abre a escolha: 🤖 Auto bucket all (usa o
+   seg body — segm_person_yolo8m do servidor local — para posicionar o corte
+   no corpo e escolher o bucket que mantém mais imagem sem cortar a pessoa;
+   sem servidor/pessoa = corte centralizado) ou ✋ Manual bucket all (abre uma
+   imagem por vez; aplicar abre a próxima sozinho; cancelar cancela tudo).
+   No popout: "↻ Repeat last" (mesmo bucket / zoom / posição do último corte),
+   zoom digitável + passo incremental (−/+ e roda do mouse usam o passo).
+   Clicar no selo vermelho de resolução da lista oferece o 🤖 Auto só para essa
+   imagem (mesmo modo automático com seg body); o manual fica no 🪣 do Active Image.
    COLAPSO: no popout, os blocos ▯ Vertical / ▭ Horizontal podem ser recolhidos
    (clique no título do bloco, ou no botão da aba ativa). Estado salvo.
 ========================================================================= */
@@ -79,24 +88,33 @@
         sdxl: { label: 'SDXL', title: 'SDXL / Pony / Illustrious — about 1024² (official 41 buckets)' },
         hd:   { label: 'HD',   title: 'HD — 1.5× the SDXL resolutions (about 1536²)' }
     };
+    /* Lista básica (padrão): só estas resoluções SDXL aparecem nas sugestões / chips. As demais das 41
+       (inclui 640×1536 e 1536×640) ficam atrás do checkbox "Unlock expanded resolutions". */
+    const CORE_SDXL = new Set(['1024x1024', '768x1344', '832x1216', '896x1152', '1152x896', '1216x832', '1344x768']);
+    const UNLOCK_SETTING = 'bucket-unlock-expanded';
+    let unlockExpanded = false;
     const MODEL_SETTING = 'bucket-model';
     const COLLAPSE_SETTING = 'bucket-collapsed';
     const SCAN_BTN_TITLE = 'Scan dataset for images outside the training bucket resolutions (model: SD / SDXL / HD, chosen in the Bucket popout)';
     let collapsedBlocks = { vertical: false, horizontal: false };
-    let _autoRunning = false;
+    // Auto bucket runs as a ⏳ background task per dataset: the set holds the results map of each dataset with one running.
+    const _autoRunningRefs = new Set();
+    const autoRunningHere = () => _autoRunningRefs.has(window._bucketResults);
 
-    function buildBuckets(model) {
-        if (model === 'hd') return SDXL_BUCKETS.map(([w, h]) => [w * 1.5, h * 1.5]);
+    // all = true: as 41 resoluções do modelo (detecção de "fora do bucket"); false: só a lista básica (sugestões).
+    function buildBuckets(model, all) {
+        const src = all ? SDXL_BUCKETS : SDXL_BUCKETS.filter(([w, h]) => unlockExpanded || CORE_SDXL.has(w + 'x' + h));
+        if (model === 'hd') return src.map(([w, h]) => [w * 1.5, h * 1.5]);
         if (model === 'sd') {
-            const list = SDXL_BUCKETS.map(([w, h]) => [w / 2, h / 2]);
+            const list = src.map(([w, h]) => [w / 2, h / 2]);
             [[512, 768], [768, 512]].forEach(([w, h]) => { if (!list.some(b => b[0] === w && b[1] === h)) list.push([w, h]); });
             return list;
         }
-        return SDXL_BUCKETS.slice();
+        return src.slice();
     }
 
     let bucketModel = 'sdxl';
-    let BUCKETS = buildBuckets(bucketModel);
+    let BUCKETS = buildBuckets(bucketModel, false);
     let BUCKET_KEYS = new Set(BUCKETS.map(([w, h]) => w + 'x' + h));
     const modelLabel = () => BUCKET_MODELS[bucketModel].label;
 
@@ -104,7 +122,7 @@
     function setBucketModel(model, save = true) {
         if (!BUCKET_MODELS[model]) model = 'sdxl';
         bucketModel = model;
-        BUCKETS = buildBuckets(model);
+        BUCKETS = buildBuckets(model, false);
         BUCKET_KEYS = new Set(BUCKETS.map(([w, h]) => w + 'x' + h));
         window._bucketResults.forEach((r) => { r.bad = !BUCKET_KEYS.has(r.w + 'x' + r.h); });
         if (save && typeof window.saveSetting === 'function') window.saveSetting(MODEL_SETTING, model);
@@ -113,11 +131,25 @@
     }
     window.setBucketModel = setBucketModel;
 
+    // Checkbox "Unlock expanded resolutions": desligado, só a lista básica vale — é a única sugerida e
+    // qualquer outra resolução (ex. 640×1536) conta como errada na detecção do dataset.
+    function setUnlockExpanded(on, save = true) {
+        unlockExpanded = !!on;
+        setBucketModel(bucketModel, false);
+        if (save && typeof window.saveSetting === 'function') window.saveSetting(UNLOCK_SETTING, unlockExpanded ? '1' : '0');
+    }
+
     async function loadBucketModel() {
         try {
             if (typeof window.getSetting !== 'function') return;
+            setUnlockExpanded(String(await window.getSetting(UNLOCK_SETTING, '0')) === '1', false);
             const saved = await window.getSetting(MODEL_SETTING, 'sdxl');
             if (saved && saved !== bucketModel) setBucketModel(saved, false);
+            setUseSegm(String(await window.getSetting(SEGM_SETTING, '1')) !== '0', false);
+            const st = parseFloat(await window.getSetting(ZOOM_STEP_SETTING, 5));
+            if (isFinite(st) && st > 0) zoomStep = Math.max(0.5, Math.min(100, st));
+            const lc = await window.getSetting(LAST_SETTING, null);
+            if (lc && typeof lc === 'object' && lc.bw && lc.bh) lastCrop = lc;
             const col = String(await window.getSetting(COLLAPSE_SETTING, '') || '').split(',');
             collapsedBlocks = { vertical: col.includes('vertical'), horizontal: col.includes('horizontal') };
         } catch (e) { /* SDXL */ }
@@ -202,6 +234,21 @@
         #bucket-crop-rect.dragging { cursor: grabbing; }
         .bucket-warn-upscale { font-size:11px; color:#ffcc66; background:#2a1a00; border:1px solid #aa6600; padding:8px 10px; border-radius:6px; margin-top:10px; display:none; }
         #bucket-meta-note { font-size:11px; color:#888; margin-top:4px; }
+        /* .list-item-info has pointer-events:none in the page CSS: the badge / wrong resolution must take clicks */
+        .bucket-bad-badge, .list-item.bad-bucket .list-item-resolution { cursor:pointer; pointer-events:auto; }
+        .bucket-bad-badge:hover { background:#550000; color:#fff; }
+        .bucket-candidate-chip.is-repeat { border-color:#2a5a8c; color:#8fd0ff; }
+        .bucket-candidate-chip.is-repeat:hover { border-color:#4db8ff; }
+        .bucket-zoom-row input[type=number] { width:58px; font-size:11px; padding:2px 4px; }
+        .bucket-zoom-row .bz-step-btn { background:#151515; border:1px solid #555; color:#ddd; border-radius:4px; padding:1px 8px; cursor:pointer; font-size:13px; line-height:1.3; }
+        .bucket-zoom-row .bz-step-btn:hover { border-color:#00ff99; color:#00ff99; }
+        .bucket-segm-row { display:flex; align-items:center; gap:6px; font-size:12px; color:#ccc; cursor:pointer; user-select:none; }
+        .bucket-segm-row input { width:auto; margin:0; accent-color:#00ff99; }
+        #bucket-manual-progress { display:none; font-size:11px; font-weight:bold; color:#ffd27a; background:#2a2208; border:1px solid #6a5a2a; border-radius:6px; padding:4px 8px; margin-bottom:6px; }
+        #modal-auto-bucket .ab-choice { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+        #modal-auto-bucket .ab-choice button { text-align:left; padding:9px 12px; border-radius:6px; cursor:pointer; font-size:12px; }
+        #modal-auto-bucket .ab-choice button b { font-size:13px; }
+        #modal-auto-bucket .ab-choice small { display:block; color:#aaa; font-weight:normal; margin-top:3px; }
         #bucket-meta-note.warn { color:#ffcc66; }
     `;
     document.head.appendChild(style);
@@ -261,13 +308,42 @@
                 }
                 if (badge) {
                     badge.textContent = `🪣 ${formatRes(result.w, result.h)}`;
-                    badge.title = `Resolution is not an ${modelLabel()} training bucket. Select this image and use "🪣 Fix Bucket".`;
+                    badge.title = `Resolution is not an ${modelLabel()} training bucket — click to open the 🪣 Bucket options for this image.`;
+                    badge.onclick = (e) => { e.stopPropagation(); openBucketForImage(img); };
                 }
-            } else if (badge) {
-                badge.remove();
+                if (resEl) { resEl.onclick = (e) => { e.stopPropagation(); openBucketForImage(img); }; resEl.title = 'Wrong resolution — click to open the 🪣 Bucket options'; }
+            } else {
+                if (badge) badge.remove();
+                if (resEl && resEl.onclick) { resEl.onclick = null; resEl.title = ''; }
             }
         });
         updateBucketCounter();
+    }
+
+    // Click on the red resolution badge: select the image and open its Bucket popout.
+    // Click on the red badge / wrong resolution: offers 🤖 Auto for this image only (manual = 🪣 Fix Bucket in Active Image).
+    function openBucketForImage(img) {
+        if (typeof imageFiles === 'undefined') return;
+        const idx = imageFiles.indexOf(img);
+        if (idx < 0) return;
+        if (typeof selectedIndices !== 'undefined') { selectedIndices.clear(); selectedIndices.add(idx); }
+        if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
+        if (typeof window.renderEditor === 'function') window.renderEditor();
+        const r = window._bucketResults.get(img);
+        if (!r || !r.bad || autoRunningHere() || _manual) { window.openFixBucketModal(img); return; }
+        buildAutoModal();
+        const cand = suggestBuckets(r.w, r.h, 1)[0];
+        const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        document.querySelector('#modal-auto-bucket h3 span').textContent = '🪣 Bucket this image';
+        document.getElementById('ab-summary').innerHTML = `<b>${esc(img.name)}</b> is ${formatRes(r.w, r.h)} — not an <b>${modelLabel()}</b> bucket. Fix it automatically? (For a manual crop use <b>🪣 Fix Bucket</b> in Active Image.)`;
+        const upEl = document.getElementById('ab-upscale');
+        if (cand && (cand.bw > r.w || cand.bh > r.h)) { upEl.style.display = 'block'; upEl.textContent = '⚠️ This image is smaller than its recommended bucket and will be upscaled (auto mode).'; }
+        document.getElementById('btn-ab-manual').style.display = 'none';
+        document.getElementById('btn-ab-run').innerHTML = '<b id="ab-run-label">🤖 Auto (this image)</b><small>Goes to the bucket that keeps the most of the image. With <i>Use segm body</i> on, the crop is placed on the body (local server); off, or without a person, the crop is centered. Lanczos-3 resize.</small>';
+        document.getElementById('btn-ab-run').onclick = () => { window.closeModal('modal-auto-bucket'); window.autoBucketAll([img]); };
+        const rescan = document.getElementById('btn-ab-rescan');
+        if (rescan) rescan.style.display = 'none';
+        window.openModal('modal-auto-bucket');
     }
 
     function updateBucketCounter() {
@@ -283,7 +359,7 @@
         }
         window._bucketIssueIndices = badIndices;
         const scanBtn = document.getElementById('btn-scan-buckets');
-        if (scanBtn && !_autoRunning) {
+        if (scanBtn && !autoRunningHere()) {
             const has = badIndices.length > 0;
             scanBtn.classList.toggle('has-bad', has);
             scanBtn.title = has
@@ -307,9 +383,9 @@
         const pos = arr.indexOf(current);
         if (pos !== -1) nextIdx = arr[(pos + 1) % arr.length];
         else { for (let i = 0; i < arr.length; i++) { if (arr[i] > current) { nextIdx = arr[i]; break; } } }
+        // locate -> load the block of that image completely -> move the preview to it
+        if (typeof window.tmSelectAndJump === 'function') { window.tmSelectAndJump(nextIdx); return; }
         if (typeof selectedIndices !== 'undefined') { selectedIndices.clear(); selectedIndices.add(nextIdx); }
-        const targetImg = imageFiles[nextIdx];
-        if (targetImg && targetImg.element) targetImg.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
         if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
         if (typeof window.renderEditor === 'function') window.renderEditor();
     };
@@ -336,7 +412,7 @@
             chunk.forEach((img, j) => markResult(img, sizes[j]));
         }
 
-        if (btn && !_autoRunning) { btn.disabled = false; btn.textContent = '🪣'; }
+        if (btn && !autoRunningHere()) { btn.disabled = false; btn.textContent = '🪣'; }
         if (aborted) return;
 
         applyBadgesToList();
@@ -364,14 +440,14 @@
     }
 
     function injectScanButton() {
-        const anchor = document.getElementById('btn-compact-group-depth') || document.getElementById('btn-toggle-compact-view');
+        const anchor = document.getElementById('btn-psd-import') || document.getElementById('btn-reorder-mode');
         if (!anchor || document.getElementById('btn-scan-buckets')) return;
         const btn = document.createElement('button');
         btn.id = 'btn-scan-buckets';
         btn.textContent = '🪣';
         btn.title = SCAN_BTN_TITLE;
         btn.onclick = () => {
-            if (_autoRunning) return;
+            if (autoRunningHere() || _manual) return;
             if ((window._bucketIssueIndices || []).length > 0) window.openAutoBucketModal();
             else window.scanDatasetBuckets(false);
         };
@@ -432,9 +508,11 @@
     /* API pública (usada pelo 🧐 Evaluator): mesma tabela / modelo SD-SDXL-HD do popout. */
     window.TMBuckets = {
         model: () => bucketModel,
+        expanded: () => unlockExpanded,
         label: () => modelLabel(),
         isBucket: (w, h) => BUCKET_KEYS.has(w + 'x' + h),
-        suggest: (w, h, limit) => suggestBuckets(w, h, limit)
+        suggest: (w, h, limit) => suggestBuckets(w, h, limit),
+        renderCrop: (sourceEl, candidate, crop, mime, onStatus) => renderCropBlob(sourceEl, candidate, crop, mime, onStatus)
     };
 
     function imageExt(img) {
@@ -497,7 +575,7 @@
     /* ---------- MODAL DE FIX + PREVIEW ARRASTÁVEL ---------- */
     function buildFixModal() {
         const existing = document.getElementById('modal-fix-bucket');
-        if (existing && document.getElementById('bucket-crop-shade') && document.getElementById('bucket-meta-note') && document.getElementById('bucket-zoom') && document.getElementById('bucket-model-select')) return;
+        if (existing && document.getElementById('bucket-crop-shade') && document.getElementById('bucket-meta-note') && document.getElementById('bucket-zoom-step') && document.getElementById('bucket-model-select') && document.getElementById('bucket-unlock-expanded') && document.getElementById('bucket-archive-note') && existing.querySelector('.bucket-use-segm-cb')) return;
         if (existing) existing.remove();
         const overlay = document.createElement('div');
         overlay.id = 'modal-fix-bucket';
@@ -514,7 +592,12 @@
                     <select id="bucket-model-select" title="Which training resolutions to use — also changes the bad-bucket detection of the whole dataset (saved)">
                         ${Object.entries(BUCKET_MODELS).map(([k, m]) => `<option value="${k}" title="${m.title}">${m.label} — ${m.title.split(' — ')[1]}</option>`).join('')}
                     </select>
+                    <label style="display:flex; align-items:center; gap:5px; margin-left:12px; font-size:12px; color:#ccc; cursor:pointer;" title="Off: only the basic resolutions (1024×1024, 768×1344, 832×1216, 896×1152 and their landscape pairs). On: all the official buckets, including 640×1536 / 1536×640 and the other extreme ratios.">
+                        <input type="checkbox" id="bucket-unlock-expanded"> Unlock expanded resolutions
+                    </label>
                 </div>
+                <div style="margin-top:4px;">${segmCheckboxHtml()}<div style="font-size:10px; color:#777; margin-left:22px;">Applies to the automatic modes (🤖 Auto bucket all / Auto this image).</div></div>
+                <div id="bucket-manual-progress"></div>
                 <div id="bucket-fix-info" style="font-size:12px; color:#aaa; margin-bottom:6px;"></div>
                 <div class="bucket-orient-bar" id="bucket-orient-bar"></div>
                 <div class="bucket-candidate-list" id="bucket-candidate-list"></div>
@@ -523,15 +606,20 @@
                     <div id="bucket-crop-shade"></div>
                     <div id="bucket-crop-rect"></div>
                 </div>
-                <div class="bucket-zoom-row" title="Zoom in to crop tighter — the crop is resized to the chosen resolution. Mouse wheel on the preview also zooms.">
+                <div class="bucket-zoom-row" title="Zoom in to crop tighter — the crop is resized to the chosen resolution. Mouse wheel on the preview also zooms (by the step).">
                     <span style="color:#9ecfff; font-weight:bold;">🔎 Zoom</span>
-                    <input type="range" id="bucket-zoom" min="100" max="400" step="5" value="100">
-                    <span id="bucket-zoom-val">100%</span>
+                    <button class="bz-step-btn" id="bucket-zoom-minus" title="Zoom out by the step">−</button>
+                    <input type="range" id="bucket-zoom" min="100" max="800" step="1" value="100">
+                    <button class="bz-step-btn" id="bucket-zoom-plus" title="Zoom in by the step">+</button>
+                    <input type="number" id="bucket-zoom-num" min="100" max="800" step="1" value="100" title="Exact zoom % — type any value from 100 to 800">
+                    <span style="color:#888;">%</span>
+                    <label style="display:flex; align-items:center; gap:4px; color:#aaa; font-size:11px;" title="Incremental step: how much each −/+ click or wheel notch changes the zoom">Step
+                        <input type="number" id="bucket-zoom-step" min="0.5" max="100" step="0.5" value="5"> %</label>
                     <button id="bucket-zoom-reset" title="Back to 100% (no zoom)">↺</button>
                 </div>
                 <div id="bucket-upscale-warning" class="bucket-warn-upscale">⚠️ This bucket is larger than the crop. Saving will upscale with Lanczos-3, which stays sharper than the browser's default resize.</div>
                 <div id="bucket-drag-hint" style="font-size:11px; color:#aaa; margin-top:8px;"></div>
-                <div style="font-size:11px; color:#666; margin-top:4px;">The original file will be moved to 📦 Archive before saving (fully recoverable from there).</div>
+                <div id="bucket-archive-note" style="font-size:11px; color:#666; margin-top:4px;">The original file will be moved to 📦 Archive before saving (fully recoverable from there).</div>
                 <div id="bucket-meta-note"></div>
                 <div class="modal-buttons">
                     <button class="btn-cancel" onclick="window.closeModal('modal-fix-bucket')">Cancel</button>
@@ -544,9 +632,39 @@
 
     let _fixState = null; // { img, w, h, candidates, candidate, keepCand, offsetX, offsetY, cropW, cropH, scale, zoom, tab, fixMode }
 
-    const ZOOM_MIN = 1, ZOOM_MAX = 4;
+    const ZOOM_MIN = 1, ZOOM_MAX = 8;
+    const ZOOM_STEP_SETTING = 'bucket-zoom-step';
+    const LAST_SETTING = 'bucket-last-crop';
+    let zoomStep = 5;            // % per click / wheel notch (user choice)
+    let lastCrop = null;         // { bw, bh, zoom, cx, cy } cx/cy = crop center as a fraction of the image
+    let _fixApplied = false;     // set when the popout saved (used by Manual bucket all)
+    // "Use segm body": on = every AUTO bucket (Auto bucket all / Auto this image) uses segm_person_yolo8m to place
+    // the crop on the body; off = plain crop on the bucket that preserves the most image (centered).
+    const SEGM_SETTING = 'bucket-use-segm';
+    let useSegm = true;
+    function setUseSegm(on, save) {
+        useSegm = !!on;
+        document.querySelectorAll('.bucket-use-segm-cb').forEach(cb => { cb.checked = useSegm; });
+        if (save !== false && typeof window.saveSetting === 'function') window.saveSetting(SEGM_SETTING, useSegm ? '1' : '0');
+    }
+    function segmCheckboxHtml() {
+        return `<label class="bucket-segm-row" title="On: every Auto bucket (all images or one image) uses segm_person_yolo8m (local server) to place the crop on the body and pick a resolution that fits the person better. Off: the crop goes to the bucket that preserves the most image, centered.">
+            <input type="checkbox" class="bucket-use-segm-cb"${useSegm ? ' checked' : ''}> Use segm body — to try fit better resolution</label>`;
+    }
+    function bindSegmCheckboxes(root) {
+        (root || document).querySelectorAll('.bucket-use-segm-cb').forEach(cb => {
+            cb.checked = useSegm;
+            cb.onchange = () => setUseSegm(cb.checked);
+        });
+    }
 
     function orientOf(w, h) { return w === h ? 'square' : (h > w ? 'vertical' : 'horizontal'); }
+
+    /* Imagem "virtual" (PSD Import → recorte manual): ainda não existe no dataset.
+       { virtual:true, url, w, h, onSave(blob, candidate, crop), confirmLabel }.
+       Salvar chama onSave em vez de arquivar/sobrescrever — nada é alterado. */
+    function virtualResult(img) { return { w: img.w, h: img.h, bad: !BUCKET_KEYS.has(img.w + 'x' + img.h) }; }
+    const isVirtual = (img) => !!(img && img.virtual);
 
     function selectCandidate(cand) {
         _fixState.candidate = cand;
@@ -616,6 +734,18 @@
             bar.appendChild(Object.assign(document.createElement('div'), { className: 'bucket-orient-sep' }));
             bar.appendChild(makeChip(st.keepCand, closest, true));
         }
+        // ↻ Repeat last one: same resolution, zoom and position as the last crop
+        if (lastCrop) {
+            const rep = document.createElement('div');
+            const ok = !!findRepeatCandidate();
+            rep.className = 'bucket-candidate-chip is-repeat';
+            rep.innerHTML = `↻ Repeat last<span class="bc-kept">${formatRes(lastCrop.bw, lastCrop.bh)} · ${Math.round(lastCrop.zoom * 100)}%</span>`;
+            rep.title = ok ? 'Use the same resolution, zoom and position as the last crop' : `${lastCrop.bw}×${lastCrop.bh} is not available for this image / model`;
+            if (!ok) rep.style.opacity = '0.45';
+            rep.onclick = () => { if (ok) applyRepeatLast(); };
+            if (!st.keepCand) bar.appendChild(Object.assign(document.createElement('div'), { className: 'bucket-orient-sep' }));
+            bar.appendChild(rep);
+        }
 
         const block = (key, label, arr) => {
             if (!arr.length) return;
@@ -658,11 +788,56 @@
             st.offsetY = cy - (st.cropH * k) / 2;
         }
         st.zoom = z;
-        const slider = document.getElementById('bucket-zoom');
-        if (slider && document.activeElement !== slider) slider.value = Math.round(z * 100);
-        const val = document.getElementById('bucket-zoom-val');
-        if (val) val.textContent = Math.round(z * 100) + '%';
+        syncZoomUI(z);
         renderCropOverlay();
+    }
+    function syncZoomUI(z) {
+        const pct = Math.round(z * 1000) / 10;
+        const slider = document.getElementById('bucket-zoom');
+        if (slider && document.activeElement !== slider) slider.value = Math.round(pct);
+        const num = document.getElementById('bucket-zoom-num');
+        if (num && document.activeElement !== num) num.value = pct;
+    }
+    // Step the zoom by the user's increment (in zoom percentage points).
+    function stepZoom(dir) {
+        if (!_fixState) return;
+        const pct = (_fixState.zoom || 1) * 100 + dir * zoomStep;
+        setZoom(pct / 100);
+    }
+
+    /* ---------- ↻ REPEAT LAST ONE ---------- */
+    function findRepeatCandidate() {
+        const st = _fixState;
+        if (!st || !lastCrop) return null;
+        if (st.keepCand && st.keepCand.bw === lastCrop.bw && st.keepCand.bh === lastCrop.bh) return st.keepCand;
+        return st.candidates.find(c => c.bw === lastCrop.bw && c.bh === lastCrop.bh) || null;
+    }
+    function applyRepeatLast() {
+        const st = _fixState;
+        const cand = findRepeatCandidate();
+        if (!st || !cand) return;
+        st.candidate = cand;
+        const o = orientOf(cand.bw, cand.bh);
+        if (!st.fixMode && (o === 'vertical' || o === 'horizontal') && !cand.keep) st.tab = o;
+        st.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, lastCrop.zoom || 1));
+        syncZoomUI(st.zoom);
+        st.offsetX = null; st.offsetY = null;
+        renderCandidateChips();
+        renderCropOverlay();                    // computes cropW / cropH for this image
+        if (st.cropW) {
+            st.offsetX = lastCrop.cx * st.w - st.cropW / 2;
+            st.offsetY = lastCrop.cy * st.h - st.cropH / 2;
+            renderCropOverlay();               // clamps inside the image
+        }
+    }
+    function rememberLastCrop() {
+        const st = _fixState;
+        if (!st || !st.candidate || !st.cropW) return;
+        lastCrop = {
+            bw: st.candidate.bw, bh: st.candidate.bh, zoom: st.zoom || 1,
+            cx: (st.offsetX + st.cropW / 2) / st.w, cy: (st.offsetY + st.cropH / 2) / st.h
+        };
+        if (typeof window.saveSetting === 'function') window.saveSetting(LAST_SETTING, lastCrop);
     }
 
     function renderCropOverlay() {
@@ -714,7 +889,7 @@
         document.getElementById('bucket-upscale-warning').style.display = (scale > 1.001) ? 'block' : 'none';
 
         // Nada para mudar: mesma resolução e sem zoom.
-        const noop = c.bw === w && c.bh === h && zoom <= 1.0001;
+        const noop = !isVirtual(_fixState.img) && c.bw === w && c.bh === h && zoom <= 1.0001;
         const confirmBtn = document.getElementById('btn-confirm-fix-bucket');
         if (confirmBtn && confirmBtn.textContent.indexOf('⏳') !== 0) {
             confirmBtn.disabled = noop;
@@ -802,7 +977,7 @@
             wrapEl.addEventListener('wheel', (e) => {
                 if (!_fixState) return;
                 e.preventDefault();
-                setZoom((_fixState.zoom || 1) * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+                stepZoom(e.deltaY < 0 ? 1 : -1);
             }, { passive: false });
         }
         const zs = document.getElementById('bucket-zoom');
@@ -810,7 +985,23 @@
             zs._bound = true;
             zs.oninput = () => setZoom(parseInt(zs.value, 10) / 100);
             document.getElementById('bucket-zoom-reset').onclick = () => setZoom(1);
+            document.getElementById('bucket-zoom-minus').onclick = () => stepZoom(-1);
+            document.getElementById('bucket-zoom-plus').onclick = () => stepZoom(1);
+            const num = document.getElementById('bucket-zoom-num');
+            num.onchange = () => { const v = parseFloat(num.value); if (isFinite(v)) setZoom(v / 100); else syncZoomUI(_fixState ? _fixState.zoom : 1); };
+            num.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); num.onchange(); } };
+            const stepEl = document.getElementById('bucket-zoom-step');
+            stepEl.value = zoomStep;
+            stepEl.onchange = () => {
+                let v = parseFloat(stepEl.value);
+                if (!isFinite(v) || v <= 0) v = 5;
+                zoomStep = Math.max(0.5, Math.min(100, v));
+                stepEl.value = zoomStep;
+                if (typeof window.saveSetting === 'function') window.saveSetting(ZOOM_STEP_SETTING, zoomStep);
+            };
         }
+        const stepEl2 = document.getElementById('bucket-zoom-step');
+        if (stepEl2 && document.activeElement !== stepEl2) stepEl2.value = zoomStep;
         if (_dragBound) return;
         _dragBound = true;
         window.addEventListener('pointerdown', onBucketPointerDown, true);
@@ -838,10 +1029,7 @@
             zoom: 1, fixMode: !alreadyValid,
             tab: o === 'square' ? (result.w > result.h ? 'horizontal' : 'vertical') : o
         };
-        const zs = document.getElementById('bucket-zoom');
-        if (zs) zs.value = 100;
-        const zv = document.getElementById('bucket-zoom-val');
-        if (zv) zv.textContent = '100%';
+        syncZoomUI(1);
 
         // Preset (ex.: sugestão do 🧐 Evaluator): bucket + região de corte em px da imagem real.
         if (preset && preset.bw && preset.bh) {
@@ -859,8 +1047,7 @@
                     _fixState.zoom = z;
                     _fixState.offsetX = cx - cw / 2;
                     _fixState.offsetY = cy - ch / 2;
-                    if (zs) zs.value = Math.round(z * 100);
-                    if (zv) zv.textContent = Math.round(z * 100) + '%';
+                    syncZoomUI(z);
                 }
             }
         }
@@ -872,7 +1059,7 @@
     }
 
     window.openFixBucketModal = async function (img, preset) {
-        let result = window._bucketResults.get(img);
+        let result = isVirtual(img) ? virtualResult(img) : window._bucketResults.get(img);
         if (!result) {
             const size = await getImageSize(img);
             if (!size) {
@@ -887,9 +1074,26 @@
         buildFixModal();
 
         initFixState(img, result, preset);
+        bindSegmCheckboxes(document.getElementById('modal-fix-bucket'));
+        _fixApplied = false;
+        const progEl = document.getElementById('bucket-manual-progress');
+        if (progEl) {
+            if (_manual) { progEl.style.display = 'block'; progEl.textContent = `✋ Manual bucket all — image ${_manual.i + 1} of ${_manual.targets.length} · Apply opens the next one · Cancel stops all`; }
+            else progEl.style.display = 'none';
+        }
+        _fixState.confirmLabel = img.confirmLabel || (_manual && _manual.i + 1 < _manual.targets.length ? '✅ Apply & Next' : '✅ Apply Crop & Save');
+        const confirmBtn0 = document.getElementById('btn-confirm-fix-bucket');
+        if (confirmBtn0) { confirmBtn0.disabled = false; confirmBtn0.textContent = _fixState.confirmLabel; }
+        const archNote = document.getElementById('bucket-archive-note');
+        if (archNote) archNote.textContent = isVirtual(img)
+            ? (img.note || 'A new PNG is added to the dataset — the source is never changed.')
+            : 'The original file will be moved to 📦 Archive before saving (fully recoverable from there).';
 
         const metaNote = document.getElementById('bucket-meta-note');
-        if (metaNote) {
+        if (metaNote && isVirtual(img)) {
+            metaNote.className = '';
+            metaNote.textContent = '';
+        } else if (metaNote) {
             const isPngFile = imageExt(img) === 'png';
             metaNote.className = isPngFile ? '' : 'warn';
             metaNote.textContent = isPngFile
@@ -907,14 +1111,17 @@
 
         const modelSel = document.getElementById('bucket-model-select');
         modelSel.value = bucketModel;
-        modelSel.onchange = () => {
-            setBucketModel(modelSel.value);
-            const r = window._bucketResults.get(img);
+        const reinit = () => {
+            const r = isVirtual(img) ? virtualResult(img) : window._bucketResults.get(img);
             if (!r || !_fixState) return;
             initFixState(img, r);
             renderCandidateChips();
             renderCropOverlay();
         };
+        modelSel.onchange = () => { setBucketModel(modelSel.value); reinit(); };
+        const unlockEl = document.getElementById('bucket-unlock-expanded');
+        unlockEl.checked = unlockExpanded;
+        unlockEl.onchange = () => { setUnlockExpanded(unlockEl.checked); reinit(); };
 
         renderCandidateChips();
         setupCropDrag();
@@ -1041,9 +1248,11 @@
     }
 
     /* Arquiva o original (+ legenda) e grava o novo arquivo com o MESMO nome. */
-    async function commitBucketFile(img, blob, candidate) {
+    // resultsMap / root: of the dataset the image belongs to (a ⏳ background task passes the ones it started with)
+    async function commitBucketFile(img, blob, candidate, resultsMap, root) {
         if (typeof window.moveToArchive !== 'function') throw new Error('Archive module not loaded.');
-        const archived = await window.moveToArchive(img);
+        // archive entries of a bucket fix are labeled "bucket" (explicit label: safe with tasks running in parallel)
+        const archived = await window.moveToArchive(img, 'bucket', root);
         if (!archived) throw new Error('Could not archive the original image — aborting to avoid data loss.');
 
         const fileHandle = await img.parentDirHandle.getFileHandle(img.name, { create: true });
@@ -1057,10 +1266,13 @@
         try { URL.revokeObjectURL(img.url); } catch (e) {}
         img.url = URL.createObjectURL(blob);
         img._resolution = { w: candidate.bw, h: candidate.bh };
-        markResult(img, { w: candidate.bw, h: candidate.bh });
+        if (resultsMap && resultsMap !== window._bucketResults) resultsMap.set(img, { w: candidate.bw, h: candidate.bh, bad: !BUCKET_KEYS.has(candidate.bw + 'x' + candidate.bh) });
+        else markResult(img, { w: candidate.bw, h: candidate.bh });
     }
 
-    /* ---------- AUTO BUCKET (todas as imagens ruins → bucket recomendado) ---------- */
+    /* ---------- BUCKET ALL (🪣 with bad images): Auto (seg body) or Manual ---------- */
+    let _manual = null;   // { targets, i, ok, resultsRef } while "Manual bucket all" runs
+
     function buildAutoModal() {
         let overlay = document.getElementById('modal-auto-bucket');
         if (overlay) overlay.remove();
@@ -1071,25 +1283,40 @@
         overlay.innerHTML = `
             <div class="tool-modal" onclick="event.stopPropagation()">
                 <h3 style="display:flex; justify-content:space-between; align-items:center;">
-                    <span>🪣 Auto Bucket</span>
+                    <span>🪣 Bucket all</span>
                     <button onclick="window.closeModal('modal-auto-bucket')" style="background:transparent; border:none; color:#ff4444; font-size:20px; cursor:pointer; font-weight:bold; line-height:1; padding:0;">&times;</button>
                 </h3>
                 <div class="ab-line" id="ab-summary"></div>
-                <div class="ab-line">Each image is cropped (centered) and resized with Lanczos-3 to its <b>recommended</b> bucket — the one with the closest aspect ratio.</div>
+                <div class="ab-choice">
+                    <button id="btn-ab-manual" style="background:#2a2208; color:#ffd27a; border:1px solid #6a5a2a;">
+                        <b>✋ Manual bucket all</b>
+                        <small>Opens one image at a time in the 🪣 Bucket popout. Applying opens the next image by itself. Cancelling an image cancels the whole run.</small>
+                    </button>
+                    <button id="btn-ab-run" style="background:#3a0d0d; color:#ffb0b0; border:1px solid #aa2222;">
+                        <b id="ab-run-label">🤖 Auto bucket all</b>
+                        <small>Each image goes to the bucket that keeps the most image. With <i>Use segm body</i> on, segm_person_yolo8m (local server) places the crop on the body and avoids cutting the person; off, without the server or without a person, the crop is centered. Lanczos-3 resize.</small>
+                    </button>
+                </div>
+                <div style="margin-top:10px;">${segmCheckboxHtml()}</div>
                 <div class="ab-note">Every original (and its caption) is moved to 📦 Archive first, so it is fully recoverable. PNG text metadata is kept; JPEG/WebP metadata is not.</div>
                 <div class="ab-warn" id="ab-upscale" style="display:none;"></div>
                 <div class="modal-buttons">
                     <button class="btn-cancel" onclick="window.closeModal('modal-auto-bucket')">Cancel</button>
                     <button id="btn-ab-rescan" style="background:transparent; border:1px solid #555; color:#aaa; padding:8px 12px; border-radius:6px; cursor:pointer;">🔍 Re-scan only</button>
-                    <button id="btn-ab-run" style="background:#aa2222; color:#fff; border:none; padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer;">🪣 Fix all</button>
                 </div>
             </div>`;
         document.body.appendChild(overlay);
+        bindSegmCheckboxes(overlay);
         return overlay;
     }
 
+    function badTargets() {
+        const resultsRef = window._bucketResults;
+        return (window._bucketIssueIndices || []).map(i => imageFiles[i]).filter(img => { const r = resultsRef.get(img); return img && r && r.bad && !img.hidden; });
+    }
+
     window.openAutoBucketModal = function () {
-        const targets = (window._bucketIssueIndices || []).map(i => imageFiles[i]).filter(img => { const r = window._bucketResults.get(img); return img && r && r.bad; });
+        const targets = badTargets();
         if (targets.length === 0) { window.scanDatasetBuckets(false); return; }
         buildAutoModal();
         let up = 0;
@@ -1098,11 +1325,12 @@
             const c = suggestBuckets(r.w, r.h, 1)[0];
             if (c && (c.bw > r.w || c.bh > r.h)) up++;
         });
-        document.getElementById('ab-summary').innerHTML = `<b>${targets.length}</b> image(s) are outside the <b>${modelLabel()}</b> buckets.`;
+        document.getElementById('ab-summary').innerHTML = `<b>${targets.length}</b> image(s) are outside the <b>${modelLabel()}</b> buckets. How do you want to fix them?`;
         const upEl = document.getElementById('ab-upscale');
-        if (up > 0) { upEl.style.display = 'block'; upEl.textContent = `⚠️ ${up} of them are smaller than their recommended bucket and will be upscaled.`; }
-        document.getElementById('btn-ab-run').textContent = `🪣 Fix all (${targets.length})`;
+        if (up > 0) { upEl.style.display = 'block'; upEl.textContent = `⚠️ ${up} of them are smaller than their recommended bucket and will be upscaled (auto mode).`; }
+        document.getElementById('ab-run-label').textContent = `🤖 Auto bucket all (${targets.length})`;
         document.getElementById('btn-ab-run').onclick = () => { window.closeModal('modal-auto-bucket'); window.autoBucketAll(); };
+        document.getElementById('btn-ab-manual').onclick = () => { window.closeModal('modal-auto-bucket'); window.manualBucketAll(); };
         document.getElementById('btn-ab-rescan').onclick = () => { window.closeModal('modal-auto-bucket'); window.scanDatasetBuckets(false); };
         window.openModal('modal-auto-bucket');
     };
@@ -1116,31 +1344,108 @@
         });
     }
 
-    window.autoBucketAll = async function () {
-        if (_autoRunning) return;
+    /* ---------- SEG BODY (person boxes from the local server) ---------- */
+    let _segAvailable = null;   // null = unknown, false = server / packages missing this run
+    async function segBodyBoxes(blob) {
+        if (_segAvailable === false || !blob) return null;
+        let res;
+        try {
+            res = await fetch('/api/psd/detect?min_area=3', { method: 'POST', body: blob });
+        } catch (e) { _segAvailable = false; return null; }
+        let data = null;
+        try { data = await res.json(); } catch (e) {}
+        if (!res.ok || !data) {
+            // missing packages / no server route: stop asking for this run
+            if (res.status === 404 || res.status === 500 || res.status === 405) _segAvailable = false;
+            if (data && data.error) console.warn('[Auto Bucket] seg body unavailable:', data.error);
+            return null;
+        }
+        _segAvailable = true;
+        return Array.isArray(data.people) ? data.people : [];
+    }
+
+    // Best bucket + crop for the image keeping the body: candidates by closest aspect ratio
+    // (= most image kept); the first one whose full-size crop, placed on the body, contains the
+    // body (+ margin) wins. No body -> centered crop on the closest bucket.
+    function planBodyCrop(r, people, marginPct) {
+        const cands = suggestBuckets(r.w, r.h, 8);
+        const fullCrop = (cand) => {
+            const baseScale = Math.max(cand.bw / r.w, cand.bh / r.h);
+            return { w: Math.min(r.w, cand.bw / baseScale), h: Math.min(r.h, cand.bh / baseScale) };
+        };
+        if (!people || !people.length) {
+            const cand = cands[0], c = fullCrop(cand);
+            return { cand, crop: { x: (r.w - c.w) / 2, y: (r.h - c.h) / 2, w: c.w, h: c.h }, body: false };
+        }
+        // union of the people boxes (group shots keep everyone when possible)
+        const area = p => (p.box[2] - p.box[0]) * (p.box[3] - p.box[1]);
+        const main = people.slice().sort((a, b) => area(b) - area(a));
+        const big = area(main[0]);
+        const keep = main.filter(p => area(p) >= big * 0.35);
+        let x1 = Math.min(...keep.map(p => p.box[0])), y1 = Math.min(...keep.map(p => p.box[1]));
+        let x2 = Math.max(...keep.map(p => p.box[2])), y2 = Math.max(...keep.map(p => p.box[3]));
+        const m = marginPct / 100, bw = x2 - x1, bh = y2 - y1;
+        x1 = Math.max(0, x1 - bw * m); y1 = Math.max(0, y1 - bh * m);
+        x2 = Math.min(r.w, x2 + bw * m); y2 = Math.min(r.h, y2 + bh * m);
+        const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+        const place = (cand) => {
+            const c = fullCrop(cand);
+            const x = Math.max(0, Math.min(r.w - c.w, cx - c.w / 2));
+            // vertical: keep the head when the body is taller than the crop
+            let y = Math.max(0, Math.min(r.h - c.h, cy - c.h / 2));
+            if (y2 - y1 > c.h) y = Math.max(0, Math.min(r.h - c.h, y1));
+            return { x, y, w: c.w, h: c.h };
+        };
+        const fits = (c) => c.x <= x1 + 0.5 && c.y <= y1 + 0.5 && c.x + c.w >= x2 - 0.5 && c.y + c.h >= y2 - 0.5;
+        for (const cand of cands) {
+            const crop = place(cand);
+            if (fits(crop)) return { cand, crop, body: true };
+        }
+        const cand = cands[0];
+        return { cand, crop: place(cand), body: true, cut: true };
+    }
+
+    // onlyImgs: run on these images only (e.g. the one whose red badge was clicked); default = every bad image.
+    window.autoBucketAll = async function (onlyImgs) {
         const resultsRef = window._bucketResults;
-        const targets = (window._bucketIssueIndices || []).map(i => imageFiles[i]).filter(img => { const r = resultsRef.get(img); return img && r && r.bad; });
+        if (_autoRunningRefs.has(resultsRef) || _manual) return;
+        const targets = Array.isArray(onlyImgs)
+            ? onlyImgs.filter(img => { const r = img && resultsRef.get(img); return r && r.bad; })
+            : badTargets();
         if (targets.length === 0) return;
 
-        _autoRunning = true;
-        const btn = document.getElementById('btn-scan-buckets');
-        if (btn) btn.disabled = true;
-        let ok = 0, upscaledCount = 0, metaLost = 0, aborted = false;
-        const failed = [];
+        // ⏳ background task: the images, their results and the dataset folder are captured now, so the run
+        // finishes on THIS dataset even if another one is opened. The seg body (GPU) waits for other GPU tasks.
+        const ctx = window.TM.tasks.captureDataset();
+        ctx.files = targets;
+        const segmOn = useSegm;
+        _autoRunningRefs.add(resultsRef);
+        const btnHere = () => (window._bucketResults === resultsRef ? document.getElementById('btn-scan-buckets') : null);
+        { const b0 = btnHere(); if (b0) b0.disabled = true; }
 
+        return window.TM.tasks.run({ title: targets.length === 1 ? `Auto bucket — ${targets[0].name}` : `Auto bucket all (${targets.length})`, icon: '🪣', gpu: segmOn, ctx, silentEnd: true }, async (task) => {
+        let ok = 0, upscaledCount = 0, metaLost = 0, bodyUsed = 0, bodyCut = 0;
+        let segAvail = null;
+        const failed = [];
+        try {
         for (let i = 0; i < targets.length; i++) {
-            if (window._bucketResults !== resultsRef) { aborted = true; break; }   // dataset trocou
+            if (task.cancelled) break;
             const img = targets[i];
+            const btn = btnHere();
             if (btn) btn.textContent = `⏳ ${i + 1}/${targets.length}`;
+            task.progress(i + 1, targets.length, img.name);
             try {
                 const r = resultsRef.get(img);
-                const cand = suggestBuckets(r.w, r.h, 1)[0];
-                const baseScale = Math.max(cand.bw / r.w, cand.bh / r.h);
-                const cropW = Math.min(r.w, cand.bw / baseScale), cropH = Math.min(r.h, cand.bh / baseScale);
-                const crop = { x: (r.w - cropW) / 2, y: (r.h - cropH) / 2, w: cropW, h: cropH };
-
                 let originalBlob = null;
                 try { originalBlob = await (await fetch(img.url)).blob(); } catch (e) {}
+                _segAvailable = segAvail;
+                const people = segmOn ? await segBodyBoxes(originalBlob) : null;
+                segAvail = _segAvailable;
+                const plan = planBodyCrop(r, people, 5);
+                if (plan.body) bodyUsed++;
+                if (plan.cut) bodyCut++;
+                const cand = plan.cand, crop = plan.crop;
+
                 const el = await loadImageEl(img.url);
                 const ext = imageExt(img);
                 const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
@@ -1149,7 +1454,7 @@
                 if (mime === 'image/png' && originalBlob) blob = (await copyPngTextChunks(originalBlob, blob)).blob;
                 else metaLost++;
 
-                await commitBucketFile(img, blob, cand);
+                await commitBucketFile(img, blob, cand, resultsRef, ctx.root);
                 if (rendered.upscaled) upscaledCount++;
                 ok++;
             } catch (e) {
@@ -1158,21 +1463,81 @@
             }
             await new Promise(r => setTimeout(r, 0));
         }
+        if (segAvail) { try { await fetch('/api/psd/unload', { method: 'POST' }); } catch (e) {} }   // VRAM back
+        } finally {
+            _autoRunningRefs.delete(resultsRef);
+        }
 
-        _autoRunning = false;
-        if (btn) { btn.disabled = false; btn.textContent = '🪣'; }
-        if (typeof window.renderImageList === 'function') window.renderImageList();
-        if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
-        if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
-        applyBadgesToList();
-        if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0) updateFixBucketButtonVisibility();
+        // Screen refresh only when this dataset is still the one open.
+        if (window._bucketResults === resultsRef) {
+            const btn = document.getElementById('btn-scan-buckets');
+            if (btn) { btn.disabled = false; btn.textContent = '🪣'; }
+            if (typeof window.renderImageList === 'function') window.renderImageList();
+            if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
+            if (typeof window.updateArchiveButtonState === 'function') window.updateArchiveButtonState();
+            applyBadgesToList();
+            if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0) updateFixBucketButtonVisibility();
+        }
 
-        if (window.showAlert) {
-            let msg = `Auto Bucket: ${ok} image(s) fixed${upscaledCount ? ` (${upscaledCount} upscaled)` : ''}. Originals are in 📦 Archive.`;
-            if (metaLost) msg += ` ${metaLost} JPEG/WebP file(s) lost their metadata (kept in the Archive originals).`;
-            if (aborted) msg += ' Stopped: the dataset changed.';
-            if (failed.length) msg += ` ${failed.length} failed: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}`;
-            window.showAlert(msg, failed.length || aborted ? 'warn' : 'success');
+        let msg = `Auto Bucket${window._bucketResults === resultsRef ? '' : ` (${ctx.label})`}: ${ok} image(s) fixed${upscaledCount ? ` (${upscaledCount} upscaled)` : ''}. Originals are in 📦 Archive.`;
+        if (bodyUsed) msg += ` Seg body placed ${bodyUsed} crop(s) on the person${bodyCut ? ` (${bodyCut} still cut the body — check them)` : ''}.`;
+        else if (!segmOn) msg += ' Use segm body is off — crops kept the most image (centered).';
+        else if (segAvail === false) msg += ' Seg body unavailable (local server / ultralytics) — crops were centered.';
+        if (metaLost) msg += ` ${metaLost} JPEG/WebP file(s) lost their metadata (kept in the Archive originals).`;
+        if (task.cancelled) msg += ' Stopped.';
+        if (failed.length) msg += ` ${failed.length} failed: ${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}`;
+        task.result = `${ok} fixed${failed.length ? `, ${failed.length} failed` : ''}`;
+        if (window.showAlert) window.showAlert(msg, failed.length || task.cancelled || bodyCut ? 'warn' : 'success');
+        }).promise;
+    };
+
+    /* ---------- MANUAL BUCKET ALL: one image at a time, next opens by itself ---------- */
+    function waitFixClosed() {
+        return new Promise(resolve => {
+            const el = document.getElementById('modal-fix-bucket');
+            if (!el || !el.classList.contains('active')) { resolve(_fixApplied); return; }
+            const mo = new MutationObserver(() => {
+                if (!el.classList.contains('active')) { mo.disconnect(); resolve(_fixApplied); }
+            });
+            mo.observe(el, { attributes: true, attributeFilter: ['class'] });
+        });
+    }
+
+    window.manualBucketAll = async function () {
+        if (autoRunningHere() || _manual) return;
+        const targets = badTargets();
+        if (!targets.length) return;
+        const resultsRef = window._bucketResults;
+        _manual = { targets, i: 0, ok: 0 };
+        const btn = document.getElementById('btn-scan-buckets');
+        let cancelled = false, aborted = false;
+        try {
+            for (let i = 0; i < targets.length; i++) {
+                if (window._bucketResults !== resultsRef) { aborted = true; break; }
+                _manual.i = i;
+                const img = targets[i];
+                const r = resultsRef.get(img);
+                if (!r || !r.bad) continue;                      // fixed meanwhile
+                if (btn) btn.textContent = `✋ ${i + 1}/${targets.length}`;
+                const idx = imageFiles.indexOf(img);
+                if (idx >= 0 && typeof window.tmSelectAndJump === 'function') window.tmSelectAndJump(idx);
+                await window.openFixBucketModal(img);
+                const applied = await waitFixClosed();
+                if (!applied) { cancelled = true; break; }       // cancel on one image = cancel all
+                _manual.ok++;
+            }
+        } finally {
+            const done = _manual ? _manual.ok : 0;
+            _manual = null;
+            if (btn) btn.textContent = '🪣';
+            applyBadgesToList();
+            if (window.showAlert) {
+                const rest = targets.length - done;
+                window.showAlert(cancelled
+                    ? `Manual bucket all cancelled: ${done} image(s) fixed, ${rest} left. Originals are in 📦 Archive.`
+                    : aborted ? `Manual bucket all stopped (the dataset changed): ${done} image(s) fixed.`
+                    : `Manual bucket all done: ${done} image(s) fixed. Originals are in 📦 Archive.`, cancelled || aborted ? 'warn' : 'success');
+            }
         }
     };
 
@@ -1181,12 +1546,32 @@
         if (!_fixState) return;
         const { img, candidate } = _fixState;
         const zoomUsed = (_fixState.zoom || 1) > 1.0001;
-        if (candidate.bw === _fixState.w && candidate.bh === _fixState.h && !zoomUsed) {
+        if (!isVirtual(img) && candidate.bw === _fixState.w && candidate.bh === _fixState.h && !zoomUsed) {
             if (window.showAlert) window.showAlert('Nothing to change — pick another resolution or zoom in.', 'info');
             return;
         }
         const btn = document.getElementById('btn-confirm-fix-bucket');
         btn.disabled = true; btn.textContent = '⏳ Processing...';
+
+        if (isVirtual(img)) {
+            // PSD Import: renderiza o corte (Lanczos-3) e entrega ao chamador; nada é arquivado.
+            try {
+                const crop = { x: _fixState.offsetX, y: _fixState.offsetY, w: _fixState.cropW, h: _fixState.cropH };
+                const rendered = await renderCropBlob(document.getElementById('bucket-preview-img'), candidate, crop, 'image/png', (t) => { btn.textContent = t; });
+                const info = await img.onSave(rendered.blob, candidate, crop, rendered);
+                rememberLastCrop();
+                _fixApplied = true;
+                window.closeModal('modal-fix-bucket');
+                if (window.showAlert) window.showAlert(`Added ${info && info.name ? info.name + ' ' : ''}at ${formatRes(candidate.bw, candidate.bh)}${rendered.upscaled ? ' with Lanczos upscale' : rendered.resizing ? ' with Lanczos resize' : ''}.`, 'success');
+            } catch (e) {
+                console.error('[Bucket Virtual] failed:', e);
+                if (window.showAlert) window.showAlert('Could not save the crop: ' + (e.message || e), 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = _fixState ? _fixState.confirmLabel : '✅ Apply Crop & Save';
+                if (_fixState && document.getElementById('modal-fix-bucket').classList.contains('active')) renderCropOverlay();
+            }
+            return;
+        }
 
         try {
             // Bytes do original ANTES de arquivar (usados para copiar os metadados do PNG).
@@ -1209,6 +1594,8 @@
             }
 
             await commitBucketFile(img, blob, candidate);
+            rememberLastCrop();
+            _fixApplied = true;
 
             if (typeof window.renderImageList === 'function') window.renderImageList();
             if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 0 && typeof window.renderEditor === 'function') window.renderEditor();
@@ -1217,12 +1604,12 @@
             window.closeModal('modal-fix-bucket');
             const metaMsg = copiedMeta > 0 ? ` PNG metadata kept (${copiedMeta} chunk(s)).` : '';
             const zoomMsg = zoomUsed ? ` (zoom ${Math.round(_fixState.zoom * 100)}%)` : '';
-            if (window.showAlert) window.showAlert(`Saved at ${formatRes(candidate.bw, candidate.bh)}${zoomMsg}${upscaled ? ' with Lanczos upscale' : resizing ? ' with Lanczos resize' : ''}. Original safely kept in 📦 Archive.${metaMsg}`, 'success');
+            if (window.showAlert && !_manual) window.showAlert(`Saved at ${formatRes(candidate.bw, candidate.bh)}${zoomMsg}${upscaled ? ' with Lanczos upscale' : resizing ? ' with Lanczos resize' : ''}. Original safely kept in 📦 Archive.${metaMsg}`, 'success');
         } catch (e) {
             console.error('[Bucket Fix] failed:', e);
             if (window.showAlert) window.showAlert('Error applying the bucket fix: ' + (e.message || e), 'error');
         } finally {
-            btn.disabled = false; btn.textContent = '✅ Apply Crop & Save';
+            btn.disabled = false; btn.textContent = _fixState && _fixState.confirmLabel ? _fixState.confirmLabel : '✅ Apply Crop & Save';
             if (_fixState && document.getElementById('modal-fix-bucket').classList.contains('active')) renderCropOverlay();
         }
     };

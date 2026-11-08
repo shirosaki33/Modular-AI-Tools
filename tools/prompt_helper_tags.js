@@ -170,10 +170,13 @@ function writeThrough(res) {
         const now = Date.now();
         const t = res.tag;
         const key = t.name.replace(/_/g, ' ').toLowerCase();
-        const clean = (res.body || '').replace(/\[.*?\]/g, '').trim();
+        // same summary cleaner as the Tag Manager (links keep their words, See also / images removed)
+        const clean = typeof window.TMCleanWikiSummary === 'function'
+            ? window.TMCleanWikiSummary(res.body || '')
+            : (res.body || '').replace(/\[\[([^\]|]+)\|?([^\]]*)\]\]/g, (m, a, b) => (b || a).replace(/_/g, ' ')).replace(/\[.*?\]/g, '').trim();
 
         const useFile = phFileOn();
-        const short = clean.slice(0, 800) + (clean.length > 800 ? '...' : '');
+        const short = clean.length > 800 ? clean.slice(0, 800) + '...' : clean;
         cache[key] = {
             ...(cache[key] || {}),
             count: parseInt(t.post_count) || 0, category: t.category, wikiName: t.name,
@@ -202,7 +205,7 @@ function writeThrough(res) {
         if (phStoreOn() && !res.wikiFailed && !res.offline) {
             if (!clean) window.WikiFull.remove(site.key, key);
             else if (phMode() === 'full') window.WikiFull.set(site.key, key, res.body, now, true);
-            else { const cur = window.WikiFull.get(site.key, key); if (!cur || !cur.full) window.WikiFull.set(site.key, key, short, now, false); }
+            else { const cur = window.WikiFull.get(site.key, key); if (!cur || !cur.full || cur.broken) window.WikiFull.set(site.key, key, short, now, false); }
         }
 
         if (res.offline && res.fromFilesOnly) return;   // nothing new to write
