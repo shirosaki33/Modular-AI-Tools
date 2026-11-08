@@ -239,15 +239,10 @@
     </div>
 
     <div class="topbar-section right" id="topbar-right">
-        <select id="topbar-save-format" style="margin-right: 15px; width: 80px; background: #111; color: #aaa; border: 1px solid #333; display: none;" onchange="window.updateSelectedConfig()" title="Only shown for images with no caption file yet">
+        <select id="topbar-save-format" style="display: none !important;" onchange="window.updateSelectedConfig()" title="(hidden) keeps the format used for new caption files — change it with the 📄/🔄 button in Active Image">
             <option value="txt">.txt</option>
             <option value="json">.json</option>
         </select>
-
-        <div style="display:flex; align-items:center; gap:5px; margin-right: 10px;" title="Font Size (Tags/NL)">
-            <span style="font-size: 11px; color: #888;">🔤</span>
-            <input type="range" id="font-slider" min="11" max="26" value="13" style="width: 70px; accent-color: #00ff99;" oninput="window.updateEditorFontSize(this.value)">
-        </div>
 
         <button id="btn-help" onclick="window.showHelp()" title="Help" style="display:inline-block;">❓</button>
         <button id="btn-mode-switch" onclick="window.toggleMode()" title="Toggle Auto Captioner" style="font-size: 13px;">🤖 Auto-Caption</button>
@@ -260,6 +255,9 @@
     <label><input type="checkbox" id="toggle-last-edited" onchange="window.toggleLastEdited()" checked> Show Last Edited Time</label>
     <label><input type="checkbox" id="toggle-unsaved-alert" onchange="window.toggleUnsavedAlert()" checked> Show Unsaved Changes Alert</label>
     <label><input type="checkbox" id="toggle-help-btn" onchange="window.toggleHelpBtn()" checked> Show Help Button</label>
+    <label title="Size of the text in the tag lists and NL editor (Active Image, All Dataset Tags, User Presets)">🔤 Interface size
+        <input type="range" id="font-slider" min="11" max="26" value="13" style="width: 110px; accent-color: #00ff99;" oninput="window.updateEditorFontSize(this.value)">
+    </label>
 
     <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
 
@@ -329,6 +327,7 @@
                 <div style="display:flex; align-items:center; gap:10px;">
                     Dataset <span id="list-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
                     <button id="btn-unhide-all" class="btn-save-local" style="display:none; background:transparent; border: 1px solid #4db8ff; color:#4db8ff; padding: 2px 6px; font-size: 12px; margin-left: 5px;" onclick="window.unhideAllImages()" title="Unhide All Images">👁️‍🗨️ Unhide</button>
+                    <button id="btn-invert-hidden" class="btn-save-local" style="display:none; background:transparent; border: 1px solid #b890ff; color:#b890ff; padding: 2px 6px; font-size: 12px;" onclick="window.invertHiddenImages()" title="Invert: show the hidden images and hide the ones that are visible now">🔀 Invert</button>
                 </div>
 
                 <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
@@ -336,15 +335,13 @@
                     <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
-                    <button class="btn-save-local" id="btn-img-filter-sel" style="background:#151515; border-color:#555; color:#aaa; padding: 2px 6px; font-size: 14px;" onclick="window.cycleImageFilter()" title="Filter Images by Type">🏷️ All</button>
                 </div>
             </div>
 
             <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0; display:flex; gap:6px; align-items:center;">
                 <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="flex:1; min-width:0; box-sizing:border-box; font-size:12px; padding:6px 10px;">
                 <button id="btn-reorder-mode" title="Unlock Reorder Mode" style="flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s;" onclick="window.toggleReorderMode()">🔒</button>
-                <button id="btn-toggle-compact-view" title="Switch to Compact View (grouped by prefix)" style="flex-shrink:0; padding:6px 10px; font-size:14px;">🗂️</button>
-                <button id="btn-compact-group-depth" title="Set how many starting characters define each group" style="display:none; flex-shrink:0; padding:6px 10px; font-size:11px;">Grp: 1</button>
+                <button id="btn-psd-import" title="PSD / PSB / XCF detected — build dataset images from its layers">🎨</button>
             </div>
 
             <div id="image-list"></div>
@@ -375,6 +372,7 @@
 
             <div id="active-selection-actions" class="selection-actions">
                 <button class="btn-multi btn-replace" onclick="window.openReplaceTagModal('active')">🔄 Replace</button>
+                <button class="btn-multi btn-reorder-tag" onclick="window.reorderSelectedActiveTag()" style="background: #1a2a3c; border-color: #2a5a8c; color: #8fd0ff;" title="Reorder tag: move the selected tag(s) to a line number (line 1 = top)">↕️ Reorder tag</button>
                 <button class="btn-multi btn-nl-edit" onclick="window.convertToCustomNL()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">🪄 Convert to NL</button>
                 <button class="btn-multi btn-edit-nl" onclick="window.editSelectedNLTag()" style="display:none; background: #1a3a5c; border-color: #2a5a8c; color: #4db8ff;" title="Rewrite this NL tag (same as the ✏️ pencil)">✏️ Edit</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedActiveTags()">🗑️ Remove Selected</button>
@@ -814,9 +812,11 @@ python -m pip install einops timm</pre>
 <script src="tools/quick_links.js"></script>
 <script src="tools/tagmanager_globals.js"></script>
 <script src="tools/tagmanager_tm.js"></script>
+<script src="tools/tagmanager_tasks.js"></script>
 <script src="tools/tagmanager_alert.js"></script>
 <script src="tools/tagmanager_notice.js"></script>
 <script src="tools/tagmanager_db.js"></script>
+<script src="tools/tagmanager_config_store.js"></script>
 <script src="tools/tagmanager_local_store.js"></script>
 <script src="tools/tagmanager_wiki_full.js"></script>
 <script src="tools/tagmanager_booru_core.js"></script>
@@ -841,6 +841,7 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager_ui_presets.js"></script>
 <script src="tools/tagmanager_ui_list.js"></script>
 <script src="tools/tagmanager_ui_core.js"></script>
+<script src="tools/tagmanager_nav.js"></script>
 
 <!-- Auto-Caption VLM engines (same files as the Prompt Helper). tagmanager_batch_vlm.js must come first and after ui_core. -->
 <script src="tools/tagmanager_batch_vlm.js"></script>
@@ -853,7 +854,8 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager_remove_cooldown.js"></script>
 <script src="tools/tagmanager_auto_task_queue.js"></script>
 <script src="tools/tagmanager_pin_image.js"></script>
-<script src="tools/tagmanager_compact_view.js"></script>
+<!-- PSD Import (replaces the old Compact View): loaded before bucket_check so the 🪣 button anchors next to it -->
+<script src="tools/tagmanager_psd.js"></script>
 <script src="tools/tagmanager_rule_conflict.js"></script>
 <script src="tools/tagmanager_rule_similar.js"></script>
 <script src="tools/tagmanager_rule_automerge.js"></script>
@@ -870,6 +872,8 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager_popout_size.js"></script>
 <script src="tools/tagmanager_evaluator.js"></script>
 <script src="tools/tagmanager_assistant.js"></script>
+<script src="tools/tagmanager_help.js"></script>
+<script src="tools/tagmanager_settings_layout.js"></script>
 <script>
 /* Run mode under the title: green = localhost (recommended), yellow = online, red = opened as a file. */
 (function () {

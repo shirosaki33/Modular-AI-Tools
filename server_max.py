@@ -198,12 +198,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             code, data = 500, {'error': str(e)}
         self._reply(code, json.dumps(data, ensure_ascii=False).encode('utf-8'))
 
+    def _psd(self, method):
+        """PSD Import API: /api/psd/<route>. Logic lives in psd_backend.py."""
+        parsed = urlparse(self.path)
+        route = parsed.path[len('/api/psd/'):]
+        query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        try:
+            import psd_backend
+            body = b''
+            if method == 'POST':
+                n = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(n) if n else b''
+            code, data = psd_backend.handle(method, route, query, body)
+            if route in ('analyze', 'release') or code != 200:
+                log('PSD', '{} -> {}'.format(route, code if code != 200 else 'OK'))
+        except Exception as e:
+            log('FAILED', 'PSD {}: {}'.format(route, e))
+            code, data = 500, {'error': str(e)}
+        self._reply(code, json.dumps(data, ensure_ascii=False).encode('utf-8'))
+
     def do_GET(self):
         route = self.path.split('?')[0]
         if route.startswith('/api/') and not self._same_origin():
             return self._forbidden(route)
         if route.startswith('/api/florence/'):
             return self._florence('GET')
+        if route.startswith('/api/psd/'):
+            return self._psd('GET')
         if route == '/api/installed_tools':
             names = sorted(f for f in os.listdir(ROOT) if f.lower().endswith('.html'))
             return self._reply(200, json.dumps(names).encode('utf-8'))
@@ -356,6 +377,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log('FAILED', 'Could not open the folder: {}'.format(e))
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
 
+    def _locate_folder(self):
+        """Tag Manager 📂 Go to: finds the real path of a folder the browser opened.
+
+        The page writes a temporary marker file into the folder (through the browser) and sends its
+        name; this returns the folder that contains it. `candidates` (paths typed by the user) are
+        checked first; otherwise folders with the same name are searched on the drives (limited time).
+        """
+        try:
+            data = self._read_json()
+            name = str(data.get('name', '')).strip()
+            marker = str(data.get('marker', '')).strip()
+            if not marker.startswith('_tm_locate_') or '/' in marker or '\\' in marker:
+                raise ValueError('invalid marker')
+            for c in data.get('candidates') or []:
+                c = os.path.abspath(str(c).strip().strip('"'))
+                if os.path.isfile(os.path.join(c, marker)):
+                    log('OK', 'Folder located: {}'.format(c))
+                    return self._reply(200, json.dumps({'status': 'success', 'path': c}).encode('utf-8'))
+            if data.get('candidates'):
+                return self._reply(200, json.dumps({'status': 'error', 'message': 'not found'}).encode('utf-8'))
+            found = _find_marked_folder(name, marker)
+            if found:
+                log('OK', 'Folder located: {}'.format(found))
+                return self._reply(200, json.dumps({'status': 'success', 'path': found}).encode('utf-8'))
+            self._reply(200, json.dumps({'status': 'error', 'message': 'not found'}).encode('utf-8'))
+        except Exception as e:
+            log('FAILED', 'Could not locate the folder: {}'.format(e))
+            self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
+
     def _client_log(self):
         """Errors of the open pages (tools/client_error_log.js) printed in the cmd."""
         try:
@@ -393,6 +443,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._client_log()
         if route.startswith('/api/florence/'):
             return self._florence('POST')
+        if route.startswith('/api/psd/'):
+            return self._psd('POST')
         if route == '/api/save_model_file':
             return self._save_model_file()
         if route == '/api/delete_model':
@@ -403,6 +455,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._trash_file()
         if route == '/api/open_folder':
             return self._open_folder()
+        if route == '/api/locate_folder':
+            return self._locate_folder()
         if route != '/api/save_local_cache':
             log('FAILED', 'Unknown POST endpoint: {}'.format(self.path))
             return self._reply(404, b'{"status": "error", "message": "unknown endpoint"}')
@@ -480,6 +534,56 @@ def _trash_path(path):
     with open(os.path.join(base, 'info', name + '.trashinfo'), 'w', encoding='utf-8') as f:
         f.write('[Trash Info]\nPath={}\nDeletionDate={}\n'.format(quote(path), time.strftime('%Y-%m-%dT%H:%M:%S')))
     shutil.move(path, os.path.join(base, 'files', name))
+
+
+_LOCATE_SKIP = {'windows', 'program files', 'program files (x86)', 'programdata', '$recycle.bin', 'system volume information',
+                'appdata', 'node_modules', '.git', '__pycache__', 'proc', 'sys', 'dev', 'usr', 'lib', 'bin', 'sbin', 'boot', 'snap'}
+
+
+def _find_marked_folder(name, marker, max_depth=6, time_limit=10.0):
+    """Breadth-first search for a folder called `name` that contains `marker`. Starts near this server
+    (its folder and parents), then every drive / the home folder. Gives up after `time_limit` seconds."""
+    t0 = time.time()
+    starts = []
+    p = ROOT
+    while True:
+        starts.append(p)
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    if os.name == 'nt':
+        import string
+        starts += ['{}:\\'.format(d) for d in string.ascii_uppercase if os.path.isdir('{}:\\'.format(d))]
+    else:
+        starts += [os.path.expanduser('~'), '/mnt', '/media', '/Volumes', '/']
+    seen = set()
+    want = name.lower()
+    for start in starts:
+        queue = [(start, 0)]
+        while queue:
+            if time.time() - t0 > time_limit:
+                return None
+            folder, depth = queue.pop(0)
+            key = os.path.normcase(os.path.abspath(folder))
+            if key in seen:
+                continue
+            seen.add(key)
+            if os.path.basename(folder.rstrip('\\/')).lower() == want and os.path.isfile(os.path.join(folder, marker)):
+                return os.path.abspath(folder)
+            if depth >= max_depth:
+                continue
+            try:
+                with os.scandir(folder) as it:
+                    for e in it:
+                        try:
+                            if e.is_dir(follow_symlinks=False) and not e.name.startswith(('.', '$')) and e.name.lower() not in _LOCATE_SKIP:
+                                queue.append((e.path, depth + 1))
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    return None
 
 
 def _resolve_in_root(data, need_file):
