@@ -236,7 +236,6 @@ window.renderEditor = function() {
 
             const pencilIcon = isCustomNL ? `<span class="tag-edit-nl" style="margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Edit Tag Text">✏️</span>` : '';
             const starIcon = !isCustomNL ? `<span class="tag-star" style="color: ${isFav ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${isFav ? '⭐' : '☆'}</span>` : '';
-            const presetIcon = (!isCustomNL && !isAlreadyPreset) ? `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>` : '';
 
             const dbCached = window.danbooruCache ? (window.danbooruCache[tagLower] || window.danbooruCache[tag]) : null;
             // Alias (Danbooru, ou e621 se o Danbooru não tiver): seta ➜, ícone de info
@@ -266,7 +265,7 @@ window.renderEditor = function() {
             row.innerHTML = `<div class="tag-row-left">
                 ${starIcon}
                 ${dsCountHtml}
-                ${presetIcon}
+
                 ${pencilIcon}
                 <span class="tag-name${aliasParts.nameClass}" style="color: ${textColor};" data-nl-raw="${esc(tag)}"${aliasParts.nameAttrs}>${esc(window.nlDisplay(tag))}</span>
                 ${dbAliasArrowHtml}

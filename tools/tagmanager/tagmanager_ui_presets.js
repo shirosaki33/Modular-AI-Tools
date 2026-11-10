@@ -1342,7 +1342,7 @@ window.renderPresetTags = async function () {
     if (items.filter(i => !i.tag.startsWith('_sys_cat_')).length === 0 || rows.length === 0 || (!grouped && !rows.some(r => r.kind === 'tag'))) {
         PP.vp = null; PP.nodes.clear(); PP.filtered = []; PP.first = PP.last = -1;
         const msg = ppEl('div', '', items.filter(i => !i.tag.startsWith('_sys_cat_')).length === 0
-            ? 'No presets saved yet. Type a tag below and press Enter, or use the 💾 icon next to any tag.'
+            ? 'No presets saved yet. Type a tag below and press Enter, or use the 📦 icon next to any tag.'
             : 'All categories are hidden. Open ☰ Filter & sort to show them again.');
         msg.className = 'pp-empty';
         container.replaceChildren(msg);

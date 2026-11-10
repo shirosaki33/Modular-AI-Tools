@@ -1,28 +1,12 @@
 /* =========================================================================
-   EMBED QUICK ADD/REMOVE (📦) — Active Image & All Dataset Tags
+   SAVE TO USER PRESETS (📦) — Active Image & All Dataset Tags
    ---------------------------------------------------------------------
-   Antes, a única forma de colocar/tirar uma tag de um Custom Embed
-   (@nome, usado em Requires/Excludes do Auto-Do e em Custom Highlights)
-   era abrir 🧩 Manage Rules → 📦 Manage Custom Embeds e editar a lista
-   de tags do embed inteira, manualmente, numa caixa de texto.
-
-   Este módulo injeta um ícone 📦 em cada linha de tag "normal" (não-NL),
-   igual em espírito ao ⭐ de favoritar — tanto na Active Image quanto em
-   All Dataset Tags. Clicar nele abre um popout compacto listando todos
-   os Embeds já criados, cada um com um checkbox:
-     - marcado  = a tag JÁ pertence a esse embed
-     - clicar no checkbox ADICIONA (se não pertencia) ou REMOVE (se já
-       pertencia) a tag daquele embed, instantaneamente — tudo pelo
-       mesmo ícone/popup, sem precisar abrir o gerenciador de Embeds.
-   O ícone fica destacado (verde) quando a tag já pertence a pelo menos
-   1 embed, pra dar uma pista visual sem precisar abrir o popup.
-
-   Depende de window.RulesDB / window.RulesCore (tagmanager_rule_conflict.js)
-   e reaproveita window.RulesDB.updateRule (mesmo usado pelo Embed
-   Manager em tagmanager_rule_automerge.js) — carregar DEPOIS desses.
-   Usa window.registerPostRenderEditor / registerPostRenderMasterTagList
-   quando disponíveis (tagmanager_render_hooks.js), com fallback pra wrap
-   manual se esse arquivo não tiver carregado.
+   The 📦 icon is the default way to save a tag to User Presets. Clicking
+   it opens a compact popup listing the preset groups (categories); a tag
+   belongs to ONE group, so picking a group saves/moves the tag there
+   instantly. Picking the checked group removes the tag from the presets.
+   Each preset group also works as an @group in Manage Rules.
+   The icon is green when the tag is already a preset.
 ========================================================================= */
 
 (function () {
@@ -72,36 +56,35 @@
         document.removeEventListener('keydown', onEscClose, true);
     }
 
-    /* ---------- ADD/REMOVE A TAG NUM EMBED ESPECÍFICO ---------- */
-    window.toggleTagInEmbed = async function (embedId, tag) {
-        const rows = await window.RulesDB.getAllRules();
-        const embed = rows.find(r => r.id === embedId && r.category === 'embed');
-        if (!embed) return null;
+    function presetCategories() {
+        const cache = window._presetsCache || {};
+        const cats = new Map();
+        for (const t of Object.keys(cache)) {
+            const c = cache[t];
+            if (!c) continue;
+            if (!cats.has(c)) cats.set(c, 0);
+            if (!t.startsWith('_sys_cat_')) cats.set(c, cats.get(c) + 1);
+        }
+        return [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    }
 
-        let tags = Array.isArray(embed.tags) ? [...embed.tags] : [];
-        const idx = tags.findIndex(t => String(t).toLowerCase() === tag.toLowerCase());
-        let nowIn;
-        if (idx > -1) { tags.splice(idx, 1); nowIn = false; }
-        else { tags.push(tag); nowIn = true; }
+    async function setTagGroup(tag, cat, isIn) {
+        if (isIn) await window.deletePresetTag(tag, true);
+        else {
+            // savePresetTag keeps the old category when 'Uncategorized' is passed, so clear first to allow moving to it.
+            if (cat === 'Uncategorized') await window.deletePresetTag(tag, true);
+            await window.savePresetTag(tag, cat, true);
+        }
+        if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
+        if (window.RulesCore && window.RulesCore.applyUserRulesToGlobals) window.RulesCore.applyUserRulesToGlobals();
+    }
 
-        // Mesmo caminho usado pelo Embed Manager (✏️ Edit em @embed): se o
-        // embed alvo for um DEFAULT (def_emb_N), updateRule cria automaticamente
-        // uma cópia CUSTOM com um id novo e marca o default como substituído —
-        // o popup relê window.RulesDB.getAllRules() a cada ação, então sempre
-        // acaba trabalhando com o id certo, sem precisar tratar esse caso aqui.
-        await window.RulesDB.updateRule(embedId, { name: embed.name, tags });
-        await window.RulesCore.applyUserRulesToGlobals();
-        return nowIn;
-    };
-
-    async function refreshIconStateForTag(tag) {
-        const rows = await window.RulesDB.getAllRules();
-        const embeds = rows.filter(r => r.category === 'embed');
-        const belongs = embeds.some(e => Array.isArray(e.tags) && e.tags.some(t => String(t).toLowerCase() === tag.toLowerCase()));
+    function refreshIconStateForTag(tag) {
+        const cat = (window._presetsCache || {})[tag];
         document.querySelectorAll('.tag-add-embed[data-embed-tag]').forEach(icon => {
-            if ((icon.getAttribute('data-embed-tag') || '').toLowerCase() === tag.toLowerCase()) {
-                icon.classList.toggle('has-embed', belongs);
-                icon.title = belongs ? `"${tag}" belongs to at least 1 embed — click to manage` : `Add "${tag}" to an embed`;
+            if ((icon.getAttribute('data-embed-tag') || '') === tag) {
+                icon.classList.toggle('has-embed', !!cat);
+                icon.title = cat ? `"${tag}" is in preset group "${cat}" — click to change` : `Save "${tag}" to User Presets`;
             }
         });
     }
@@ -115,7 +98,7 @@
 
         const title = document.createElement('div');
         title.className = 'embed-quickadd-title';
-        title.textContent = `📦 Add/remove "${tag}" from embed:`;
+        title.textContent = `📦 Save "${tag}" to User Presets:`;
         popup.appendChild(title);
 
         const rowsContainer = document.createElement('div');
@@ -124,41 +107,49 @@
 
         const footer = document.createElement('div');
         footer.className = 'embed-quickadd-footer';
-        footer.textContent = 'Click a checkbox to add/remove instantly.';
+        footer.textContent = 'A tag lives in one group. Click the checked one to remove it from presets.';
         popup.appendChild(footer);
 
         async function renderRows() {
             rowsContainer.innerHTML = '';
-            const freshRows = await window.RulesDB.getAllRules();
-            const embeds = freshRows.filter(r => r.category === 'embed').sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            if (typeof loadPresetsToCache === 'function') await loadPresetsToCache();
+            const current = (window._presetsCache || {})[tag];
+            const cats = presetCategories();
+            if (!cats.some(c => c[0] === 'Uncategorized')) cats.unshift(['Uncategorized', 0]);
 
-            if (embeds.length === 0) {
-                const empty = document.createElement('div');
-                empty.className = 'embed-quickadd-empty';
-                empty.textContent = 'No embeds yet — create one in 🧩 Manage Rules → 📦 Manage Custom Embeds.';
-                rowsContainer.appendChild(empty);
-                return;
-            }
-
-            embeds.forEach(emb => {
-                const tagsArr = Array.isArray(emb.tags) ? emb.tags : [];
-                const isIn = tagsArr.some(t => String(t).toLowerCase() === tag.toLowerCase());
-
+            cats.forEach(([cat, count]) => {
+                const isIn = current === cat;
                 const row = document.createElement('label');
                 row.className = 'embed-quickadd-row';
                 row.innerHTML = `
                     <input type="checkbox" ${isIn ? 'checked' : ''}>
-                    <span class="eqa-name">@${escapeHtml(emb.name)}</span>
-                    <span class="eqa-count">${tagsArr.length}</span>
+                    <span class="eqa-name">${escapeHtml(cat)}</span>
+                    <span class="eqa-count">${count}</span>
                 `;
                 row.querySelector('input').onclick = async (e) => {
                     e.stopPropagation();
-                    await window.toggleTagInEmbed(emb.id, tag);
-                    await refreshIconStateForTag(tag);
+                    await setTagGroup(tag, cat, isIn);
+                    refreshIconStateForTag(tag);
                     await renderRows();
                 };
                 rowsContainer.appendChild(row);
             });
+
+            const addRow = document.createElement('div');
+            addRow.style.cssText = 'display:flex; gap:6px; margin-top:2px;';
+            addRow.innerHTML = '<input type="text" placeholder="New group..." style="flex:1; min-width:0; font-size:11px; background:#222; border:1px solid #444; padding:5px 7px; border-radius:4px; color:#fff;"><button style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; border-radius:4px; cursor:pointer; font-size:11px; padding:0 8px;">➕</button>';
+            const inp = addRow.querySelector('input');
+            const go = async () => {
+                const name = inp.value.trim();
+                if (!name) return;
+                await window.savePresetTag('_sys_cat_' + name, name, true);
+                await setTagGroup(tag, name, false);
+                refreshIconStateForTag(tag);
+                await renderRows();
+            };
+            addRow.querySelector('button').onclick = go;
+            inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') go(); };
+            rowsContainer.appendChild(addRow);
         }
 
         await renderRows();
@@ -184,22 +175,11 @@
     /* Usa as regras já carregadas por RulesCore.applyUserRulesToGlobals
        (window._userConflictRules) — antes relia todas as regras (async) a cada
        render das duas listas. Só lê do banco se elas ainda não existirem. */
-    let _embedSetSrc = null, _embedSet = new Set();
-    function embedTagSet(rows) {
-        if (rows !== _embedSetSrc) {
-            _embedSetSrc = rows;
-            _embedSet = new Set();
-            rows.filter(r => r.category === 'embed').forEach(e => (Array.isArray(e.tags) ? e.tags : []).forEach(et => _embedSet.add(String(et).toLowerCase())));
-        }
-        return _embedSet;
-    }
-
     async function injectEmbedIcons(container) {
         if (!container || !window.RulesDB || typeof window.RulesDB.getAllRules !== 'function') return;
 
-        const rows = Array.isArray(window._userConflictRules) ? window._userConflictRules : await window.RulesDB.getAllRules();
-        const embedSet = embedTagSet(rows);
-        const belongsToAny = (t) => embedSet.has(t.toLowerCase());
+        if (typeof loadPresetsToCache === 'function') { try { await loadPresetsToCache(); } catch (e) {} }
+        const cache = window._presetsCache || {};
 
         container.querySelectorAll('[data-tag-name]').forEach(row => {
             if (row.classList.contains('ghost')) return; // sugestões-fantasma (💡) não têm ação de embed
@@ -222,9 +202,9 @@
             icon.setAttribute('data-embed-tag', tag);
             icon.onclick = (e) => { e.stopPropagation(); openEmbedQuickPicker(tag, icon); };
 
-            const belongs = belongsToAny(tag);
-            icon.classList.toggle('has-embed', belongs);
-            icon.title = belongs ? `"${tag}" belongs to at least 1 embed — click to manage` : `Add "${tag}" to an embed`;
+            const cat = cache[tag];
+            icon.classList.toggle('has-embed', !!cat);
+            icon.title = cat ? `"${tag}" is in preset group "${cat}" — click to change` : `Save "${tag}" to User Presets`;
         });
     }
 

@@ -86,7 +86,30 @@
         let deletedDefaults = await window.getSetting('deleted-default-rules', []);
         if (!Array.isArray(deletedDefaults)) deletedDefaults = [];
         const fRules = this.getFactoryRules().filter(r => !deletedDefaults.includes(r.id));
-        return [...fRules, ...customRules];
+        const base = [...fRules, ...customRules];
+        // User Presets categories behave as @groups: every category becomes a virtual embed (never saved back).
+        try { if (typeof loadPresetsToCache === 'function') await loadPresetsToCache(); } catch (e) {}
+        const taken = new Set(base.filter(r => r.category === 'embed').map(r => String(r.name || '').toLowerCase()));
+        return [...base, ...this.presetGroupsAsEmbeds().filter(v => !taken.has(v.name))];
+    };
+
+    window.RulesDB.presetGroupSlug = function(cat) {
+        return String(cat || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '');
+    };
+
+    window.RulesDB.presetGroupsAsEmbeds = function() {
+        const cache = window._presetsCache || {};
+        const map = new Map();
+        for (const tag of Object.keys(cache)) {
+            if (tag.startsWith('_sys_cat_')) continue;
+            const cat = cache[tag];
+            if (!cat || cat === 'Uncategorized') continue;
+            const slug = this.presetGroupSlug(cat);
+            if (!slug) continue;
+            if (!map.has(slug)) map.set(slug, { id: 'preset_' + slug, category: 'embed', isDefault: false, virtual: true, name: slug, label: cat, tags: [] });
+            map.get(slug).tags.push(tag);
+        }
+        return [...map.values()];
     };
 
     window.RulesDB.saveAllRules = async function(rules) {
@@ -392,13 +415,12 @@
                 </div>
                 <div id="conflict-manager-body" style="flex:1; display:flex; flex-direction:row; gap:15px; overflow:hidden; margin-top: 10px; margin-bottom: 15px; min-height: 0;"></div>
                 <div class="modal-buttons" style="flex-shrink:0; border-top: 1px solid #333; padding-top: 15px; display: flex; justify-content: space-between;">
-                    <button class="btn-top-action" style="background:#2f1a5c; color:#b890ff; border-color:#4a2a8c; padding: 8px 16px; font-size: 13px;" onclick="if(window.openEmbedsManager) window.openEmbedsManager()">📦 Manage Custom Embeds (@groups)</button>
+                    <span style="font-size:11px; color:#777; align-self:center;">Your own @groups are the categories of 🏷️ User Presets.</span>
                     <button class="btn-cancel" style="background:#333; color:#fff;" onclick="window.closeModal('modal-conflict-manager')">Close Interface</button>
                 </div>
             </div>
         `;
         document.body.appendChild(overlay);
-        if(window.buildEmbedModal) window.buildEmbedModal();
     };
 
     window.RulesUI.refreshModalBody = async function() {

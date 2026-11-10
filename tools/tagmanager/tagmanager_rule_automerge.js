@@ -633,146 +633,148 @@
         return changedCount;
     };
 
-    // --- EMBEDS UI ---
-    window.buildEmbedModal = function() {
-        if (document.getElementById('modal-embed-manager')) return;
-        const overlay = document.createElement('div');
-        overlay.id = 'modal-embed-manager'; overlay.className = 'modal-overlay'; overlay.style.zIndex = '105';
-        overlay.onclick = () => window.closeModal('modal-embed-manager');
-        overlay.innerHTML = `
-            <div class="tool-modal" style="width: 500px; height: 600px; display:flex; flex-direction:column;" onclick="event.stopPropagation()">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <h3 style="margin:0 0 5px 0; font-size:16px;">📦 Custom Embeds</h3>
-                    <button onclick="window.restoreEmbedDefaults()" title="Restore default embeds" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px; padding:0; transition:0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🔄</button>
-                </div>
-                <div style="font-size:11px; color:#aaa; margin-bottom:15px;">Create custom groups of tags. Use <b>@name</b> in the Excludes/Requires of Advanced Rules.</div>
-                <div id="embed-list-container" class="panel-list-scroll" style="flex:1; overflow-y:auto; background:#111; padding:10px; border:1px solid #333; border-radius:6px; display:flex; flex-direction:column; gap:8px;"></div>
-                <div style="margin-top:15px; display:flex; flex-direction:column; gap:8px; background:#1b1b1b; padding:12px; border:1px solid #333; border-radius:6px;">
-                    <div style="font-size:12px; color:#00ff99; font-weight:bold;">Create New Embed</div>
-                    <input type="text" id="embed-add-name" placeholder="Name (e.g. clothing)" style="font-size:12px; background:#222; border:1px solid #444; padding:8px; border-radius:4px; color:#fff;">
-                    <textarea id="embed-add-tags" placeholder="tag1, tag2, tag3..." style="font-size:12px; background:#222; border:1px solid #444; padding:8px; border-radius:4px; color:#fff; min-height:60px; resize:vertical;"></textarea>
-                    <button onclick="window.addCustomEmbed()" style="background:#1a3a5c; color:#4db8ff; border:1px solid #2a5a8c; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer;">➕ Save Embed</button>
-                </div>
-                <div class="modal-buttons" style="margin-top:15px;"><button class="btn-cancel" onclick="window.closeModal('modal-embed-manager')">Close</button></div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-    };
+    // --- ORIGINAL GROUPS (@clothing, @solidbackground) ---
+    // One compact panel instead of one rule per group. Same logic as the other originals:
+    // editing creates a Custom copy, "restore" brings the original list back.
+    const _origEditing = { id: null };
+    const _origOpen = new Set();
 
-    window.openEmbedsManager = async function() { _embedEditingId = null; await window.refreshEmbedList(); window.openModal('modal-embed-manager'); };
-
-    window.refreshEmbedList = async function() {
-        const container = document.getElementById('embed-list-container');
-        if (!container) return;
-        const rows = await window.RulesDB.getAllRules();
-        const embeds = rows.filter(r => r.category === 'embed');
-        embeds.sort((a, b) => (a.isDefault === b.isDefault ? 0 : (a.isDefault ? -1 : 1)));
-        
-        container.innerHTML = '';
-        if (embeds.length === 0) { container.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; margin-top:20px;">No embeds created yet.</div>'; return; }
-
-        embeds.forEach(emb => {
-            const safeTags = Array.isArray(emb.tags) ? emb.tags : [];
-            const el = document.createElement('div');
-
-            if (_embedEditingId === emb.id) {
-                el.style.cssText = 'background:#151515; border:1px solid #4a2a8c; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;';
-                el.innerHTML = `
-                    <div style="font-size:11px; color:#b890ff; font-weight:bold;">✏️ Editing @${window.RulesUI.escapeHTML(emb.name)}</div>
-                    <input type="text" class="emb-edit-name" value="${window.RulesUI.escapeHTML(emb.name)}" placeholder="Name (e.g. clothing)" style="font-size:12px; background:#222; border:1px solid #444; padding:8px; border-radius:4px; color:#fff;">
-                    <textarea class="emb-edit-tags" placeholder="tag1, tag2, tag3..." style="font-size:12px; background:#222; border:1px solid #444; padding:8px; border-radius:4px; color:#fff; min-height:70px; resize:vertical;">${window.RulesUI.escapeHTML(safeTags.join(', '))}</textarea>
-                    <div style="display:flex; gap:6px; justify-content:flex-end;">
-                        <button class="btn-emb-cancel" style="background:#222; border:1px solid #444; color:#aaa; font-size:11px; padding:6px 14px; border-radius:4px; cursor:pointer; font-weight:bold;">✖ Cancel</button>
-                        <button class="btn-emb-update" style="background:#00aa66; border:none; color:#000; font-size:11px; padding:6px 14px; border-radius:4px; cursor:pointer; font-weight:bold;">✅ Update</button>
-                    </div>
-                `;
-
-                el.querySelector('.btn-emb-cancel').onclick = () => {
-                    _embedEditingId = null;
-                    window.refreshEmbedList();
-                };
-
-                el.querySelector('.btn-emb-update').onclick = async () => {
-                    const nameInput = el.querySelector('.emb-edit-name');
-                    const tagsInput = el.querySelector('.emb-edit-tags');
-                    const newName = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-                    const newTags = tagsInput.value.split(',').map(t => t.trim()).filter(t => t);
-
-                    if (!newName) { if (window.showAlert) window.showAlert('Invalid embed name.', 'warn'); nameInput.focus(); return; }
-                    if (newTags.length === 0) { if (window.showAlert) window.showAlert('At least 1 tag is required.', 'warn'); tagsInput.focus(); return; }
-
-                    const oldName = emb.name;
-                    await window.RulesDB.updateRule(emb.id, { name: newName, tags: newTags });
-
-                    let renamedRefsCount = 0;
-                    if (newName !== oldName) renamedRefsCount = await window.renameEmbedReferencesEverywhere(oldName, newName);
-
-                    _embedEditingId = null;
-                    await window.RulesCore.applyUserRulesToGlobals();
-                    await window.refreshEmbedList();
-                    if (document.getElementById('modal-conflict-manager') && document.getElementById('modal-conflict-manager').classList.contains('active')) {
-                        await window.RulesUI.refreshModalBody();
-                    }
-
-                    if (window.showAlert) {
-                        window.showAlert(
-                            renamedRefsCount > 0
-                                ? `Embed renamed to @${newName}. Updated ${renamedRefsCount} rule(s) that referenced @${oldName}.`
-                                : `Embed @${newName} updated!`,
-                            'success'
-                        );
-                    }
-                };
-
-            } else {
-                const badge = emb.isDefault ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444; margin-right:6px;">Original</span>' : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32; margin-right:6px;">Custom</span>';
-                el.style.cssText = 'background:#151515; border:1px solid #2a2a2a; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;';
-                el.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div>${badge}<span style="font-size:14px; font-weight:bold; color:#b890ff;">@${window.RulesUI.escapeHTML(emb.name)}</span></div>
-                        <div style="display:flex; gap:6px;">
-                            <button class="btn-emb-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
-                            <button class="btn-emb-del" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
-                        </div>
-                    </div>
-                    <div style="font-size:11px; color:#aaa; line-height:1.4; word-break:break-word;">${window.RulesUI.escapeHTML(safeTags.join(', '))}</div>
-                `;
-
-                el.querySelector('.btn-emb-edit').onclick = () => {
-                    _embedEditingId = emb.id;
-                    window.refreshEmbedList();
-                };
-
-                el.querySelector('.btn-emb-del').onclick = async () => {
-                    if (!confirm(`Delete embed @${emb.name}?`)) return;
-                    await window.RulesDB.deleteRule(emb.id);
-                    window.refreshEmbedList();
-                };
-            }
-
-            container.appendChild(el);
-        });
-    };
-
-    window.addCustomEmbed = async function() {
-        const nameInput = document.getElementById('embed-add-name'); const tagsInput = document.getElementById('embed-add-tags');
-        let name = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''); let tags = tagsInput.value.split(',').map(t => t.trim()).filter(t => t);
-        if (!name || tags.length === 0) { if(window.showAlert) window.showAlert('Please provide a valid name and tags.', 'warn'); return; }
-        await window.RulesDB.addRule('embed', { name: name, tags: tags }, false);
-        nameInput.value = ''; tagsInput.value = '';
-        window.refreshEmbedList();
-        if(window.showAlert) window.showAlert(`Embed @${name} saved!`, 'success');
-    };
+    async function restoreOriginalGroup(def) {
+        let deleted = await window.getSetting('deleted-default-rules', []);
+        if (!Array.isArray(deleted)) deleted = [];
+        deleted = deleted.filter(id => id !== def.id);
+        await window.saveSetting('deleted-default-rules', deleted);
+        let custom = await window.getSetting('custom-conflict-rules', []);
+        if (!Array.isArray(custom)) custom = [];
+        custom = custom.filter(r => !(r.category === 'embed' && String(r.name || '').toLowerCase() === def.name));
+        await window.saveSetting('custom-conflict-rules', custom);
+    }
 
     window.restoreEmbedDefaults = async function() {
-        if (!confirm(`Restore original default embeds?\n\n- Your custom embeds will be kept.`)) return;
-        let deletedDefaults = await window.getSetting('deleted-default-rules', []);
-        if (!Array.isArray(deletedDefaults)) deletedDefaults = [];
-        const embDefIds = window.RulesDB.getFactoryRules().filter(r => r.category === 'embed').map(r => r.id);
-        deletedDefaults = deletedDefaults.filter(id => !embDefIds.includes(id));
-        await window.saveSetting('deleted-default-rules', deletedDefaults);
+        for (const def of window.RulesDB.getFactoryRules().filter(r => r.category === 'embed')) await restoreOriginalGroup(def);
         await window.RulesCore.applyUserRulesToGlobals();
-        window.refreshEmbedList();
-        if (window.showAlert) window.showAlert(`Embed defaults restored!`, 'success');
+        if (window.RulesUI.refreshModalBody) await window.RulesUI.refreshModalBody();
     };
+
+    window.RulesUI.registerSection(5, async (rows) => {
+        const esc = window.RulesUI.escapeHTML;
+        const wrap = document.createElement('div');
+        wrap.className = 'panel';
+        wrap.style.cssText = 'flex: 0 0 280px; display:flex; flex-direction:column; background:#1b1b1b; border:1px solid #222; border-radius:10px; overflow:hidden; min-height:0;';
+        wrap.innerHTML = `
+            <div style="background:#222; padding:12px 15px; font-size:13px; font-weight:bold; color:#b890ff; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
+                <span>📦 Original Groups (@)</span>
+                <button class="og-restore-all" title="Restore the original tags of both groups" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px;">🔄</button>
+            </div>
+            <div style="font-size:11px; color:#aaa; padding:10px 15px; background:#151515; border-bottom:1px solid #222; line-height:1.5;">
+                Built-in groups usable as <b>@name</b> in the other rules. Your own groups are the categories of User Presets.
+            </div>`;
+        wrap.querySelector('.og-restore-all').onclick = async () => {
+            if (!confirm('Restore the original tags of both groups?')) return;
+            await window.restoreEmbedDefaults();
+        };
+        const list = document.createElement('div');
+        list.style.cssText = 'flex:1; overflow-y:auto; background:#111; padding:10px; display:flex; flex-direction:column; gap:6px;';
+        wrap.appendChild(list);
+
+        const embeds = rows.filter(r => r.category === 'embed' && !r.virtual);
+        for (const def of window.RulesDB.getFactoryRules().filter(r => r.category === 'embed')) {
+            const cur = embeds.find(e => String(e.name || '').toLowerCase() === def.name) || null;
+            const tags = cur ? (Array.isArray(cur.tags) ? cur.tags : []) : [];
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#151515; border:1px solid #2a2a2a; border-left:3px solid #b890ff; border-radius:6px; padding:8px 10px; display:flex; flex-direction:column; gap:6px;';
+            if (!cur) {
+                card.innerHTML = `<div style="font-size:12px; color:#777;">@${esc(def.name)} was deleted.</div>
+                    <button class="og-back" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">↩ Restore</button>`;
+                card.querySelector('.og-back').onclick = async () => { await restoreOriginalGroup(def); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+            } else if (_origEditing.id === cur.id) {
+                card.innerHTML = `<div style="font-size:11px; color:#b890ff; font-weight:bold;">✏️ Editing @${esc(def.name)}</div>
+                    <textarea style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-height:90px; resize:vertical;">${esc(tags.join(', '))}</textarea>
+                    <div style="display:flex; gap:6px; justify-content:flex-end;">
+                        <button class="og-cancel" style="background:#222; border:1px solid #444; color:#aaa; font-size:11px; padding:5px 12px; border-radius:4px; cursor:pointer;">✖ Cancel</button>
+                        <button class="og-save" style="background:#00aa66; border:none; color:#000; font-size:11px; padding:5px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">✅ Update</button>
+                    </div>`;
+                card.querySelector('.og-cancel').onclick = () => { _origEditing.id = null; window.RulesUI.refreshModalBody(); };
+                card.querySelector('.og-save').onclick = async () => {
+                    const nt = card.querySelector('textarea').value.split(',').map(t => t.trim()).filter(Boolean);
+                    if (!nt.length) { if (window.showAlert) window.showAlert('At least 1 tag is required.', 'warn'); return; }
+                    await window.RulesDB.updateRule(cur.id, { name: def.name, tags: nt });
+                    _origEditing.id = null;
+                    await window.RulesCore.applyUserRulesToGlobals();
+                    window.RulesUI.refreshModalBody();
+                };
+            } else {
+                const open = _origOpen.has(def.name);
+                const badge = cur.isDefault
+                    ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;">Original</span>'
+                    : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;">Edited</span>';
+                card.innerHTML = `<div style="display:flex; align-items:center; gap:6px;">
+                        <span class="og-head" style="flex:1; cursor:pointer; font-size:13px; font-weight:bold; color:#b890ff;" title="Show / hide the tags">${open ? '▾' : '▸'} @${esc(def.name)} <span style="color:#666; font-size:10px; font-weight:normal;">${tags.length}</span></span>
+                        ${badge}
+                        <button class="og-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:2px 7px; border-radius:4px; cursor:pointer;">✏️</button>
+                        ${cur.isDefault ? '' : '<button class="og-reset" title="Restore original tags" style="background:#222; border:1px solid #444; color:#aaa; font-size:12px; padding:2px 7px; border-radius:4px; cursor:pointer;">↩</button>'}
+                    </div>
+                    ${open ? `<div style="font-size:11px; color:#aaa; line-height:1.4; word-break:break-word;">${esc(tags.join(', '))}</div>` : ''}`;
+                card.querySelector('.og-head').onclick = () => { open ? _origOpen.delete(def.name) : _origOpen.add(def.name); window.RulesUI.refreshModalBody(); };
+                card.querySelector('.og-edit').onclick = () => { _origEditing.id = cur.id; window.RulesUI.refreshModalBody(); };
+                const rs = card.querySelector('.og-reset');
+                if (rs) rs.onclick = async () => { await restoreOriginalGroup(def); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+            }
+            list.appendChild(card);
+        }
+        return wrap;
+    });
+
+    // --- ONE-TIME MIGRATION: custom embeds -> User Presets categories ---
+    async function migrateEmbedsToPresets() {
+        try {
+            if (await window.getSetting('embeds-migrated-to-presets', false)) return;
+            if (typeof loadPresetsToCache === 'function') await loadPresetsToCache();
+            if (!window._presetsLoadedSuccessfully) return setTimeout(migrateEmbedsToPresets, 3000);
+            const origNames = new Set(window.RulesDB.getFactoryRules().filter(r => r.category === 'embed').map(r => r.name));
+            let custom = await window.getSetting('custom-conflict-rules', []);
+            if (!Array.isArray(custom)) custom = [];
+            const mine = custom.filter(r => r.category === 'embed' && !origNames.has(String(r.name || '').toLowerCase()));
+            if (mine.length) {
+                await window.saveSetting('embeds-backup-pre-preset-migration', mine);
+                const overlaps = [];
+                for (const emb of mine) {
+                    const cat = window.RulesDB.presetGroupSlug(emb.name) || String(emb.name || 'group');
+                    for (const t of (Array.isArray(emb.tags) ? emb.tags : [])) {
+                        const cur = window._presetsCache[t];
+                        if (cur && cur !== 'Uncategorized' && cur !== cat) { overlaps.push(`${t} (@${emb.name} -> ${cur})`); continue; }
+                        await window.savePresetTag(t, cat, true);
+                    }
+                    await window.savePresetTag('_sys_cat_' + cat, cat, true);
+                }
+                custom = custom.filter(r => !mine.includes(r));
+                await window.saveSetting('custom-conflict-rules', custom);
+                if (typeof window.renderPresetTags === 'function') window.renderPresetTags();
+                if (window.showAlert) window.showAlert(`${mine.length} custom embed(s) moved to User Presets as groups.` + (overlaps.length ? ` ${overlaps.length} tag(s) already belonged to another group and kept it (backup saved).` : ''), overlaps.length ? 'warn' : 'success');
+                if (overlaps.length) console.warn('[embeds -> presets] overlaps:', overlaps);
+            }
+            await window.saveSetting('embeds-migrated-to-presets', true);
+            await window.RulesCore.applyUserRulesToGlobals();
+        } catch (e) { console.warn('embed migration failed', e); }
+    }
+    setTimeout(migrateEmbedsToPresets, 3500);
+
+    // Presets changed -> @groups changed: recompute the rules (debounced).
+    let _presetRuleTimer = null;
+    function hookPresetChanges() {
+        ['savePresetTag', 'deletePresetTag'].forEach(fn => {
+            const orig = window[fn];
+            if (typeof orig !== 'function' || orig.__ruleHook) return;
+            const w = async function () {
+                const r = await orig.apply(this, arguments);
+                clearTimeout(_presetRuleTimer);
+                _presetRuleTimer = setTimeout(() => { if (window.RulesCore && window.RulesCore.applyUserRulesToGlobals) window.RulesCore.applyUserRulesToGlobals(); }, 400);
+                return r;
+            };
+            w.__ruleHook = true;
+            window[fn] = w;
+        });
+    }
+    setTimeout(hookPresetChanges, 0);
+    window.addEventListener('DOMContentLoaded', () => setTimeout(hookPresetChanges, 1500));
 })();

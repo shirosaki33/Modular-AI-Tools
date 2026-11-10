@@ -186,7 +186,6 @@ window.renderMasterTagList = function() {
 
             const isAlreadyPreset = !isCustomNL && window._presetTagsSet && window._presetTagsSet.has(tag);
             if (isAlreadyPreset && (presetsVisible || window.presetHighlightsAlwaysVisible) && window.enablePresetHighlight !== false) item.classList.add('is-preset');
-            const presetIconHtml = (isAlreadyPreset || isCustomNL) ? '' : `<span class="tag-save-preset" style="display: ${presetsVisible ? 'inline' : 'none'}; color: #4db8ff; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Save to Global Presets">💾</span>`;
             const ghostIconHtmlMaster = (window.enableGhostConvertIcon !== false && !isCustomNL) ? `<span class="tag-to-ghost" title="Convert to Ghost globally">💡</span>` : '';
 
             const dbAliasInfoHtml = aliasParts.icon;
@@ -195,7 +194,7 @@ window.renderMasterTagList = function() {
                 <div style="display:flex; align-items:center; overflow:hidden; flex:1;">
                     <span class="tag-pin${isPinned ? ' active' : ''}" style="color: ${isPinned ? '#4db8ff' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Pin as a mandatory filter">📌</span>
                     <span class="tag-star" style="color: ${favTags.has(tag) ? '#00ff99' : '#444'}; margin-right: 8px; font-size: 14px; cursor: pointer; user-select:none;" title="Favorite/Unfavorite">${favTags.has(tag) ? '⭐' : '☆'}</span>
-                    ${presetIconHtml}
+
                     <span style="color:#555; font-size:10px; font-weight:bold; min-width:22px; text-align:left; margin-right:8px; user-select:none;">${count}</span>
                     <span class="tag-name${aliasParts.nameClass}" style="${isCustomNL ? 'color:#b890ff;' : ''}" data-nl-raw="${esc(tag)}"${aliasParts.nameAttrs}>${esc(window.nlDisplay(tag))}</span>
                     ${dbAliasArrowHtml}
