@@ -181,11 +181,6 @@ window.updateNlWordThreshold = function(val, skipSave = false) {
     }
 };
 
-// NOTE: toggleE621 / toggleE621Sfw are defined only in tagmanager_danbooru_panel.js.
-
-window.manualDanbooruSync = function() {
-    window.syncDanbooruTags(Array.from(masterTagSet), true);
-};
 
 let _danbooruSyncActive = false;
 window.syncDanbooruTags = async function(tags, force = false) {
@@ -1310,106 +1305,6 @@ window.discardAllSuggestions = async function() {
     if (typeof window.applyFilters === 'function') window.applyFilters();
     window.showAlert("All pending suggestions discarded.", "success");
 };
-
-window.reorderModeActive = false;
-let _reorderDragImgs = null;
-window.toggleReorderMode = function() {
-    window.reorderModeActive = !window.reorderModeActive;
-    const btn = document.getElementById('btn-reorder-mode');
-    if (btn) {
-        btn.textContent = window.reorderModeActive ? '🔓' : '🔒';
-        btn.title = window.reorderModeActive ? 'Reorder mode ON — drag images to move them' : 'Unlock Reorder Mode';
-        btn.style.color = window.reorderModeActive ? '#00ff99' : '#aaa';
-        btn.style.borderColor = window.reorderModeActive ? '#00aa66' : '#444';
-    }
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-};
-
-window.reorderImagesInList = function(movedImgs, targetImg, insertAfter) {
-    if (!movedImgs || movedImgs.length === 0 || !targetImg) return;
-    const movedSet = new Set(movedImgs);
-    if (movedSet.has(targetImg)) return;
-    const selectedBaseNamesBefore = Array.from(selectedIndices).map(i => imageFiles[i] ? imageFiles[i].baseName : null).filter(Boolean);
-    const movedInOrder = imageFiles.filter(f => movedSet.has(f));
-
-    for (let i = imageFiles.length - 1; i >= 0; i--) { if (movedSet.has(imageFiles[i])) imageFiles.splice(i, 1); }
-    let insertPos = imageFiles.indexOf(targetImg);
-    if (insertPos === -1) insertPos = imageFiles.length;
-    if (insertAfter) insertPos += 1;
-
-    imageFiles.splice(insertPos, 0, ...movedInOrder);
-    imageFiles.forEach((f, i) => {
-        if (!datasetConfig[f.baseName]) datasetConfig[f.baseName] = {};
-        datasetConfig[f.baseName].order = i;
-    });
-    if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
-    selectedIndices.clear();
-
-    if (typeof window.renderImageList === 'function') window.renderImageList();
-    imageFiles.forEach((f, i) => { if (selectedBaseNamesBefore.includes(f.baseName)) selectedIndices.add(i); });
-    if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
-};
-
-function injectReorderHandlers() {
-    if (typeof imageFiles === 'undefined') return;
-    imageFiles.forEach((img, index) => {
-        if (!img.element) return;
-        const el = img.element;
-        if (!window.reorderModeActive) {
-            el.draggable = false; el.classList.remove('reorder-draggable');
-            el.ondragstart = null; el.ondragend = null; el.ondragover = null; el.ondragleave = null; el.ondrop = null;
-            return;
-        }
-        if (img.hidden) return;
-        el.draggable = true; el.classList.add('reorder-draggable');
-
-        el.ondragstart = (e) => {
-            e.stopPropagation();
-            if (typeof selectedIndices !== 'undefined' && selectedIndices.has(index) && selectedIndices.size > 1) {
-                _reorderDragImgs = Array.from(selectedIndices).sort((a, b) => a - b).map(i => imageFiles[i]).filter(Boolean);
-            } else { _reorderDragImgs = [img]; }
-            _reorderDragImgs.forEach(dImg => { if (dImg.element) dImg.element.classList.add('dragging'); });
-            if (_reorderDragImgs.length > 1 && e.dataTransfer) { try { e.dataTransfer.setData('text/plain', `${_reorderDragImgs.length} images`); } catch (err) {} }
-        };
-        el.ondragend = () => {
-            if (_reorderDragImgs) _reorderDragImgs.forEach(dImg => { if (dImg.element) dImg.element.classList.remove('dragging'); });
-            el.classList.remove('drag-over-top', 'drag-over-bottom'); _reorderDragImgs = null;
-        };
-        el.ondragover = (e) => {
-            e.preventDefault(); e.stopPropagation();
-            if (!_reorderDragImgs) return;
-            const rect = el.getBoundingClientRect(); const midpoint = rect.top + rect.height / 2;
-            el.classList.toggle('drag-over-top', e.clientY < midpoint); el.classList.toggle('drag-over-bottom', e.clientY >= midpoint);
-        };
-        el.ondragleave = () => el.classList.remove('drag-over-top', 'drag-over-bottom');
-        el.ondrop = (e) => {
-            e.preventDefault(); e.stopPropagation();
-            el.classList.remove('drag-over-top', 'drag-over-bottom');
-            if (!_reorderDragImgs || _reorderDragImgs.includes(img)) return;
-            const rect = el.getBoundingClientRect(); const midpoint = rect.top + rect.height / 2;
-            window.reorderImagesInList(_reorderDragImgs, img, e.clientY >= midpoint);
-        };
-    });
-}
-
-(function wrapRenderImageListForReorder() {
-    const tryWrap = () => {
-        if (typeof window.renderImageList !== 'function' || window.renderImageList.__reorderWrapped) return false;
-        const original = window.renderImageList;
-        const wrapped = function() { original.apply(this, arguments); injectReorderHandlers(); };
-        wrapped.__reorderWrapped = true; window.renderImageList = wrapped; return true;
-    };
-    if (!tryWrap()) window.addEventListener('DOMContentLoaded', tryWrap);
-})();
-
-const reorderStyle = document.createElement('style');
-reorderStyle.innerHTML = `
-    .list-item.reorder-draggable { cursor: grab; }
-    .list-item.reorder-draggable:active { cursor: grabbing; }
-    .list-item.reorder-draggable.dragging { opacity: 0.4; }
-    #btn-reorder-mode.active-mode { background: #0d2a18 !important; }
-`;
-document.head.appendChild(reorderStyle);
 
 /* ---------------------------------------------------------------------
    GUARDA DE VISIBILIDADE DA SELEÇÃO

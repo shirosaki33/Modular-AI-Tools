@@ -409,11 +409,8 @@
        de tags únicas, refazer computeLiveDatasetTagSet() (uma varredura
        completa de TODAS as imagens) a cada uma delas virava um dos
        principais motivos do dataset "demorar mais pra carregar/renderizar".
-       window.checkTagRedundantStatus continua existindo (API pública, caso
-       algo mais chame), só que agora é um wrapper fino sobre o helper —
-       ainda faz UMA varredura por chamada quando usado isoladamente, mas
-       injectRedundantWarnings NÃO passa mais por aqui: ele calcula o
-       liveSet uma única vez e chama o helper diretamente para cada tag. */
+       injectRedundantWarnings calcula o liveSet uma única vez e chama
+       o helper diretamente para cada tag. */
     function getRedundantPartnersWithLiveSet(tagLower, liveSet) {
         if (!Array.isArray(window.tagRedundant) || window.tagRedundant.length === 0) return [];
         if (!liveSet.has(tagLower)) return [];
@@ -432,9 +429,6 @@
         return [...found];
     }
 
-    window.checkTagRedundantStatus = function (tagLower) {
-        return getRedundantPartnersWithLiveSet(tagLower, computeLiveDatasetTagSet());
-    };
 
     /* ---------- INJEÇÃO DO AVISO EM All Dataset Tags (pós-render), COM ✖ POR ITEM ---------- */
     function injectRedundantWarnings(container) {

@@ -589,13 +589,6 @@
         };
         return `<div class="et-trig">🏷️ ${tc.natural ? 'Caption changes' : 'Tag changes'}: ${tc.add.map(t => `<span class="et-tadd">+ ${esc(t)}${mark(t)}</span>`).join(' ')} ${tc.remove.map(t => `<span class="et-trem">− ${esc(t)}</span>`).join(' ')}</div>`;
     }
-    function trigLine(t) {
-        if (!t || (!t.missing.length && !t.wrong.length)) return '';
-        const parts = [];
-        if (t.missing.length) parts.push(`add trigger <b>${esc(t.missing.join(', '))}</b>`);
-        if (t.wrong.length) parts.push(`remove <b>${esc(t.wrong.join(', '))}</b> (trigger of another style)`);
-        return `<div class="et-trig">🏷️ Caption (${esc(t.style)}): ${parts.join(' · ')}</div>`;
-    }
 
     function bucketLine(r) {
         const F = cfg.tipFields || {};
@@ -610,14 +603,6 @@
         return html;
     }
 
-    function bucketPick(r) {
-        if (!r.bucket) return '';
-        if (r.bucket === 'current') return `<div class="et-bucket">📐 Resolution: current size is the best ${esc(r.bucketModel || '')} bucket${r.bucketReason ? ` — ${esc(r.bucketReason)}` : ''}</div>`;
-        const [bw, bh] = r.bucket.split('x').map(Number);
-        const mark = bw === bh ? '□' : (bh > bw ? '▯' : '▭');
-        const how = r.bucketCrop ? `crop around the subject · removes ${r.bucketRemoved}% empty space` : `keeps ${r.bucketKept}%`;
-        return `<div class="et-bucket">📐 Better bucket: <b>${mark} ${bw}×${bh}</b> <span style="color:#888;">(${esc(r.bucketModel || '')} · ${how}${r.bucketUpscale ? ` · ${r.bucketUpscale}× upscale` : ''})</span>${r.bucketReason ? `<br>${esc(r.bucketReason)}` : ''}</div>`;
-    }
 
     function moveTip(ev) {
         if (!tip || tip.style.display !== 'block') return;

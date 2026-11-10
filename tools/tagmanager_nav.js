@@ -33,6 +33,8 @@
         #topbar .topbar-section.left { overflow:hidden; }
         #topbar .topbar-section.left button { white-space:nowrap; flex-shrink:0; }
         #topbar .topbar-section.left select.folder-select { flex:0 1 auto; min-width:56px; }
+        #btn-last-dataset { display:none; background:#1a2a3c; color:#8fd0ff; border:1px solid #2a5a8c; }
+        #btn-last-dataset:hover { color:#fff; border-color:#4db8ff; }
         #btn-goto-folder { display:none; white-space:nowrap; background:#0d1f2a; color:#66ccff; border:1px solid #144a63; }
         #btn-goto-folder:hover { color:#fff; border-color:#66ccff; }
     `;
@@ -70,6 +72,8 @@
     }
 
     window.tmOnFolderLoaded = function () {
+        rememberLastDataset();
+        paintLast();
         if (window._tmSkipHistory) return;
         const loc = { root: window.rootHandle, path: typeof window.tmCurrentFolderPath === 'function' ? window.tmCurrentFolderPath() : [], worked: false };
         if (!loc.root) return;
@@ -156,8 +160,75 @@
         } finally { if (btn) btn.disabled = false; }
     }
 
+    /* ---------- ⏪ LAST DATASET (shown at start-up) ----------
+       Every time a folder is opened, its root handle (IndexedDB, hidden key) and the subfolder path (settings) are
+       remembered. After restarting the app, "⏪ Last" next to the folder dropdown reopens it in one click (the click
+       is also what lets the browser ask for permission to the folder again). It disappears once a dataset is open. */
+    const LAST_ROOT_KEY = 'path_last_dataset_root';
+    const LAST_PATH_KEY = 'last-dataset-path';
+    let lastSaved = null;            // { root: FileSystemDirectoryHandle, path: [..] } loaded at start-up
+    let _lastRootSaved = null;       // root handle already written to IndexedDB in this session
+
+    async function rememberLastDataset() {
+        try {
+            const root = window.rootHandle;
+            if (!root) return;
+            const path = typeof window.tmCurrentFolderPath === 'function' ? window.tmCurrentFolderPath() : [];
+            if (typeof window.saveSetting === 'function') window.saveSetting(LAST_PATH_KEY, { name: root.name, path });
+            let changed = true;
+            if (_lastRootSaved) { try { changed = !(await _lastRootSaved.isSameEntry(root)); } catch (e) {} }
+            if (changed && typeof window.saveHandle === 'function') {
+                _lastRootSaved = root;
+                await window.saveHandle(LAST_ROOT_KEY, root);
+            }
+        } catch (e) { console.warn('[Last dataset] could not remember it', e); }
+    }
+
+    async function loadLastDataset() {
+        try {
+            if (typeof window.getRawHandle !== 'function' || typeof window.getSetting !== 'function') return;
+            const root = await window.getRawHandle(LAST_ROOT_KEY);
+            if (!root || root.kind !== 'directory') return;
+            const info = (await window.getSetting(LAST_PATH_KEY, null)) || {};
+            lastSaved = { root, path: Array.isArray(info.path) ? info.path : [] };
+            _lastRootSaved = root;
+            paintLast();
+        } catch (e) { console.warn('[Last dataset]', e); }
+    }
+
+    function paintLast() {
+        const b = document.getElementById('btn-last-dataset');
+        if (!b) return;
+        const show = !!lastSaved && !window.rootHandle;
+        b.style.display = show ? 'inline-block' : 'none';
+        if (show) b.title = `Reopen the last dataset you had open: ${labelOf(lastSaved)}`;
+    }
+
+    async function openLastDataset() {
+        if (!lastSaved) return;
+        const target = lastSaved;
+        let ok = false;
+        try { ok = await window.tmOpenFolderPath(target.root, target.path); }
+        catch (e) { console.warn('[Last dataset]', e); }
+        if (!ok) {
+            if (window.showAlert) window.showAlert(`Could not open "${labelOf(target)}" (no permission or the folder was moved/removed).`, 'error');
+        } else if (window.rootHandle && window.showAlert) {
+            window.showAlert(`Reopened "${labelOf({ root: window.rootHandle, path: window.tmCurrentFolderPath() })}".`, 'success');
+        }
+        paintLast();
+    }
+
     /* ---------- buttons ---------- */
     function injectButtons() {
+        const dirList = document.getElementById('dir-list');
+        if (dirList && !document.getElementById('btn-last-dataset')) {
+            const l = document.createElement('button');
+            l.id = 'btn-last-dataset';
+            l.textContent = '⏪ Last';
+            l.onclick = openLastDataset;
+            dirList.insertAdjacentElement('afterend', l);
+            paintLast();
+        }
         const refresh = document.getElementById('btn-refresh');
         if (refresh && !document.getElementById('btn-prev-dataset')) {
             const b = document.createElement('button');
@@ -225,8 +296,9 @@
         injectButtons();
         injectDepthSetting();
         paintGoto();
+        loadLastDataset();
         if (window.TM && typeof window.TM.on === 'function') window.TM.on('dataset:loaded', () => { injectButtons(); paintGoto(); });
-        setInterval(paintGoto, 1500);   // cheap: follows Load Folder / Remove
+        setInterval(() => { paintGoto(); paintLast(); }, 1500);   // cheap: follows Load Folder / Remove
     });
     window.tmGoToDatasetFolder = goToFolder;
     window.tmGoPreviousDataset = goPrevious;

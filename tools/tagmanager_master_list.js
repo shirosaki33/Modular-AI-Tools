@@ -55,7 +55,7 @@ window.renderMasterTagList = function() {
 
     if(typeof imageFiles !== 'undefined') {
         imageFiles.forEach(img => {
-            if (img.hidden || !img.hasFile || !img.content) return;
+            if (img.hidden || img.muted || !img.hasFile || !img.content) return;   // img.muted: color group muted (tagmanager_color_groups.js)
             _mlSplitTags(img.content).forEach(cleanTag => {
                 tagCounts.set(cleanTag, (tagCounts.get(cleanTag) || 0) + 1);
                 if (window.checkIfNL(cleanTag)) nlSet.add(cleanTag);
@@ -382,12 +382,6 @@ window.applyFilters = function() {
         }
 
         const totalSelected = masterSelectedTags.size + masterSelectedGhostTags.size;
-        if (visible && window.imageFilterMode !== 'ALL') {
-            const hasNL = tags.some(t => window.checkIfNL(t));
-            const hasTag = tags.some(t => !window.checkIfNL(t));
-            if (window.imageFilterMode === 'TAGS' && !hasTag) visible = false;
-            if (window.imageFilterMode === 'NL' && !hasNL) visible = false;
-        }
 
         if (visible && totalSelected > 0) {
             const pending = img.pendingAdd || [];

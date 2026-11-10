@@ -15,10 +15,6 @@
 /* ---------- COMPORTAMENTO AO CLICAR NUMA SUGESTÃO-ALIAS ---------- */
 window.e621AliasClickBehavior = window.e621AliasClickBehavior || 'replace';
  
-window.e621SetAliasClickBehavior = function (mode) {
-    window.e621AliasClickBehavior = mode === 'keep' ? 'keep' : 'replace';
-    if (typeof window.saveSetting === 'function') window.saveSetting('e621-alias-click-behavior', window.e621AliasClickBehavior);
-};
  
 /* ---------- FEATURE 1: CONVERTER ALIAS -> TAG PRINCIPAL, GLOBALMENTE ---------- */
 window.e621ConvertAliasTagGlobally = function (oldTag, newTag) {

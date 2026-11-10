@@ -99,8 +99,7 @@
         // Ao lado do 🪣 (injetado por tagmanager_bucket_check.js). Se ele ainda
         // não existir, ancora no último botão da barra; o 🪣 entra antes dele.
         const anchor = document.getElementById('btn-scan-buckets')
-            || document.getElementById('btn-compact-group-depth')
-            || document.getElementById('btn-toggle-compact-view');
+            || document.getElementById('btn-psd-import');
         if (!anchor) return null;
         btn = document.createElement('button');
         btn.id = 'btn-fix-dup-names';

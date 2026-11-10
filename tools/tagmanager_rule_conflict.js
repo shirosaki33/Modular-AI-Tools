@@ -560,8 +560,6 @@
         if (typeof window.renderEditor === 'function' && typeof selectedIndices !== 'undefined' && selectedIndices.size > 0) window.renderEditor();
     };
     
-    // For backwards compatibility
-    window.reloadUserConflictRules = () => window.RulesCore.applyUserRulesToGlobals();
 
     window.RulesCore.restoreDefaultRules = async function() {
         if (!confirm(`Restore ALL original default rules across ALL categories?\n\n- Your custom rules & embeds WILL BE KEPT intact!`)) return;
@@ -595,7 +593,6 @@
     };
 
     window.RulesCore.overrideOriginalSystems = function() {
-        window.customTagRules = []; 
         const toggleConflict = document.getElementById('toggle-conflict-warnings');
         if (toggleConflict) {
             const label = toggleConflict.parentElement;
@@ -743,9 +740,6 @@
         this.updateActive();
     };
 
-    // Replace globals for backward compatibility
-    window.updateGlobalIssueCounters = () => window.IssueCounters.updateGlobal();
-    window.updateActiveIssueCounters = () => window.IssueCounters.updateActive();
 
     // --- GLOW (HOVER HIGHLIGHT) ---
     const glowStyle = document.createElement('style');

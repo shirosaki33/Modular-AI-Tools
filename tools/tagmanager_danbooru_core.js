@@ -31,8 +31,6 @@ if (typeof window.createBooruClient !== 'function') {
         delays: { batch: 800, single: 400, alias: 0, exists: 350, wiki: 350 }
     });
 
-    window.markTagAsUnknownDb       = key => DB.markUnknown(key);
-    window.unmarkTagUnknownDb       = key => DB.unmarkUnknown(key);
     window.isTagUnknownDb           = key => DB.isUnknown(key);
     window.dbGetCachedTag           = tag => DB.getCachedTag(tag);
     window.dbResolveAlias           = tag => DB.resolveAlias(tag);
@@ -48,9 +46,6 @@ if (typeof window.createBooruClient !== 'function') {
     window.dbWikiRecursive = (seeds, opts) => DB.wikiRecursive(seeds, opts);
     window.dbFullTextTags = () => DB.fullTextTags();
     window.dbSearchTagMatches       = (query, limit = 6, opts) => DB.searchTagMatches(query, limit, opts);
-    window._flushDanbooruCachePersist = (useBeacon = false) => DB.flushPersist(useBeacon);
-    window.dbTagExists              = tag => DB.tagExists(tag);
-    window.dbFetchSingleTagInfo     = (tag, force = false) => DB.fetchSingleTagInfo(tag, force);
 }
 
 /* Nomes globais antigos (prompt_helper_tags.js e outros scripts usam). */
@@ -60,10 +55,4 @@ function bumpDanbooruCacheVersion() {
 }
 function scheduleDanbooruCachePersist() {
     if (window.danbooruClient) window.danbooruClient.schedulePersist();
-}
-function dbPersistCache(useBeacon = false) {
-    return window.danbooruClient ? window.danbooruClient.persist(useBeacon) : Promise.resolve();
-}
-function dbWildcardParam(query) {
-    return encodeURIComponent('*' + String(query || '').trim().replace(/ /g, '_') + '*');
 }

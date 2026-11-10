@@ -1580,8 +1580,7 @@
     function injectButton() {
         if (document.getElementById('btn-grayscale')) return;
         const anchor = document.getElementById('btn-scan-buckets')
-            || document.getElementById('btn-compact-group-depth')
-            || document.getElementById('btn-toggle-compact-view');
+            || document.getElementById('btn-psd-import');
         if (!anchor) return;
         const btn = document.createElement('button');
         btn.id = 'btn-grayscale';

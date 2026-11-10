@@ -208,10 +208,6 @@
         return Array.from(map.values()).map(v => v.label).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
     }
 
-    async function getKnownLabels() {
-        const items = await getArchiveEntriesForCurrentDataset();
-        return sortedLabelList(collectLabels(items));
-    }
 
     // Um <datalist> único (usado pelo popout de motivo e pelo editor inline do painel).
     function fillLabelDatalist(labels) {

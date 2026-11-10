@@ -38,8 +38,7 @@
      tagmanager_rule_similar.js), window.togglePresetPanel,
      window.filterPresetTagsByName, window.presetHighlightsAlwaysVisible,
      window.togglePresetHighlightAlways, window.addSelectedPresetTagsTo,
-     window.removeSelectedPresetTags, window.createPresetCategory,
-     window.renameSelectedPresetCategory, window.deleteSelectedPresetCategory,
+     window.removeSelectedPresetTags,
      window.addPresetTagFromInput, window.refreshPresetTagsSet, `.master-tag-item`
      rows with a `.tag-name` child (needed by the Similar/Conflict hooks).
 ========================================================================= */
@@ -392,12 +391,6 @@ window.addPresetTagFromInput = async function () {
     ppSetStatus(parts.join(', ') + '.');
 };
 
-window.createPresetCategory = function () {
-    const catName = prompt('Name the new category:');
-    if (catName && catName.trim()) {
-        window.savePresetTag(`_sys_cat_${catName.trim()}`, catName.trim());
-    }
-};
 
 /* =========================================================================
    CATEGORY OPERATIONS (shared by the side panel API and the modal)
@@ -471,16 +464,6 @@ async function ppDeleteCategory(catName) {
     return true;
 }
 
-// Old API (kept for compatibility)
-window.renameSelectedPresetCategory = async function () {
-    const oldName = window.selectedPresetCategory;
-    if (!oldName || oldName === 'Uncategorized') return;
-    const n = prompt(`Rename category "${oldName}" to:`, oldName);
-    if (n) await ppRenameCategory(oldName, n);
-};
-window.deleteSelectedPresetCategory = async function () {
-    await ppDeleteCategory(window.selectedPresetCategory);
-};
 
 /* =========================================================================
    SIDE PANEL SHELL

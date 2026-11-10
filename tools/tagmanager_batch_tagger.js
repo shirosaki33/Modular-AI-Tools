@@ -920,6 +920,71 @@ async function inferTags(session, tags, imgUrl, threshold, excludeArray) {
 /* === SISTEMA DE CANCELAMENTO === */
 window.isBatchCancelled = false;
 
+/* =========================================================================
+   AUTO-CAPTION FOR SPECIFIC IMAGES (🤖 button on each image row)
+   ---------------------------------------------------------------------
+   window.openAutoCaptionFor(imgs) opens this popout with a banner saying that
+   "Start Batch Process" will caption ONLY those images (so the settings can be
+   adjusted first). startBatchTagging() reads window._autoCaptionImgs, and clears
+   it when the run starts. The ✖ on the banner goes back to the whole folder.
+========================================================================= */
+window._autoCaptionImgs = window._autoCaptionImgs || null;
+window._autoCaptionRanOnce = window._autoCaptionRanOnce || false;
+
+window.updateAutoCaptionSubsetBanner = function () {
+    const startBtn = document.getElementById('btn-start-batch');
+    if (!startBtn) return;
+    let box = document.getElementById('auto-subset-banner');
+    const imgs = window._autoCaptionImgs;
+    // Recursive Mode and "Skip captioned" make no sense for chosen images: dim and lock them while the banner is on
+    // (their checked state is kept, so they are back to normal when the banner goes away).
+    const lockOpts = (on) => {
+        ['recursive-mode-toggle', 'skip-captioned-toggle'].forEach(id => {
+            const cb = document.getElementById(id);
+            if (!cb) return;
+            const wrap = id === 'recursive-mode-toggle' ? (document.getElementById('recursive-mode-box') || cb.parentElement) : cb.parentElement;
+            cb.disabled = on;
+            if (wrap) {
+                wrap.style.opacity = on ? '0.35' : '';
+                wrap.style.pointerEvents = on ? 'none' : '';
+                wrap.title = on ? 'Not used when captioning only the selected images' : '';
+            }
+        });
+    };
+    if (!imgs || !imgs.length) { lockOpts(false); if (box) box.style.display = 'none'; return; }
+    lockOpts(true);
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'auto-subset-banner';
+        box.style.cssText = 'display:flex; align-items:center; gap:10px; margin-top:15px; background:#2a1f0a; border:1px solid #7a5a1a; color:#ffcf70; padding:8px 12px; border-radius:6px; font-size:12px;';
+        const txt = document.createElement('span');
+        txt.id = 'auto-subset-banner-text';
+        txt.style.flex = '1';
+        const clr = document.createElement('button');
+        clr.type = 'button';
+        clr.textContent = '✖ Whole folder';
+        clr.title = 'Forget the selected images and caption the whole folder instead';
+        clr.style.cssText = 'background:#3a2a10; color:#ffcf70; border:1px solid #7a5a1a; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:11px; white-space:nowrap;';
+        clr.onclick = (e) => { e.stopPropagation(); window._autoCaptionImgs = null; window.updateAutoCaptionSubsetBanner(); };
+        box.appendChild(txt); box.appendChild(clr);
+        startBtn.parentNode.parentNode.insertBefore(box, startBtn.parentNode.nextSibling);   // right below the Start / Cancel row
+    }
+    box.style.display = 'flex';
+    document.getElementById('auto-subset-banner-text').textContent =
+        `🖼️ Only ${imgs.length} selected image${imgs.length === 1 ? '' : 's'} will be captioned (not the whole folder). Adjust the settings, then press Start.`;
+};
+
+window.openAutoCaptionFor = function (imgs) {
+    window._autoCaptionImgs = (Array.isArray(imgs) && imgs.length) ? imgs.slice() : null;
+    if (typeof window.toggleMode === 'function') window.toggleMode();
+    window.updateAutoCaptionSubsetBanner();
+};
+
+if (window.TM && typeof window.TM.on === 'function') {
+    // A different dataset was loaded: the remembered images no longer exist.
+    window.TM.on('dataset:loaded', () => { window._autoCaptionImgs = null; window.updateAutoCaptionSubsetBanner(); });
+}
+
 window.stopBatchTagging = function() {
     window.isBatchCancelled = true;
     // Natural Language / PyTorch: also interrupts a model download / load / generation in progress
@@ -929,9 +994,15 @@ window.stopBatchTagging = function() {
     if(cancelBtn) cancelBtn.textContent = "Stopping...";
 };
 
-window.startBatchTagging = async function() {
+// onlyImgs (optional array of imageFiles entries): run Auto-Caption ONLY on those images (the 🤖 button on each
+// image row). Ignores Recursive Mode and "Skip captioned" — the user asked for exactly these images.
+window.startBatchTagging = async function(onlyImgs) {
+    // Images chosen with the 🤖 button on a row (directly, or remembered by openAutoCaptionFor) -> caption only those.
+    const subsetImgs = (Array.isArray(onlyImgs) && onlyImgs.length) ? onlyImgs
+        : ((Array.isArray(window._autoCaptionImgs) && window._autoCaptionImgs.length) ? window._autoCaptionImgs : null);
+    const subset = !!subsetImgs;
     const recursiveToggle = document.getElementById('recursive-mode-toggle');
-    const isRecursive = !!(recursiveToggle && recursiveToggle.checked);
+    const isRecursive = !subset && !!(recursiveToggle && recursiveToggle.checked);
 
     let targetHandle, targetFiles;
 
@@ -962,7 +1033,7 @@ window.startBatchTagging = async function() {
     } else {
         const env = getTargetEnv();
         targetHandle = env.handle;
-        targetFiles = env.files;
+        targetFiles = subset ? subsetImgs.slice() : env.files;
     }
 
     if (!targetFiles || !targetFiles.length || !targetHandle) {
@@ -973,11 +1044,11 @@ window.startBatchTagging = async function() {
     // "Skip captioned": leave images that already have caption text untouched (also keeps the counter honest).
     const skipEl = document.getElementById('skip-captioned-toggle');
     const reviewEl = document.getElementById('review-mode-toggle');
-    if (skipEl && skipEl.checked && reviewEl && reviewEl.checked) {
+    if (!subset && skipEl && skipEl.checked && reviewEl && reviewEl.checked) {
         if(window.showAlert) window.showAlert('"Skip captioned" cannot be used together with Review Mode. Turn one of them off.', "error");
         return;
     }
-    if (skipEl && skipEl.checked) {
+    if (!subset && skipEl && skipEl.checked) {
         const before = targetFiles.length;
         targetFiles = targetFiles.filter(f => f.hidden || !(f.content && String(f.content).trim()));
         const skipped = before - targetFiles.length;
@@ -1072,6 +1143,9 @@ window.startBatchTagging = async function() {
         if(window.showAlert) window.showAlert("Auto-Caption is already running (see ⏳ Tasks). Wait for it or stop it first.", "warn");
         return;
     }
+    window._autoCaptionRanOnce = true;
+    window._autoCaptionImgs = null;
+    if (typeof window.updateAutoCaptionSubsetBanner === 'function') window.updateAutoCaptionSubsetBanner();
     const TM = window.TM;
     const _ctx = TM.tasks.captureDataset(targetHandle);
     _ctx.files = targetFiles;

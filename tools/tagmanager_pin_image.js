@@ -54,10 +54,18 @@
         .list-pin-btn:hover { color: #00ff99; transform: scale(1.1); }
         .list-pin-btn.pinned-active { color: #00ff99; text-shadow: 0 0 6px rgba(0,255,153,0.6); }
 
-        #image-list.grid-mode .list-pin-btn {
-            position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.55);
+        .list-actions { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; }
+        .list-caption-btn {
+            background: transparent; border: none; color: #444; font-size: 14px; cursor: pointer;
+            padding: 2px 4px; flex-shrink: 0; border-radius: 4px; line-height: 1;
+        }
+        .list-caption-btn:hover { color: #ffb84d; transform: scale(1.1); }
+        #image-list.grid-mode .list-actions { position: absolute; top: 4px; right: 4px; gap: 3px; }
+        #image-list.grid-mode .list-pin-btn,
+        #image-list.grid-mode .list-caption-btn {
+            background: rgba(0,0,0,0.55);
             border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center;
-            justify-content: center; font-size: 12px;
+            justify-content: center; font-size: 12px; padding: 0;
         }
 
         #resizer-pinned { display: none; }
@@ -325,20 +333,60 @@
         });
     }
 
+    /* 🤖 Re-run Auto-Caption (with the current Auto-Caption settings) ONLY on this image — or on ALL
+       selected images when this image is part of a multi-selection. Sits above the 📌 button. */
+    function captionTargetsFor(img) {
+        const idx = imageFiles.indexOf(img);
+        if (typeof selectedIndices !== 'undefined' && selectedIndices.size > 1 && selectedIndices.has(idx)) {
+            return Array.from(selectedIndices).sort((a, b) => a - b).map(i => imageFiles[i]).filter(Boolean);
+        }
+        return [img];
+    }
+
+    // First use (Auto-Caption never run in this session) or Shift+click: open the Auto-Caption panel so the settings
+    // can be adjusted; its Start button then captions only these images. Afterwards the click runs straight away.
+    function captionImages(img, forcePanel) {
+        if (typeof window.startBatchTagging !== 'function') {
+            if (window.showAlert) window.showAlert('Auto-Caption is not available.', 'warn');
+            return;
+        }
+        const targets = captionTargetsFor(img);
+        if ((forcePanel || !window._autoCaptionRanOnce) && typeof window.openAutoCaptionFor === 'function') {
+            window.openAutoCaptionFor(targets);
+            return;
+        }
+        window.startBatchTagging(targets);
+    }
+
     function injectPinButtons() {
         if (typeof imageFiles === 'undefined') return;
         imageFiles.forEach(img => {
             if (!img.element || img.hidden) return;
-            let btn = img.element.querySelector('.list-pin-btn');
-            if (!btn) {
-                btn = document.createElement('button');
-                btn.className = 'list-pin-btn';
-                btn.textContent = '📌';
-                btn.onclick = (e) => { e.stopPropagation(); window.pinImage(img); };
-                img.element.appendChild(btn);
+            let pin = img.element.querySelector('.list-pin-btn');
+            let box = img.element.querySelector('.list-actions');
+            if (!box) {
+                box = document.createElement('div');
+                box.className = 'list-actions';
+                img.element.appendChild(box);
             }
-            btn.title = window.isImagePinned(img) ? 'Unpin this image' : 'Pin this image';
-            btn.classList.toggle('pinned-active', window.isImagePinned(img));
+            let scan = box.querySelector('.list-caption-btn');
+            if (!scan) {
+                scan = document.createElement('button');
+                scan.className = 'list-caption-btn';
+                scan.textContent = '🤖';
+                scan.onclick = (e) => { e.stopPropagation(); captionImages(img, e.shiftKey); };
+                box.appendChild(scan);
+            }
+            if (!pin) {
+                pin = document.createElement('button');
+                pin.className = 'list-pin-btn';
+                pin.textContent = '📌';
+                pin.onclick = (e) => { e.stopPropagation(); window.pinImage(img); };
+            }
+            if (pin.parentNode !== box) box.appendChild(pin);
+            scan.title = 'Auto-Caption this image (or all selected images). First time opens the settings panel; Shift+click always opens it.';
+            pin.title = window.isImagePinned(img) ? 'Unpin this image' : 'Pin this image';
+            pin.classList.toggle('pinned-active', window.isImagePinned(img));
         });
     }
 

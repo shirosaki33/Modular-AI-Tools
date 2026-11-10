@@ -118,9 +118,6 @@
         .list-item.has-data .list-item-status { color: #00ff99; }
         .list-item.is-nl .list-item-status { color: #b890ff; }
 
-        /* Drop indicator while reordering images */
-        .list-item.drag-over-top { border-top: 4px solid #4db8ff !important; padding-top: 20px !important; transition: 0.1s; }
-        .list-item.drag-over-bottom { border-bottom: 4px solid #4db8ff !important; padding-bottom: 20px !important; transition: 0.1s; }
 
         #editor-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         #tags-editor-container { display: flex; flex: 1; flex-direction: column; background: #111; overflow: hidden; }
@@ -326,13 +323,15 @@
             <div class="panel-header">
                 <div style="display:flex; align-items:center; gap:10px;">
                     Dataset <span id="list-count" style="background: #333; padding: 2px 6px; border-radius: 4px;">0</span>
+                    <span id="list-hidefocus-actions" style="display:none; align-items:center; gap:6px;">
+                        <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
+                        <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
+                    </span>
                     <button id="btn-unhide-all" class="btn-save-local" style="display:none; background:transparent; border: 1px solid #4db8ff; color:#4db8ff; padding: 2px 6px; font-size: 12px; margin-left: 5px;" onclick="window.unhideAllImages()" title="Unhide All Images">👁️‍🗨️ Unhide</button>
                     <button id="btn-invert-hidden" class="btn-save-local" style="display:none; background:transparent; border: 1px solid #b890ff; color:#b890ff; padding: 2px 6px; font-size: 12px;" onclick="window.invertHiddenImages()" title="Invert: show the hidden images and hide the ones that are visible now">🔀 Invert</button>
                 </div>
 
                 <div id="list-selection-actions" style="display: none; align-items: center; gap: 6px;">
-                    <button class="btn-save-local" style="background:#2f1a5c; border-color:#4a2a8c; color:#b890ff; padding: 2px 6px; font-size: 14px;" onclick="window.hideSelectedImages()" title="Hide Selected">👁️</button>
-                    <button class="btn-save-local" style="background:#0d2a18; border-color:#00aa66; color:#00ff99; padding: 2px 6px; font-size: 14px;" onclick="window.enterFocusMode()" title="Focus Mode (Hide Everything Except Selected)">🎯</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openRenameModal()" title="Rename Selected">✏️</button>
                     <button class="btn-save-local" style="background:#1a3a5c; border-color:#2a5a8c; color:#4db8ff; padding: 2px 6px; font-size: 14px;" onclick="window.openCloneModal()" title="Clone Selected">📋</button>
                 </div>
@@ -340,7 +339,7 @@
 
             <div style="padding: 8px 12px; background:#111; border-bottom:1px solid #222; flex-shrink:0; display:flex; gap:6px; align-items:center;">
                 <input type="text" id="image-search-input" placeholder="🔍 Filter images by name..." oninput="window.filterImagesByName(this.value)" style="flex:1; min-width:0; box-sizing:border-box; font-size:12px; padding:6px 10px;">
-                <button id="btn-reorder-mode" title="Unlock Reorder Mode" style="flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s;" onclick="window.toggleReorderMode()">🔒</button>
+                <button id="btn-sort-az" title="Sort the images A → Z (click again: Z → A). Color groups stay together." style="flex-shrink:0; padding:6px 10px; font-size:12px; font-weight:bold; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s; white-space:nowrap;" onclick="window.tmSortImagesAZ && window.tmSortImagesAZ()">A-Z</button>
                 <button id="btn-psd-import" title="PSD / PSB / XCF detected — build dataset images from its layers">🎨</button>
             </div>
 
@@ -854,6 +853,7 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager_remove_cooldown.js"></script>
 <script src="tools/tagmanager_auto_task_queue.js"></script>
 <script src="tools/tagmanager_pin_image.js"></script>
+<script src="tools/tagmanager_color_groups.js"></script>
 <!-- PSD Import (replaces the old Compact View): loaded before bucket_check so the 🪣 button anchors next to it -->
 <script src="tools/tagmanager_psd.js"></script>
 <script src="tools/tagmanager_rule_conflict.js"></script>
@@ -864,6 +864,7 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager_archive.js"></script>
 <script src="tools/tagmanager_danbooru_panel.js"></script>
 <script src="tools/tagmanager_duplicate_name_alert.js"></script>
+<script src="tools/tagmanager_copy_badge.js"></script>
 <script src="tools/tagmanager_rule_embed_quickadd.js"></script>
 <script src="tools/tagmanager_bucket_check.js"></script>
 <script src="tools/tagmanager_grayscale.js"></script>

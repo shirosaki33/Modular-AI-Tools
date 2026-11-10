@@ -1049,25 +1049,6 @@
         }
     }
 
-    /* Compat: antes estas funções eram chamadas pelo onchange do HTML da
-       engrenagem (tagmanager_ui_core.js). Agora os checkboxes vivem no popout
-       e têm handler próprio; estas versões só mantêm a API e respeitam a
-       chave mestra. */
-    window.toggleE621 = function () {
-        const cb = document.getElementById('toggle-e621');
-        if (!cb) return;
-        window._e621Choice = cb.checked;
-        window.saveSetting('toggle-e621', cb.checked);
-        applyDerivedFlags();
-    };
-    window.toggleE621Sfw = function () {
-        const cb = document.getElementById('toggle-e621-sfw');
-        if (!cb) return;
-        window._e621SfwChoice = cb.checked;
-        window.saveSetting('toggle-e621-sfw', cb.checked);
-        if (window.SharedSettings) window.SharedSettings.set('toggle-e621-sfw', cb.checked);
-        applyDerivedFlags();
-    };
 
     /* ---------- MODAL 2: POPOUT DE INFO UNIFICADO (aberto pelo ❓) ---------- */
     function buildTagInfoModal() {

@@ -39,8 +39,6 @@ if (typeof window.createBooruClient !== 'function') {
         delays: { single: 350, alias: 350, exists: 350, wiki: 350 }
     });
 
-    window.markTagAsUnknownE621     = key => E6.markUnknown(key);
-    window.unmarkTagUnknownE621     = key => E6.unmarkUnknown(key);
     window.isTagUnknownE621         = key => E6.isUnknown(key);
     window.e621GetCachedTag         = tag => E6.getCachedTag(tag);
     window.e621ResolveAlias         = tag => E6.resolveAlias(tag);
@@ -56,9 +54,6 @@ if (typeof window.createBooruClient !== 'function') {
     window.e621WikiRecursive = (seeds, opts) => E6.wikiRecursive(seeds, opts);
     window.e621FullTextTags = () => E6.fullTextTags();
     window.e621SearchTagMatches     = (query, limit = 6, opts) => E6.searchTagMatches(query, limit, opts);
-    window._flushE621CachePersist   = (useBeacon = false) => E6.flushPersist(useBeacon);
-    window.e621TagExists            = tag => E6.tagExists(tag);
-    window.e621FetchSingleTagInfo   = (tag, force = false) => E6.fetchSingleTagInfo(tag, force, true);
 }
 
 /* Maior contagem entre os dois sites (usado nas listas de tags). */
@@ -80,13 +75,4 @@ function bumpE621CacheVersion() {
 }
 function scheduleE621CachePersist() {
     if (window.e621Client) window.e621Client.schedulePersist();
-}
-function e621PersistCache(useBeacon = false) {
-    return window.e621Client ? window.e621Client.persist(useBeacon) : Promise.resolve();
-}
-function e621WildcardParam(query) {
-    return encodeURIComponent('*' + String(query || '').trim().replace(/ /g, '_') + '*');
-}
-function e621TagsArray(data) {
-    return Array.isArray(data) ? data : ((data && data.tags) || []);
 }

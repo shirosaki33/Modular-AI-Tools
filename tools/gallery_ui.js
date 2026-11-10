@@ -798,5 +798,4 @@ async function deleteCurrentImage() {
         };
     };
 
-    window._hasComfyNovelAINodes = _hasComfyNAI;
 })();

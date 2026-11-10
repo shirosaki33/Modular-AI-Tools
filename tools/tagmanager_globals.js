@@ -44,7 +44,6 @@ var presetTagNameFilter = '';
 var activeSearchMode = true;
 var masterSearchMode = true;
 var presetSearchMode = true;
-var imageFilterMode = 'ALL';
 
 var presetSelectedTags = new Set();
 var lastSelectedPresetIndex = 0;

@@ -1,8 +1,13 @@
 /* =========================================================================
    PROMPT HELPER — TAG LOOKUP (left panel)
-   Danbooru + e621 are queried TOGETHER, API-first. The shared cache is only
-   updated AFTER a successful lookup, so a stale or "unknown" cache entry can
-   no longer hide a tag that really exists.
+   Danbooru + e621 are queried TOGETHER, OFFLINE-FIRST like the Tag Manager's
+   Tag Interrogator: a tag already saved (cache entry with posts + usable text in
+   local/wiki_full.json) is shown from the files with no request ("offline" /
+   "offline · summary"). The site is only asked when nothing usable is saved, when
+   only the summary is saved while 💾 Wiki text = Full, or for an old broken
+   summary. Tags marked "unknown" are never answered from the files, so a stale
+   unknown mark cannot hide a tag that really exists. The shared cache is only
+   updated AFTER a successful site lookup.
    Depends on: prompt_helper_settings.js, tagmanager_danbooru_core.js,
                tagmanager_e621_core.js
 ========================================================================= */
@@ -33,6 +38,9 @@ const phFileOn = () => phIsLocal() && !!window.WikiFull;                       /
 const phMode = () => window.WikiFull ? window.WikiFull.mode() : 'short';
 const phStoreOn = () => phFileOn() && phMode() !== 'off';                      // new texts are saved
 const phUpdateOn = () => !phIsLocal() || window.phUpdateLocalFile !== false;
+// Same rule as the Tag Interrogator (dbpUseFile): a saved text is used with no request unless it is an old broken
+// summary, or only the summary is saved while 💾 Wiki text = Full (then the site is asked for the complete text).
+const phUsable = (saved) => !!(saved && saved.text && !saved.broken && (saved.full || phMode() !== 'full'));
 
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -95,6 +103,10 @@ async function fetchTagExact(site, name) {
 
 /* Exact tag -> alias redirect -> wiki. Always asks the site directly. */
 async function lookupSite(site, raw) {
+    // Offline first: saved tag + usable saved text = no request at all.
+    const saved0 = lookupOffline(site, raw, true);
+    if (saved0) { saved0.offlineFirst = true; return saved0; }
+
     const name = raw.trim().toLowerCase().replace(/\s+/g, '_');
     const host = site.host();
 
@@ -122,8 +134,8 @@ async function lookupSite(site, raw) {
 
     let body = null, fromFile = null, wikiFailed = false;
     const saved = phFileOn() ? window.WikiFull.get(site.key, tag.name) : null;
-    if (saved && saved.full) {
-        // Complete wiki already in local/wiki_full.json — no request, flagged "offline".
+    if (phUsable(saved)) {
+        // Usable wiki already in local/wiki_full.json — no wiki request, flagged "offline" / "offline · summary".
         fromFile = saved; body = saved.text;
     } else {
         try {
@@ -138,8 +150,10 @@ async function lookupSite(site, raw) {
     return { site, query: name, tag, aliasTo, body, suggestions: [], offline: !!fromFile, fileTs: fromFile ? fromFile.ts : null, fileFull: fromFile ? fromFile.full : true, wikiFailed };
 }
 
-/* Site unreachable: a tag already saved (cache entry + wiki_full.json) is shown entirely from the files. */
-function lookupOffline(site, raw) {
+/* A tag already saved (cache entry + wiki_full.json) shown entirely from the files.
+   usableOnly = true (offline-first, before any request): only a known tag (not "unknown", has posts or an alias)
+   whose saved text is usable. usableOnly = false (site unreachable): any saved text. */
+function lookupOffline(site, raw, usableOnly) {
     if (!phFileOn()) return null;
     const cache = site.key === 'danbooru' ? window.danbooruCache : window.e621Cache;
     const key = String(raw || '').trim().toLowerCase().replace(/_/g, ' ');
@@ -152,6 +166,12 @@ function lookupOffline(site, raw) {
     }
     const full = window.WikiFull.get(site.key, targetKey);
     if (!entry || !full) return null;
+    if (usableOnly) {
+        if (!phUsable(full)) return null;
+        const u = window.unknownTagsCache && (window.unknownTagsCache[key] || window.unknownTagsCache[targetKey]);
+        if (u && u[site.key]) return null;                                   // marked unknown: let the site decide
+        if (!(Number(entry.count) > 0) && !aliasTo) return null;             // no proof the tag exists: ask the site
+    }
     return {
         site, query: key.replace(/ /g, '_'),
         tag: { name: entry.wikiName || targetKey.replace(/ /g, '_'), post_count: entry.count || 0, category: entry.category, is_deprecated: !!entry.isDeprecated },
@@ -164,6 +184,7 @@ function lookupOffline(site, raw) {
 function writeThrough(res) {
     try {
         if (!res || !res.tag) return;
+        if (res.offline && res.fromFilesOnly) return;   // read from the files: nothing new to write
         const site = res.site;
         const cache = site.key === 'danbooru' ? window.danbooruCache : window.e621Cache;
         if (!cache) return;
@@ -265,7 +286,7 @@ function renderCard(res) {
     }
     html += `<div class="result-tag-title">${esc(displayName)}</div>`;
     html += `<div class="result-tag-meta"><span style="color:${color}">● ${esc(label)}</span> · ${Number(t.post_count || 0).toLocaleString()} posts${deprecated ? ' <span style="color:#f48fb1;">· Deprecated / Alias</span>' : ''}</div>`;
-    const offBadge = res.offline ? `<span class="offline-badge" title="Read from local/wiki_full.json${res.fileFull === false ? ' — short summary (first 800 characters)' : ''}${res.fileTs ? ' — saved ' + esc(new Date(res.fileTs).toLocaleString('en-US')) : ''}${res.fromFilesOnly ? ' (site unreachable: shown entirely from local files)' : ''}">${res.fileFull === false ? 'offline · summary' : 'offline'}</span>` : '';
+    const offBadge = res.offline ? `<span class="offline-badge" title="Read from local/wiki_full.json${res.fileFull === false ? ' — short summary (first 800 characters)' : ''}${res.fileTs ? ' — saved ' + esc(new Date(res.fileTs).toLocaleString('en-US')) : ''}${res.fromFilesOnly ? (res.offlineFirst ? ' (tag and text already saved: no request to the site)' : ' (site unreachable: shown entirely from local files)') : ''}">${res.fileFull === false ? 'offline · summary' : 'offline'}</span>` : '';
     const noWiki = res.wikiFailed
         ? `<span style="color:#ff8080; font-style:italic;">Could not load the wiki from ${esc(site.name)} (site error) — try again.</span>`
         : `<span style="color:#666; font-style:italic;">Wiki of this tag is empty</span>`;

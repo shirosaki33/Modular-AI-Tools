@@ -72,6 +72,19 @@ window.getHandles = async function() {
     } catch (e) { return []; }
 }
 
+/* Folder handle kept under a hidden key ('path_...' keys never show in the "Saved directories" list) —
+   used to remember the last dataset that was open (tagmanager_nav.js). */
+window.getRawHandle = async function(key) {
+    try {
+        const db = await window.initDB();
+        return await new Promise(r => {
+            const req = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+            req.onsuccess = () => r(req.result || null);
+            req.onerror = () => r(null);
+        });
+    } catch (e) { return null; }
+};
+
 window.deleteHandle = async function(n) {
     try {
         const db = await window.initDB();

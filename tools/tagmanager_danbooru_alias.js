@@ -20,10 +20,6 @@
            tanto no autocomplete quanto depois de salva, na Active Image / All Dataset Tags. */
 window.aliasClickBehavior = window.aliasClickBehavior || 'replace';
  
-window.setAliasClickBehavior = function (mode) {
-    window.aliasClickBehavior = mode === 'keep' ? 'keep' : 'replace';
-    if (typeof window.saveSetting === 'function') window.saveSetting('alias-click-behavior', window.aliasClickBehavior);
-};
  
 /* ---------- FEATURE 1: CONVERTER ALIAS -> TAG PRINCIPAL, GLOBALMENTE ----------
    Clicar no NOME de uma tag-alias (a que mostra a seta ➜ tag real) pergunta

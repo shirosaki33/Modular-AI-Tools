@@ -180,7 +180,8 @@
         .list-item.bad-bucket.selected { border-left: 3px solid #4db8ff !important; }
         .bucket-bad-badge { display:inline-block; margin-left:6px; font-size:9px; font-weight:bold; color:#ffaaaa; background:#330000; border:1px solid #ff4444; border-radius:10px; padding:1px 6px; vertical-align:middle; cursor:help; white-space:nowrap; }
 
-        #btn-bucket-issues { display:none; background:#330000; border:1px solid #ff4444; color:#ffaaaa; padding:2px 6px; font-size:11px; margin-left:6px; border-radius:4px; cursor:pointer; font-weight:bold; }
+        #btn-bucket-issues { display:none; flex-shrink:0; background:#330000; border:1px solid #ff4444; color:#ffaaaa; padding:6px 10px; font-size:13px; border-radius:4px; cursor:pointer; font-weight:bold; white-space:nowrap; }
+        #btn-bucket-issues:hover { background:#550000; color:#fff; }
         #btn-scan-buckets { flex-shrink:0; padding:6px 10px; font-size:14px; background:transparent; border:1px solid #444; color:#aaa; }
         #btn-scan-buckets:hover { color:#00ff99; border-color:#00ff99; }
         #btn-scan-buckets.has-bad { background:#330000; border-color:#ff4444; color:#ff5555; box-shadow:0 0 6px rgba(255,68,68,0.45); }
@@ -368,7 +369,8 @@
         }
         if (badIndices.length > 0) {
             btn.style.display = 'inline-block';
-            btn.textContent = `🪣 ${badIndices.length} Bad Bucket`;
+            btn.textContent = `🪣 ${badIndices.length}`;
+            btn.title = `${badIndices.length} image(s) outside the ${modelLabel()} buckets — click to jump to the next one`;
         } else {
             btn.style.display = 'none';
         }
@@ -428,19 +430,29 @@
     };
 
     /* ---------- BOTÕES INJETADOS ---------- */
+    // 🪣 N: counter + "jump to the next image with a bad bucket" — sits right after the 🪣 scan button
+    // (filter row), not in the Dataset header any more.
     function injectListCounterButton() {
-        const headerLeft = document.querySelector('#col-list .panel-header > div:first-child');
-        const listCount = document.getElementById('list-count');
-        if (!headerLeft || !listCount || document.getElementById('btn-bucket-issues')) return;
+        const scanBtn = document.getElementById('btn-scan-buckets');
+        if (!scanBtn || document.getElementById('btn-bucket-issues')) return;
         const btn = document.createElement('button');
         btn.id = 'btn-bucket-issues';
         btn.title = 'Images with a resolution outside the training buckets of the selected model (SD / SDXL / HD) — click to jump to one';
         btn.onclick = () => window.selectBucketIssueImage();
-        listCount.insertAdjacentElement('afterend', btn);
+        scanBtn.insertAdjacentElement('afterend', btn);
+        updateBucketCounter();
+        // Other plugins add their buttons right after the scan 🪣 later on and would push the counter away from it:
+        // keep it glued to the scan button whenever the row changes.
+        if (scanBtn.parentElement && typeof MutationObserver === 'function') {
+            new MutationObserver(() => {
+                const sb = document.getElementById('btn-scan-buckets'), cb = document.getElementById('btn-bucket-issues');
+                if (sb && cb && sb.nextElementSibling !== cb) sb.insertAdjacentElement('afterend', cb);
+            }).observe(scanBtn.parentElement, { childList: true });
+        }
     }
 
     function injectScanButton() {
-        const anchor = document.getElementById('btn-psd-import') || document.getElementById('btn-reorder-mode');
+        const anchor = document.getElementById('btn-psd-import') || document.getElementById('btn-sort-az');
         if (!anchor || document.getElementById('btn-scan-buckets')) return;
         const btn = document.createElement('button');
         btn.id = 'btn-scan-buckets';
@@ -1627,8 +1639,8 @@
 
     window.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
-            injectListCounterButton();
             injectScanButton();
+            injectListCounterButton();
             injectFixBucketButton();
             installHooks();
             loadBucketModel();

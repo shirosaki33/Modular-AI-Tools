@@ -298,7 +298,7 @@
         }
     };
 
-    // Used by the "↺ Re-arm" button: makes the current dataset count as "never opened".
+    // Fail-safe (no button any more): makes the current dataset count as "never opened", so Auto-Do runs on its next load.
     window.rearmAutoDoForCurrentDataset = async function () {
         const h = autoDoHandleKey();
         try { if (h) _autoDoSessionDone.delete(h); } catch (e) {}

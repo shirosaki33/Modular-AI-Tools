@@ -20,19 +20,6 @@ window.buildTypeBadge = function(img) {
     return `🏷️ Tags (${c.tags}) · 📝 NL (${c.nl}) (.${img.ext || 'txt'})`;
 };
 
-// (2026-11) The "Filter Images by Type" button was removed from the Dataset panel; the filter stays on ALL.
-window.cycleImageFilter = function() {
-    const states = ['ALL', 'TAGS', 'NL'];
-    const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
-    let idx = states.indexOf(window.imageFilterMode);
-    idx = (idx + 1) % states.length;
-    window.imageFilterMode = states[idx];
-
-    const btn1 = document.getElementById('btn-img-filter-sel');
-    if (btn1) btn1.textContent = labels[window.imageFilterMode];
-
-    if (typeof window.applyFilters === 'function') window.applyFilters();
-};
 
 window.handleListClick = function(index, shiftKey, ctrlKey) {
     if (shiftKey && selectedIndices.size > 0) {
@@ -559,6 +546,9 @@ window.updateListSelectionVisuals = function() {
     });
     const listActions = document.getElementById('list-selection-actions');
     if(listActions) listActions.style.display = selectedIndices.size > 0 ? 'flex' : 'none';
+    // 👁️ Hide / 🎯 Focus sit next to the image counter (same spot as 👁️‍🗨️ Unhide / 🔀 Invert)
+    const hfActions = document.getElementById('list-hidefocus-actions');
+    if(hfActions) hfActions.style.display = selectedIndices.size > 0 ? 'inline-flex' : 'none';
 }
 
 window.refreshListStatus = function() {
@@ -926,7 +916,7 @@ window.confirmRename = async function() {
                 await window.NLCodec.moveEntries(img.parentDirHandle, img.baseName, finalBaseName, p.nlMap);
                 if (cfg[finalBaseName]) delete cfg[finalBaseName].nl;
             }
-            // Renomear reorganiza a lista: limpa a ordem manual do Reorder Mode.
+            // Renomear reorganiza a lista: limpa a ordem manual (A-Z / grupos de cor reagrupam sozinhos).
             if (cfg[finalBaseName] && typeof cfg[finalBaseName].order === 'number') {
                 delete cfg[finalBaseName].order;
             }
@@ -1032,9 +1022,12 @@ window.confirmClone = async function() {
                     } catch (e) {}
                 }
 
-                if (cfg[img.baseName]) {
-                    cfg[newBaseName] = { ...cfg[img.baseName] };
+                {
+                    cfg[newBaseName] = { ...(cfg[img.baseName] || {}) };
                     delete cfg[newBaseName].order; // clone entra na ordenação alfabética normal
+                    // 📋 "Copy" seal (badge in the list; the 📋 button can remove / duplicate the copies later)
+                    cfg[newBaseName].isCopy = true;
+                    cfg[newBaseName].copyOf = (cfg[img.baseName] && cfg[img.baseName].copyOf) || img.baseName;
                 }
                 if (img._cloneNlMap && img._cloneNlMap.length && window.NLCodec) {
                     await window.NLCodec.setEntries(img.parentDirHandle, newBaseName, img._cloneNlMap);
