@@ -455,7 +455,12 @@ function populateUI(meta) {
 		if (id === 'v-optimizer_type' && val) {
 			let clean = String(val).trim().split(',')[0].trim().replace(/\s*\([^)]*\)?/g, '').trim();
 			const dotParts = clean.split('.');
-			clean = dotParts[dotParts.length - 1].split('_')[0].split('-')[0].trim();
+			// Keep "8bit"/"paged" qualifiers (AdamW_8bit -> "AdamW 8bit"), drop other suffixes.
+			const segs = dotParts[dotParts.length - 1].split(/[_-]/).map(s => s.trim()).filter(Boolean);
+			const isQual = s => /^(\d+bit|paged)$/i.test(s);
+			const head = segs.find(s => !isQual(s));
+			const quals = segs.filter(isQual);
+			clean = head ? head + (quals.length ? ' ' + quals.join(' ') : '') : '';
 			val = clean || val;
 		}
 		setField(id, val);

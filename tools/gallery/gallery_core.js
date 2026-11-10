@@ -688,9 +688,15 @@ function toggleSort() {
 /* Cards keep a stable height before their thumbnail loads (placeholder = last known ratio), so the
    dynamic page loader measures real page heights instead of "empty" cards. */
 let ghRatio = 2 / 3;
+function ghBlocksRoot() {
+    // Preview blocks: one block = one page of the page-size button (itemsPerPage).
+    const g = document.getElementById('grid-view');
+    if (g && window.ThumbLoader && window.ThumbLoader.blocks) window.ThumbLoader.blocks(g, { size: () => itemsPerPage });
+    return g;
+}
 function ghAttachThumb(img, url) {
     img.style.aspectRatio = String(ghRatio);
-    if (window.ThumbLoader) window.ThumbLoader.attach(img, url, { onSize: (w, h) => { if (w && h) { ghRatio = w / h; img.style.aspectRatio = w + ' / ' + h; } } });
+    if (window.ThumbLoader) window.ThumbLoader.attach(img, url, { root: ghBlocksRoot(), onSize: (w, h) => { if (w && h) { ghRatio = w / h; img.style.aspectRatio = w + ' / ' + h; } } });
     else img.src = url;
 }
 
@@ -779,10 +785,9 @@ function ghFirstVisibleCard(grid) {
     return null;
 }
 
-function ghForgetThumbs(from, to) {
-    if (!window.ThumbLoader) return;
-    for (let i = from; i < to; i++) { const it = ghList[i]; if (it && it.url) window.ThumbLoader.forget(it.url); }
-}
+/* Grid thumbnails belong to the block system (ThumbLoader.blocks): they are released by themselves when their cards
+   leave the DOM. Calling ThumbLoader.forget(url) here would also drop the detail strip's thumbnails (same url). */
+function ghForgetThumbs(from, to) {}
 
 function ghDynamicStep() {
     ghDynRAF = null;
@@ -1024,6 +1029,9 @@ async function openDetailView(url, fileName) {
         if (sortMode === 1) arrThumb.sort((a,b) => a.name.localeCompare(b.name));
         else if (sortMode === 2) arrThumb.sort((a,b) => b.name.localeCompare(a.name));
         
+        let stripPos = 0;
+        // Strip previews also load by blocks (same size as the page-size button); horizontal or vertical layout is auto-detected.
+        if (window.ThumbLoader && window.ThumbLoader.blocks) window.ThumbLoader.blocks(strip, { size: () => itemsPerPage });
         arrThumb.forEach(fileItem => {
             const term = document.getElementById('filter-tag').value.toLowerCase().trim();
             if (term !== '' && !fileItem.name.toLowerCase().includes(term)) return;
@@ -1031,7 +1039,7 @@ async function openDetailView(url, fileName) {
             const img = document.createElement('img'); 
             img.decoding = 'async';
             img.className = 'thumb';
-            if (window.ThumbLoader) window.ThumbLoader.attach(img, fileItem.url, { root: strip }); else img.src = fileItem.url;
+            if (window.ThumbLoader) window.ThumbLoader.attach(img, fileItem.url, { root: strip, index: stripPos++ }); else img.src = fileItem.url;
             if (fileItem.url === url) img.classList.add('active'); 
             img.onclick = () => openDetailView(fileItem.url, fileItem.name); 
             strip.appendChild(img);

@@ -361,7 +361,7 @@
         <select id="dir-list" onchange="loadSelectedDirectory()">
             <option value="">Select a directory...</option>
         </select>
-        <button id="btn-refresh" onclick="refreshCurrentFolder()" style="display:none;" title="Rescan the selected directory">↻</button>
+        <button id="btn-refresh" onclick="refreshCurrentFolder()" style="display:none;" title="Rescan the selected directory (full scan, refreshes the saved scan)">↻</button>
         <button id="btn-remove" onclick="removeDirectory()" style="display:none;" title="Remove Root Path (your files are not touched)">Remove Path</button>
         <input type="text" id="filter-tag" placeholder="Filter by name..." oninput="filterGallery()" style="display:none;" title="Type part of the filename to filter the timeline">
     </div>
@@ -558,10 +558,10 @@
 <script src="parsers/invokeai.js"></script>
 <script src="parsers/fooocus.js"></script>
 
-<script src="tools/shared/thumb_loader.js"></script>
+<script src="tools/shared/thumb_loader.js?v=4"></script>
 <script src="tools/gallery/gallery_ui.js"></script>
 <script src="tools/gallery/gallery_core.js"></script>
 <!-- Must be loaded LAST: overrides the single-folder directory/grid logic of gallery_core.js -->
-<script src="tools/gallery/timeline_core.js"></script>
+<script src="tools/gallery/timeline_core.js?v=2"></script>
 </body>
 </html>

@@ -144,7 +144,8 @@
     function detectCheckpoint(text) {
         const raw = String(text || '');
         // Anchored to a field start so "VAE Model:", "Upscale Model:" etc. never win.
-        const v = grab(raw, /(?:^|[,\n])\s*(?:Model|Checkpoint):\s*([^,\n]+)/i);
+        // Stops at the next "Key:" field (capitalised word + colon), so names with commas survive.
+        const v = grab(raw, /(?:^|[,\n])\s*(?:[Mm]odel|[Cc]heckpoint):\s*([^\n]*?)(?=,\s*[A-Z][A-Za-z0-9 ._()\/-]{0,40}:\s|\n|$)/);
         return cleanName(v);
     }
 

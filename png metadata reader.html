@@ -64,6 +64,7 @@ input[type="file"] { display: none; }
 
 /* ISOLANDO O CSS PARA NÃO QUEBRAR O METADATA_EDITOR.JS */
 .panel-left img { width: 100%; border-radius: 10px; }
+.panel-left video { width: 100%; border-radius: 10px; background: #000; }
 .small-text { font-size: 13px; color: #aaa; margin-top: 10px; word-break: break-word; text-align: center;}
 
 /* --- Info Bar --- */
@@ -81,6 +82,8 @@ input[type="file"] { display: none; }
 .section-title:hover .collapse-arrow { color: #00ff99; }
 .collapsible-section.collapsed .collapse-arrow { transform: rotate(-90deg); }
 .collapsible-section.collapsed .section-content { display: none; }
+/* Grid layout lives in a class (not inline) so a collapsed section can actually hide it. */
+.param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 #loraList .lora-item { padding: 8px 0; border-bottom: 1px dashed #222; font-size: 13px; display: flex; align-items: center; justify-content: space-between; }
 #loraList .lora-item:last-child { border-bottom: none; }
@@ -94,7 +97,7 @@ input[type="file"] { display: none; }
 .tabbtn-raw-export:hover { background: #17381f; border-color: #00aa66; }
 
 .tabcontent { display: none; }
-.tabcontent.active { display: block; flex: 1; display: flex; flex-direction: column; }
+.tabcontent.active { flex: 1; display: flex; flex-direction: column; }
 
 /* --- Text Areas & Prompts (Isolados do Global) --- */
 .tabcontent textarea { width: 100%; border: none; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; box-sizing: border-box; background: #0d0d0d; color: #00ff99; outline: none; font-family: inherit; }
@@ -129,8 +132,8 @@ input[type="file"] { display: none; }
 </div>
 
 <div class="container">
-    <div class="dropzone" id="dropzone">Choose a file or drag it here (.png, .jpg, .webp, .txt, .json)</div>
-    <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.txt,.json">
+    <div class="dropzone" id="dropzone">Choose a file or drag it here (.png, .jpg, .webp, .webm, .mp4, .txt, .json)</div>
+    <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.webm,.mp4,.txt,.json">
 
     <div id="alertBar"></div>
 
@@ -138,6 +141,7 @@ input[type="file"] { display: none; }
         <div class="left-column">
             <div class="panel-left">
                 <img id="preview" style="display:none;">
+                <video id="previewVideo" controls muted loop playsinline style="display:none;"></video>
                 <div class="small-text" id="imginfo">No file loaded</div>
                 <div class="topbar-info" id="topbarInfo">
                     <div class="topbar-source-row"><span class="topbar-label">Source:</span> <span id="val-source">—</span></div>
@@ -211,6 +215,7 @@ input[type="file"] { display: none; }
 <script src="parsers/novelai.js"></script>
 <script src="parsers/comfy.js"></script>
 <script src="parsers/comfyui_novelai.js"></script>
+<script src="parsers/comfyui_video.js"></script>
 <script src="parsers/swarmui.js"></script>
 <script src="parsers/invokeai.js"></script>
 <script src="parsers/fooocus.js"></script>
@@ -268,6 +273,7 @@ function toggleToolsBar() { document.getElementById('tools-bar').classList.toggl
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("fileInput");
 const preview = document.getElementById("preview");
+const previewVideo = document.getElementById("previewVideo");
 const imginfo = document.getElementById("imginfo");
 const valSource = document.getElementById("val-source");
 const valCkpt = document.getElementById("val-ckpt");
@@ -369,9 +375,6 @@ function extractHashesFromRaw(rawText) {
         map.set(cleanLoraName(m[1]).toLowerCase(), m[2].toLowerCase()); 
     }
     
-    // Mostra no console o que o sistema encontrou para podermos investigar se der erro
-    console.log("🕵️ Hashes extraídos pelo Trator:", Object.fromEntries(map));
-    
     return map;
 }
 
@@ -418,7 +421,7 @@ function applyMetadataToUI(meta) {
     valCkpt.innerText = meta.ckpt || "—";
     
     // --- 1. Limpeza dos elementos extras ---
-    document.querySelectorAll('.extra-topbar-row, .extra-ksampler-box').forEach(el => el.remove());
+    document.querySelectorAll('.extra-topbar-row, .extra-ksampler-box, .extra-box').forEach(el => el.remove());
     const topbarInfo = document.getElementById("topbarInfo");
     
     if (meta._extras && topbarInfo) {
@@ -433,6 +436,13 @@ function applyMetadataToUI(meta) {
         addExtraRow('VAE', meta._extras.vae);
         addExtraRow('Text Encoders', meta._extras.clipText);
         addExtraRow('Clip Skip', meta._extras.clip_skip);
+        addExtraRow('Upscale Size', meta._extras.upscaleRes);
+        addExtraRow('Hires Steps', meta._extras.hiresSteps);
+        addExtraRow('Hires Denoising', meta._extras.hiresDenoising);
+        addExtraRow('Refiner', meta._extras.refiner);
+        if (Array.isArray(meta._extras.upscalers) && meta._extras.upscalers.length) addExtraRow('Upscaler', meta._extras.upscalers.join(', '));
+        // Free-form rows from parsers that have more to say (video settings, prompt format...).
+        if (Array.isArray(meta._extras.rows)) meta._extras.rows.forEach(r => { if (Array.isArray(r) && r.length > 1) addExtraRow(r[0], r[1]); });
     }
 
     // --- 2. Caixa de Parâmetros Principal (Agora com Collapse/Expand Dinâmico) ---
@@ -444,7 +454,7 @@ function applyMetadataToUI(meta) {
         <div class="section-title" onclick="toggleSectionCollapse('paramBox')">
             <b>Parameters</b><span class="collapse-arrow">▾</span>
         </div>
-        <div id="paramList" class="section-content" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"></div>
+        <div id="paramList" class="section-content param-grid"></div>
     `;
     const paramList = document.getElementById("paramList");
 
@@ -454,6 +464,7 @@ function applyMetadataToUI(meta) {
         ['Seed', meta.seed], 
         ['Sampler', meta.sampler], 
         ['Scheduler', meta.scheduler], 
+        ['Denoise', (meta._extras && meta._extras.denoise && !/^1(\.0+)?$/.test(String(meta._extras.denoise))) ? meta._extras.denoise : ''],
         ['Size', meta.size] 
     ];
 
@@ -473,15 +484,42 @@ function applyMetadataToUI(meta) {
         if (document.getElementById('organized').classList.contains('active')) paramBox.style.display = 'block'; 
     }
     
+    // --- 2b. Parser-specific box (e.g. "MiniMax H3"): rows from _extras.boxRows, expanded ---
+    let boxAnchor = paramBox;
+    if (meta._extras && Array.isArray(meta._extras.boxRows) && meta._extras.boxRows.length) {
+        const bid = 'extraInfoBox';
+        const ibox = document.createElement('div');
+        ibox.className = 'png-section collapsible-section extra-box';
+        ibox.id = bid;
+        ibox.style.display = 'block';
+        ibox.innerHTML = `
+            <div class="section-title" onclick="toggleSectionCollapse('${bid}')">
+                <b>${escHTML(meta._extras.boxTitle || 'Details')}</b><span class="collapse-arrow">▾</span>
+            </div>
+            <div class="section-content param-grid"></div>
+        `;
+        const igrid = ibox.querySelector('.section-content');
+        meta._extras.boxRows.forEach(r => {
+            if (!Array.isArray(r) || r.length < 2 || !r[1]) return;
+            const div = document.createElement('div');
+            div.style.cssText = "font-size: 13px; background: #111; padding: 6px 10px; border-radius: 6px; border: 1px solid #222; word-break: break-word;";
+            div.innerHTML = `<span class="topbar-label">${escHTML(r[0])}:</span> <span style="color:#00ff99;">${escHTML(r[1])}</span>`;
+            igrid.appendChild(div);
+        });
+        paramBox.insertAdjacentElement('afterend', ibox);
+        boxAnchor = ibox;
+    }
+
     // --- 3. Caixas extras para KSamplers (Collapse e Start/End Steps) ---
     if (meta._extras && meta._extras.extraSamplers && meta._extras.extraSamplers.length > 0) {
-        let referenceNode = paramBox; 
+        let referenceNode = boxAnchor; 
         
         meta._extras.extraSamplers.forEach((samp, index) => {
             const extraId = `extraParamBox_${index}`; // ID único para o Collapse funcionar
             const box = document.createElement('div');
-            // Usando as mesmas classes da caixa principal para manter tudo padronizado
-            box.className = 'png-section collapsible-section extra-ksampler-box'; 
+            // Same classes as the main box, but only the first sampler (main Parameters box)
+            // starts expanded: every extra KSampler starts collapsed.
+            box.className = 'png-section collapsible-section collapsed extra-ksampler-box'; 
             box.id = extraId;
             box.style.display = 'block';
             
@@ -489,7 +527,7 @@ function applyMetadataToUI(meta) {
                 <div class="section-title" onclick="toggleSectionCollapse('${extraId}')">
                     <b>Parameters (KSampler ${index + 2})</b><span class="collapse-arrow">▾</span>
                 </div>
-                <div class="section-content" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"></div>
+                <div class="section-content param-grid"></div>
             `;
             
             const grid = box.querySelector('.section-content');
@@ -564,6 +602,86 @@ function buildCharBlock(index, pos, neg, name = "") {
     charContainer.appendChild(wrapper); wrapper.querySelectorAll('textarea').forEach(ta => autoResize(ta));
 }
 
+/* Reads the EXIF "UserComment" (tag 0x9286) from a JPEG or WEBP. A1111/Forge store
+   their parameters there, usually as UTF-16 ("UNICODE\0" prefix), so non-ASCII
+   prompts (Japanese, emoji...) only survive if it is decoded properly. */
+function extractExifUserComment(buf) {
+    const u8 = new Uint8Array(buf);
+    const ascii = (a, o, n) => String.fromCharCode(...a.subarray(o, o + n));
+    let tiff = null;
+    if (u8[0] === 0xFF && u8[1] === 0xD8) {                       // JPEG: find the APP1 "Exif" segment
+        let p = 2;
+        while (p + 4 <= u8.length) {
+            if (u8[p] !== 0xFF) { p++; continue; }
+            const marker = u8[p + 1];
+            if (marker === 0xFF) { p++; continue; }               // fill byte
+            if (marker === 0xDA || marker === 0xD9) break;        // start of scan / end of image
+            if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD8)) { p += 2; continue; }
+            const len = (u8[p + 2] << 8) | u8[p + 3];
+            if (marker === 0xE1 && len >= 8 && ascii(u8, p + 4, 4) === 'Exif' && u8[p + 8] === 0 && u8[p + 9] === 0) {
+                tiff = u8.subarray(p + 10, p + 2 + len); break;
+            }
+            p += 2 + len;
+        }
+    } else if (ascii(u8, 0, 4) === 'RIFF' && ascii(u8, 8, 4) === 'WEBP') {   // WEBP: "EXIF" chunk
+        let p = 12;
+        while (p + 8 <= u8.length) {
+            const type = ascii(u8, p, 4);
+            const size = (u8[p + 4] | (u8[p + 5] << 8) | (u8[p + 6] << 16) | (u8[p + 7] << 24)) >>> 0;
+            if (type === 'EXIF') {
+                let d = u8.subarray(p + 8, p + 8 + size);
+                if (ascii(d, 0, 4) === 'Exif') d = d.subarray(6);
+                tiff = d; break;
+            }
+            p += 8 + size + (size & 1);
+        }
+    }
+    if (!tiff || tiff.length < 8) return '';
+    const le = tiff[0] === 0x49 && tiff[1] === 0x49;
+    if (!le && !(tiff[0] === 0x4D && tiff[1] === 0x4D)) return '';
+    const dv = new DataView(tiff.buffer, tiff.byteOffset, tiff.byteLength);
+    const u16 = o => dv.getUint16(o, le), u32 = o => dv.getUint32(o, le);
+    if (u16(2) !== 42) return '';
+    const TYPE_SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
+    const readIfd = off => {
+        const tags = new Map();
+        if (off + 2 > tiff.length) return tags;
+        const n = u16(off);
+        for (let i = 0; i < n; i++) {
+            const e = off + 2 + i * 12;
+            if (e + 12 > tiff.length) break;
+            const size = (TYPE_SIZE[u16(e + 2)] || 1) * u32(e + 4);
+            tags.set(u16(e), { size, off: size <= 4 ? e + 8 : u32(e + 8), value: u32(e + 8) });
+        }
+        return tags;
+    };
+    const ifd0 = readIfd(u32(4));
+    let entry = ifd0.get(0x9286);
+    if (!entry && ifd0.has(0x8769)) entry = readIfd(ifd0.get(0x8769).value).get(0x9286);
+    if (!entry || entry.size < 8 || entry.off + entry.size > tiff.length) return '';
+
+    const bytes = tiff.subarray(entry.off, entry.off + entry.size);
+    const prefix = ascii(bytes, 0, 8);
+    const body = bytes.subarray(8);
+    let text;
+    if (prefix === 'UNICODE\0') {
+        let be = true, b = body;
+        if (b[0] === 0xFE && b[1] === 0xFF) b = b.subarray(2);
+        else if (b[0] === 0xFF && b[1] === 0xFE) { be = false; b = b.subarray(2); }
+        else if (b.length > 1 && b[0] !== 0 && b[1] === 0) be = false;  // ASCII char with the zero byte second = little-endian
+        text = new TextDecoder(be ? 'utf-16be' : 'utf-16le').decode(b);
+    } else if (prefix === 'ASCII\0\0\0') {
+        text = new TextDecoder('latin1').decode(body);
+    } else if (/^\0{8}$/.test(prefix)) {
+        text = new TextDecoder('utf-8').decode(body);
+    } else if (prefix.startsWith('JIS')) {
+        return '';
+    } else {
+        text = new TextDecoder('utf-8').decode(bytes);                  // writers that skip the charset prefix
+    }
+    return text.replace(/\0+$/g, '').trim();
+}
+
 function extrairTextoDeBytes(buf) {
     // latin1 = 1 byte -> 1 caractere (igual ao loop antigo, bem mais rápido em arquivos grandes)
     const raw = new TextDecoder('latin1').decode(new Uint8Array(buf));
@@ -587,11 +705,15 @@ function extrairTextoDeBytes(buf) {
 
 async function loadFile(file) {
     const isImage = file.name.match(/\.(png|jpg|jpeg|webp)$/i);
-    if (!isImage && !file.name.match(/\.(txt|json)$/i)) return showAlert("Unsupported file. Please use PNG, JPG, WEBP, TXT or JSON.", "red");
+    const isVideo = !!file.name.match(/\.(webm|mp4)$/i);
+    if (!isImage && !isVideo && !file.name.match(/\.(txt|json)$/i)) return showAlert("Unsupported file. Please use PNG, JPG, WEBP, WEBM, MP4, TXT or JSON.", "red");
 
     // Libera a URL da imagem anterior (antes cada arquivo aberto ficava na memória).
     if (preview.src && preview.src.startsWith('blob:')) URL.revokeObjectURL(preview.src);
     if (isImage) { preview.src = URL.createObjectURL(file); preview.style.display = "block"; } else { preview.removeAttribute('src'); preview.style.display = "none"; }
+    if (previewVideo.src && previewVideo.src.startsWith('blob:')) { previewVideo.pause(); URL.revokeObjectURL(previewVideo.src); }
+    if (isVideo) { previewVideo.src = URL.createObjectURL(file); previewVideo.style.display = "block"; }
+    else { previewVideo.removeAttribute('src'); previewVideo.style.display = "none"; }
     imginfo.innerText = `${file.name}  (${Math.round(file.size / 1024)} KB)`;
     resetUI();
 
@@ -622,7 +744,21 @@ async function loadFile(file) {
             }
         }
     } else if (file.name.match(/\.(jpg|jpeg|webp)$/i)) {
-        try { const buf = await file.arrayBuffer(); const candidates = extrairTextoDeBytes(buf); if (candidates.length > 0) window.currentRawText = candidates[0]; } catch (e) { console.warn("Error reading binary:", e); }
+        try {
+            const buf = await file.arrayBuffer();
+            let exifText = '';
+            try { exifText = extractExifUserComment(buf); } catch (e) { console.warn("EXIF read failed:", e); }
+            // A properly decoded EXIF comment wins (keeps non-ASCII text); the raw byte scan stays as fallback.
+            if (exifText && /Steps:\s*\d/.test(exifText)) { window.currentRawText = exifText; }
+            else {
+                const candidates = extrairTextoDeBytes(buf);
+                if (candidates.length > 0) window.currentRawText = candidates[0];
+                else if (exifText) window.currentRawText = exifText;
+            }
+        } catch (e) { console.warn("Error reading binary:", e); }
+    } else if (isVideo) {
+        try { const r = window.readVideoMetadata ? await window.readVideoMetadata(file) : null; window.currentRawText = (r && r.raw) || ''; }
+        catch (e) { console.warn("Error reading video:", e); }
     } else {
         window.currentRawText = await file.text();
     }
@@ -654,6 +790,9 @@ async function loadFile(file) {
             () => window.parseSwarmUI?.(window.currentRawText, jsonObj),
             () => window.parseInvokeAI?.(window.currentRawText, jsonObj),
             () => window.parseFooocus?.(window.currentRawText, jsonObj),
+            // ComfyUI video graphs (WebM/MP4 files, or a frame saved from a video workflow).
+            // Returns null for ordinary image graphs, so they still reach parseComfyJSON.
+            () => window.parseComfyVideo?.(window.currentRawText, jsonObj, { force: isVideo }),
             // ComfyUI workflows built with the NovelAI custom nodes must be tried
             // before the generic parseNovelAI: both "detect" this text (it contains
             // the word "NovelAI"), but only this one understands the node graph.
@@ -667,6 +806,7 @@ async function loadFile(file) {
 
     if (!window.currentMeta) return showAlert("Metadata found but couldn't be parsed by known formats.", "red");
 
+    try { window.annotateH3Prompt?.(window.currentMeta); } catch (e) { console.warn("H3 prompt detection skipped:", e); }
     applyMetadataToUI(window.currentMeta);
     showAlert("Metadata loaded successfully!", "green");
     

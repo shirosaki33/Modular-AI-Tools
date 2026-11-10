@@ -331,13 +331,14 @@ async function loadSelectedDirectory() {
 
 async function refreshCurrentFolder() {
     if (!tlRoot) return;
-    await tlLoadRoot(tlRoot, true);
+    await tlLoadRoot(tlRoot, true, true);              // full scan (also rewrites the saved scan)
 }
 
 async function removeDirectory() {
     if (!tlRoot) return;
     const name = tlRoot.name;
-    await tlKvDel('dir:' + name, 'hidden:' + name, 'rootpath:' + name);
+    await tlKvDel('dir:' + name, 'hidden:' + name, 'rootpath:' + name, 'cache:' + name);
+    if (tlIsLocal()) { try { await tlCacheWrite(name, null); } catch (e) {} }     // the file in local/ is emptied (it is ignored when invalid)
     tlScanId++;                       // cancels a scan in progress
     tlResetData();
     tlRoot = null; tlRootNode = null; rootHandle = null; currentHandle = null;
@@ -395,7 +396,8 @@ async function tlPool(list, limit, fn) {
 
 /* Reads the whole tree. Every directory becomes a node (so the sidebar can show the hierarchy),
    even when it only contains subfolders. */
-async function tlScanRoot(root, scanId) {
+async function tlScanRoot(root, scanId, opts) {
+    opts = opts || {};
     const nodes = [];
     let nFolders = 0, nImages = 0, lastPaint = 0;
     const paint = force => {
@@ -423,7 +425,7 @@ async function tlScanRoot(root, scanId) {
         if (images.length) {
             await tlPool(images, 24, async it => {
                 const f = await it.handle.getFile();
-                it.file = f; it.lastModified = f.lastModified;
+                it.file = f; it.lastModified = f.lastModified; it.size = f.size;
                 nImages++; paint();
             });
         }
@@ -446,7 +448,7 @@ async function tlScanRoot(root, scanId) {
         return node;
     }
 
-    const rootNode = await walk(root, '', 0, null);
+    const rootNode = await walk(root, opts.rel || '', opts.depth || 0, opts.parent || null);
     paint(true);
     return { nodes, rootNode, nFolders, nImages };
 }
@@ -499,7 +501,231 @@ async function applyFolderPath() {
     renderGrid(); renderFolderSidebar();
 }
 
-async function tlLoadRoot(handle, keepState) {
+
+/* ================================================================
+   SCAN CACHE  (fast boot after the first time)
+   ----------------------------------------------------------------
+   The slow part of opening a directory is the scan: every folder is listed and getFile() is called on every
+   image (only to read its date). After the first scan the result is saved:
+     - on the localhost server -> local/timeline_cache/<directory name>.json  (always a file, never IndexedDB)
+     - online / file://        -> the app's own IndexedDB ('cache:<directory name>')
+   Next time the timeline is built from that cache right away; image files are opened only when their preview is
+   needed. Then a background check lists the folders again (no getFile on known images), applies what changed
+   (new / removed images and folders) and refreshes the cache. The ↻ button always does a full scan.
+   Known limit: an image replaced in place keeping its name is only noticed by the full scan.
+   ================================================================ */
+const TL_CACHE_VERSION = 1;
+const tlCacheFile = name => 'local/timeline_cache/' + String(name).replace(/[^\w.\- ]+/g, '_') + '.json';
+let tlCacheChain = Promise.resolve();
+
+async function tlCacheRead(name) {
+    let c = null;
+    if (tlIsLocal()) {
+        const r = await fetch('/' + encodeURI(tlCacheFile(name)) + '?t=' + Date.now(), { cache: 'no-store' });
+        if (!r.ok || !/json/i.test(r.headers.get('content-type') || '')) return null;
+        c = await r.json();
+    } else {
+        c = await tlKvGet('cache:' + name);
+    }
+    return (c && c.v === TL_CACHE_VERSION && Array.isArray(c.folders) && c.folders.some(f => f.rel === '')) ? c : null;
+}
+
+async function tlCacheWrite(name, data) {
+    if (tlIsLocal()) {
+        const r = await fetch('/api/save_local_cache', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: tlCacheFile(name), data })
+        });
+        if (!r.ok) throw new Error('Server error ' + r.status);
+    } else {
+        await tlKvSet('cache:' + name, data);
+    }
+}
+
+function tlSerializeCache() {
+    return {
+        v: TL_CACHE_VERSION, root: tlRoot.name, savedAt: Date.now(), created: !!tlCreatedAvailable,
+        folders: tlFolders.map(f => ({
+            rel: f.relPath, name: f.name, c: f.createdTs || 0,
+            img: f.images.map(i => [i.name, i.lastModified, i.size != null ? i.size : (i.file ? i.file.size : 0)]),
+            json: Array.from(f.jsonSet)
+        }))
+    };
+}
+
+/* Saves the current state (one write at a time) */
+function tlCacheSave() {
+    if (!tlRoot) return Promise.resolve();
+    const name = tlRoot.name;
+    tlCacheChain = tlCacheChain.then(async () => {
+        if (!tlRoot || tlRoot.name !== name) return;
+        try { await tlCacheWrite(name, tlSerializeCache()); }
+        catch (e) { console.warn('Could not save the timeline cache:', e); }
+    });
+    return tlCacheChain;
+}
+
+/* Builds the folder tree from the cache. Only directory handles are resolved (one per folder, in parallel by level);
+   images stay lazy: no File, no file handle until needed. A folder that no longer exists is skipped. */
+async function tlNodesFromCache(root, cache, scanId) {
+    const depthOf = rel => rel === '' ? 0 : rel.split('/').length;
+    const byDepth = new Map();
+    cache.folders.forEach(f => { const d = depthOf(f.rel); if (!byDepth.has(d)) byDepth.set(d, []); byDepth.get(d).push(f); });
+    const byRel = new Map(), nodes = [];
+    for (const d of Array.from(byDepth.keys()).sort((a, b) => a - b)) {
+        await tlPool(byDepth.get(d), 16, async f => {
+            if (scanId !== tlScanId) return;
+            let parent = null, handle = root;
+            if (d > 0) {
+                const cut = f.rel.lastIndexOf('/');
+                parent = byRel.get(cut < 0 ? '' : f.rel.slice(0, cut));
+                if (!parent) return;                                  // its parent is gone
+                handle = await parent.handle.getDirectoryHandle(f.name);   // throws when the folder no longer exists
+            }
+            const node = {
+                uid: 0, relPath: f.rel, name: d ? f.name : root.name, label: f.rel || '/ (root files)', handle, parent, children: [],
+                images: [], jsonSet: new Set(f.json || []), minTs: 0, maxTs: 0, createdTs: f.c || null, _sub: 0, _key: undefined
+            };
+            node.images = (f.img || []).map(a => ({ name: a[0], lastModified: a[1], size: a[2], handle: null, file: null, folder: node, url: null }));
+            byRel.set(f.rel, node);
+            if (parent) parent.children.push(node);
+        });
+        if (scanId !== tlScanId) return null;
+    }
+    // stable order: parents first, children sorted by name (same order the scan produces)
+    const ordered = [];
+    (function add(n) { n.uid = ++tlUidCounter; tlUpdateFolderRange(n); ordered.push(n); n.children.sort((a, b) => tlCollator.compare(a.name, b.name)); n.children.forEach(add); })(byRel.get('') || (() => { throw new Error('no root'); })());
+    return { nodes: ordered, rootNode: byRel.get('') };
+}
+
+/* The file of an image that came from the cache is opened only when needed */
+async function tlEnsureFile(item) {
+    if (item.file) return item;
+    if (!item.handle) item.handle = await item.folder.handle.getFileHandle(item.name);
+    item.file = await item.handle.getFile();
+    item.lastModified = item.file.lastModified; item.size = item.file.size;
+    return item;
+}
+
+/* Key of an image for the thumbnail loader: the blob url when it exists, otherwise a made-up key + a lazy source */
+const tlLazyKey = item => 'tl:' + item.folder.uid + ':' + item.name;
+const tlKey = item => item.file ? tlUrl(item) : (item.url || tlLazyKey(item));
+const tlThumbOpts = item => item.file ? {} : { getBlob: () => tlEnsureFile(item).then(i => i.file) };
+
+function tlDisposeItem(it) {
+    if (window.ThumbLoader) { window.ThumbLoader.forget(tlLazyKey(it)); if (it.url) window.ThumbLoader.forget(it.url); }
+    if (it.url) { try { URL.revokeObjectURL(it.url); } catch (e) {} it.url = null; }
+}
+
+/* Re-renders keeping the user where they are (first visible image stays at the same place) */
+function tlRenderKeepingPlace() {
+    const grid = $tl('grid-view');
+    let anchor = null, off = 0;
+    if (!tlInDetail && grid.style.display !== 'none') {
+        const c = tlFirstVisibleCard(grid);
+        if (c) { const it = tlFlat[Number(c.dataset.i)]; if (it) { anchor = it; off = c.getBoundingClientRect().top - grid.getBoundingClientRect().top; } }
+    }
+    tlRecompute();
+    if (anchor) { const idx = tlFlat.indexOf(anchor); if (idx >= 0) currentPage = Math.floor(idx / itemsPerPage) + 1; }
+    renderGrid();
+    renderFolderSidebar();
+    tlUpdateHeaderText();
+    if (anchor) {
+        const idx = tlFlat.indexOf(anchor);
+        const card = idx >= 0 ? grid.querySelector(`.grid-item-wrapper[data-i="${idx}"]`) : null;
+        if (card) grid.scrollTop += card.getBoundingClientRect().top - grid.getBoundingClientRect().top - off;
+    }
+}
+
+/* After a cached boot: lists the folders again (no getFile on known images), finds what changed and applies it.
+   Phase 1 reads the disk and builds a plan; phase 2 applies the plan in one synchronous step. */
+async function tlBackgroundCheck(scanId, cache) {
+    tlSetStatus('Checking for changes...');
+    const plan = [];                                         // { node, added:[item], removed:Set(name), jsons:Set, newDirs:[{nodes,rootNode}], goneDirs:[node], live:Map(name->handle) }
+    let level = [tlRootNode];
+    try {
+        while (level.length) {
+            const next = [];
+            await tlPool(level, 8, async node => {
+                if (scanId !== tlScanId) return;
+                const imgs = new Map(), jsons = new Set(), dirs = new Map();
+                for await (const e of node.handle.values()) {
+                    if (e.kind === 'file') {
+                        if (TL_IMG_RE.test(e.name)) imgs.set(e.name, e);
+                        else if (/\.json$/i.test(e.name)) jsons.add(e.name);
+                    } else if (e.kind === 'directory' && !e.name.startsWith('.')) dirs.set(e.name, e);
+                }
+                const have = new Map(node.images.map(i => [i.name, i]));
+                const added = [];
+                await tlPool(Array.from(imgs.values()).filter(e => !have.has(e.name)), 24, async e => {
+                    const f = await e.getFile();
+                    added.push({ name: e.name, handle: e, file: f, lastModified: f.lastModified, size: f.size, folder: node, url: null });
+                });
+                const removed = new Set(node.images.filter(i => !imgs.has(i.name)).map(i => i.name));
+                const newDirs = [], goneDirs = node.children.filter(c => !dirs.has(c.name));
+                for (const [name, entry] of dirs) {
+                    const child = node.children.find(c => c.name === name);
+                    if (child) { child.handle = entry; next.push(child); }
+                    else if (depthOk(node.relPath)) {
+                        const rel = node.relPath ? node.relPath + '/' + name : name;
+                        const sub = await tlScanRoot(entry, scanId, { rel, depth: rel.split('/').length, parent: node });
+                        if (sub && sub.rootNode) newDirs.push(sub);
+                    }
+                }
+                const sameJson = jsons.size === node.jsonSet.size && Array.from(jsons).every(j => node.jsonSet.has(j));
+                if (added.length || removed.size || newDirs.length || goneDirs.length || !sameJson) plan.push({ node, added, removed, jsons, sameJson, newDirs, goneDirs, live: imgs });
+                else node.images.forEach(i => { i.handle = imgs.get(i.name) || i.handle; });
+            });
+            if (scanId !== tlScanId) return;
+            level = next;
+        }
+    } catch (e) {
+        console.warn('Background check failed (the cached timeline stays as it is):', e);
+        if (scanId === tlScanId) tlUpdateHeaderText();
+        return;
+    }
+    if (scanId !== tlScanId) return;
+
+    let changed = false, dirty = false;
+    plan.forEach(p => {
+        const { node } = p;
+        if (p.removed.size) {
+            node.images.filter(i => p.removed.has(i.name)).forEach(tlDisposeItem);
+            node.images = node.images.filter(i => !p.removed.has(i.name));
+            changed = true;
+        }
+        node.images.forEach(i => { i.handle = p.live.get(i.name) || i.handle; });
+        if (p.added.length) { node.images = node.images.concat(p.added); changed = true; }
+        if (p.removed.size || p.added.length) tlUpdateFolderRange(node);
+        if (!p.sameJson) { node.jsonSet.clear(); p.jsons.forEach(j => node.jsonSet.add(j)); dirty = true; }
+        p.goneDirs.forEach(g => {
+            const drop = new Set();
+            (function mark(n) { drop.add(n); n.children.forEach(mark); })(g);
+            drop.forEach(n => { n.images.forEach(tlDisposeItem); tlFolderByUid.delete(n.uid); });
+            tlFolders = tlFolders.filter(n => !drop.has(n));
+            node.children = node.children.filter(c => c !== g);
+            changed = true;
+        });
+        p.newDirs.forEach(sub => {
+            node.children.push(sub.rootNode);
+            node.children.sort((a, b) => tlCollator.compare(a.name, b.name));
+            sub.nodes.forEach(n => { tlFolders.push(n); tlFolderByUid.set(n.uid, n); });
+            changed = true;
+        });
+    });
+
+    // folder creation dates (localhost): only when something changed or the cache never had them
+    if (changed || !cache.created) {
+        await tlFetchCreatedDates();
+        if (scanId !== tlScanId) return;
+        if (tlFolderDateMode === 'created') changed = true;
+    }
+    if (changed) tlRenderKeepingPlace(); else tlUpdateHeaderText();
+    if (changed || dirty) tlCacheSave();
+}
+const depthOk = rel => (rel === '' ? 0 : rel.split('/').length) < TL_MAX_DEPTH;
+
+async function tlLoadRoot(handle, keepState, forceScan) {
     const scanId = ++tlScanId;
     const prevPage = currentPage;
     const prevScroll = $tl('grid-view').scrollTop;
@@ -518,25 +744,48 @@ async function tlLoadRoot(handle, keepState) {
 
     $tl('folder-list').innerHTML = '';
     $tl('folder-summary').textContent = '';
-    $tl('grid-view').innerHTML = '<div id="empty-state">Scanning folders...<br><span style="font-size:12px;">Large libraries can take a moment.</span></div>';
-    updateGridCounters(); updatePaginationControls();
 
-    let res;
-    try { res = await tlScanRoot(handle, scanId); }
-    catch (e) { console.error(e); tlToast('Error reading the directory. Check the permissions.', 'error'); tlSetStatus(''); return; }
-    if (scanId !== tlScanId) return;                   // a newer load took over
+    // Saved scan (localhost: file in local/ · online: IndexedDB). The ↻ button skips it and does a full scan.
+    let cache = null, res = null;
+    if (!forceScan) {
+        try { cache = await tlCacheRead(handle.name); } catch (e) { cache = null; }
+        if (scanId !== tlScanId) return;
+        if (cache) {
+            tlSetStatus('Opening from the saved scan...');
+            try { res = await tlNodesFromCache(handle, cache, scanId); }
+            catch (e) { console.warn('The saved scan could not be used, scanning again:', e); res = null; }
+            if (scanId !== tlScanId) return;
+        }
+    }
+    const fromCache = !!(res && res.rootNode);
+    if (!fromCache) {
+        $tl('grid-view').innerHTML = '<div id="empty-state">Scanning folders...<br><span style="font-size:12px;">Large libraries can take a moment.</span></div>';
+        updateGridCounters(); updatePaginationControls();
+        try { res = await tlScanRoot(handle, scanId); }
+        catch (e) { console.error(e); tlToast('Error reading the directory. Check the permissions.', 'error'); tlSetStatus(''); return; }
+        if (scanId !== tlScanId) return;                   // a newer load took over
+    }
 
     tlFolders = res.nodes;
     tlRootNode = res.rootNode;
     tlFolders.forEach(f => tlFolderByUid.set(f.uid, f));
-    await tlFetchCreatedDates();
-    if (scanId !== tlScanId) return;
+    if (fromCache) {
+        // creation dates come with the cache; the background check refreshes them when something changed
+        tlCreatedAvailable = !!(cache.created && tlIsLocal() && tlRootPath);
+        tlDiskStatus = tlCreatedAvailable ? 'Creation dates read from disk (saved).' : '';
+        tlUpdateDateModeOptions();
+    } else {
+        await tlFetchCreatedDates();
+        if (scanId !== tlScanId) return;
+    }
     tlRecompute();
     currentPage = keepState ? prevPage : 1;
     renderGrid();
     renderFolderSidebar();
     if (keepState && !tlDynamic) $tl('grid-view').scrollTop = prevScroll;
     tlUpdateHeaderText();
+    if (fromCache) tlBackgroundCheck(scanId, cache);
+    else tlCacheSave();
 }
 
 function tlTotalImages() { return tlFolders.reduce((n, f) => n + f.images.length, 0); }
@@ -644,7 +893,7 @@ function tlRecompute() {
 }
 
 function tlUrl(item) {
-    if (!item.url) item.url = URL.createObjectURL(item.file);
+    if (!item.url && item.file) item.url = URL.createObjectURL(item.file);
     return item.url;
 }
 
@@ -684,9 +933,15 @@ function tlMakeSection(folder, continued) {
 /* Cards keep a stable height before their thumbnail loads (placeholder = last known ratio), so the
    dynamic page loader measures real page heights instead of "empty" cards. */
 let tlRatio = 2 / 3;
-function tlAttachThumb(img, url) {
+function tlBlocksRoot() {
+    // Preview blocks: one block = one page of the page-size button (itemsPerPage).
+    const g = $tl('grid-view');
+    if (g && window.ThumbLoader && window.ThumbLoader.blocks) window.ThumbLoader.blocks(g, { size: () => itemsPerPage });
+    return g;
+}
+function tlAttachThumb(img, url, extra) {
     img.style.aspectRatio = String(tlRatio);
-    if (window.ThumbLoader) window.ThumbLoader.attach(img, url, { onSize: (w, h) => { if (w && h) { tlRatio = w / h; img.style.aspectRatio = w + ' / ' + h; } } });
+    if (window.ThumbLoader) window.ThumbLoader.attach(img, url, Object.assign({ root: tlBlocksRoot(), onSize: (w, h) => { if (w && h) { tlRatio = w / h; img.style.aspectRatio = w + ' / ' + h; } } }, extra || {}));
     else img.src = url;
 }
 
@@ -699,9 +954,9 @@ function tlMakeCard(item, idx) {
     img.decoding = 'async';
     img.className = 'grid-item';
     img.dataset.filename = item.name;
-    const url = tlUrl(item);
-    // Reduced thumbnail (not the full-size decode) — tools/shared/thumb_loader.js
-    tlAttachThumb(img, url);
+    // Reduced thumbnail (not the full-size decode) — tools/shared/thumb_loader.js. Images that came from the saved scan
+    // have no File yet: the loader opens it only when the preview is needed (tlThumbOpts).
+    tlAttachThumb(img, tlKey(item), tlThumbOpts(item));
     img.onclick = () => tlOpenItem(item);
 
     const label = document.createElement('div');
@@ -758,10 +1013,10 @@ function tlBuildRange(container, from, to, joinGrid) {
     container.appendChild(frag);
 }
 
-function tlForgetThumbs(from, to) {
-    if (!window.ThumbLoader) return;
-    for (let i = from; i < to; i++) { const it = tlFlat[i]; if (it && it.url) window.ThumbLoader.forget(it.url); }
-}
+/* Grid thumbnails belong to the block system (ThumbLoader.blocks): they are released by themselves when their
+   cards leave the DOM. Calling ThumbLoader.forget(url) here would also drop the detail strip's thumbnails,
+   which share the same url, and leave broken images in the strip. */
+function tlForgetThumbs(from, to) {}
 
 function renderGrid() {
     tlActiveOverride = null;
@@ -772,11 +1027,6 @@ function renderGrid() {
     if (currentPage < 1) currentPage = 1;
     const [start, end] = tlWindowFor(currentPage);
 
-    // Free the reduced thumbnails that leave the DOM.
-    if (window.ThumbLoader) {
-        const keep = new Set(tlFlat.slice(start, end));
-        tlPageItems.forEach(it => { if (it.url && !keep.has(it)) window.ThumbLoader.forget(it.url); });
-    }
     tlPageItems = tlFlat.slice(start, end);
     tlWinStart = start; tlWinEnd = end;
 
@@ -1232,13 +1482,15 @@ function tlBuildStrip(item) {
     const strip = $tl('thumbnail-strip');
     strip.innerHTML = '';
     tlStripItems = tlFolderItems(item.folder);
-    tlStripItems.forEach(it => {
+    // Strip previews also load by blocks (same size as the page-size button); horizontal or vertical layout is auto-detected.
+    if (window.ThumbLoader && window.ThumbLoader.blocks) window.ThumbLoader.blocks(strip, { size: () => itemsPerPage });
+    tlStripItems.forEach((it, k) => {
         const img = document.createElement('img');
         img.decoding = 'async';
         img.className = 'thumb';
         img._item = it;
-        const url = tlUrl(it);
-        if (window.ThumbLoader) window.ThumbLoader.attach(img, url, { root: strip }); else img.src = url;
+        if (window.ThumbLoader) window.ThumbLoader.attach(img, tlKey(it), Object.assign({ root: strip, index: k }, tlThumbOpts(it)));
+        else tlEnsureFile(it).then(() => { img.src = tlUrl(it); }).catch(() => {});
         img.onclick = () => tlOpenItem(it);
         strip.appendChild(img);
     });
@@ -1247,6 +1499,11 @@ function tlBuildStrip(item) {
 
 async function tlOpenItem(item) {
     const session = ++detailSessionId;
+    if (!item.file) {                                       // came from the saved scan: open the file now
+        try { await tlEnsureFile(item); }
+        catch (e) { if (session === detailSessionId) showAlert('❌ This image could not be opened (moved or deleted?). Use ↻ to rescan.', 'error'); return; }
+        if (session !== detailSessionId) return;
+    }
     tlUpdateLocalButtons();
     if (isEditing) toggleManualEdit();
     if (!tlInDetail) tlSavedScroll = $tl('grid-view').scrollTop;
@@ -1430,6 +1687,7 @@ function tlForgetDeletedItem(item, deleteMsg) {
     item.folder.jsonSet.delete(baseName + '.json');
     tlReleaseItemUrl(item);
     const folder = item.folder;
+    const keepIdx = tlFlat.indexOf(item);
     folder.images = folder.images.filter(i => i !== item);
     tlUpdateFolderRange(folder);
     tlStripDirty = true;
@@ -1437,6 +1695,14 @@ function tlForgetDeletedItem(item, deleteMsg) {
     showAlert(deleteMsg, 'success');
     backToGrid();
     renderGrid();
+    if (keepIdx >= 0 && tlFlat.length) {                 // the next image now sits where the deleted one was: center it
+        const g = $tl('grid-view');
+        const card = g.querySelector(`.grid-item-wrapper[data-i="${Math.min(keepIdx, tlFlat.length - 1)}"]`);
+        if (card) {
+            const gr = g.getBoundingClientRect(), r = card.getBoundingClientRect();
+            g.scrollTop += (r.top - gr.top) - (gr.height - r.height) / 2;
+        }
+    }
     renderFolderSidebar();
     tlUpdateHeaderText();
     tlToast('File deleted.', 'success', 2000);

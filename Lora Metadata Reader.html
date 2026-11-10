@@ -588,7 +588,7 @@ function isStaleLoad(loadId, file) {
 async function readHeader(file) {
 	const lenBuf    = await file.slice(0, 8).arrayBuffer();
 	const headerLen = Number(new DataView(lenBuf).getBigUint64(0, true));
-	if (headerLen <= 0 || headerLen > 200_000_000) throw new Error('Bad header len');
+	if (headerLen <= 0 || headerLen > 200_000_000 || headerLen > file.size - 8) throw new Error('Bad header len');
 	const hdrBuf = await file.slice(8, 8 + headerLen).arrayBuffer();
 	const parsed = JSON.parse(new TextDecoder().decode(hdrBuf));
 	return parsed.__metadata__ || {};
@@ -601,12 +601,13 @@ const computeSHA256 = (file, onProgress) => window.loraSha256(file, onProgress);
 const META_HASH_KEYS = ['sshs_model_hash', 'sha256_autov2', 'sha256_autov3', 'sha256', 'blake3', 'hash', 'model hash'];
 async function tryHashOnCivitai(hashValue) {
 	if (!hashValue || hashValue.length < 8) return null;
-	try {
-		const r = await fetch(API + 'model-versions/by-hash/' + hashValue.trim(), { signal: AbortSignal.timeout(10000) });
-		if (r.ok) return await r.json();
-		if (r.status === 404) return null;
-		throw new Error('HTTP ' + r.status);
-	} catch (e) { return null; }
+	// 404 (and other 4xx except 429) = "hash not known": return null so the next
+	// candidate is tried. Network failures, timeouts, 429 and 5xx THROW so the
+	// callers can show the "connection failed" state instead of "not found".
+	const r = await fetch(API + 'model-versions/by-hash/' + encodeURIComponent(hashValue.trim()), { signal: AbortSignal.timeout(10000) });
+	if (r.ok) return await r.json();
+	if (r.status !== 429 && r.status >= 400 && r.status < 500) return null;
+	throw new Error('HTTP ' + r.status);
 }
 
 async function doHashAndLookup(file, loadId = currentLoadId) {
@@ -704,7 +705,7 @@ async function doHashAndLookup(file, loadId = currentLoadId) {
 }
 
 async function strictNameSearch(name) {
-	const types = ['LORA'];
+	const types = ['LORA', 'LoCon', 'DoRA'];
 	for (const type of types) {
 		try {
 			const r = await fetch(API + 'models?query=' + encodeURIComponent(name) + '&types=' + type + '&limit=8', { signal: AbortSignal.timeout(8000) });
@@ -939,6 +940,7 @@ function resetUI() {
 window.collectAllTrainedWordsLocal = collectAllTrainedWords;
 window.isStaleLoadLocal = isStaleLoad;
 window.currentLoraNameLocal = () => currentLoraName;
+window.currentFileLocal = () => currentFile;
 window.currentMetaLocal = () => currentMeta;
 
 // Popout de detecção de tags Danbooru (DANBOORU_CAT, openDetectPopout,
@@ -946,10 +948,10 @@ window.currentMetaLocal = () => currentMeta;
 // tools/lora/lora_ui.js (precisa carregar antes de tools/shared/danbooru.js).
 </script>
 
-<script src="tools/lora/lora_meta_reader.js?v=7"></script>
+<script src="tools/lora/lora_meta_reader.js?v=8"></script>
 <script src="tools/lora/lora_ui.js?v=7"></script>
 <script src="tools/quick_links.js?v=5"></script>
-<script src="tools/lora/lora_meta_tools.js?v=5"></script>
+<script src="tools/lora/lora_meta_tools.js?v=6"></script>
 <script src="tools/shared/danbooru.js?v=5"></script>
 <script src="tools/lora/lora_civitai.js?v=5"></script>
 
