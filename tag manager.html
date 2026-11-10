@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en-US">
 <head>
-    <script src="tools/client_error_log.js"></script>
+    <script src="tools/tagmanager/client_error_log.js"></script>
     <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -809,72 +809,72 @@ python -m pip install einops timm</pre>
 
 <!-- UI modules (load order matters) -->
 <script src="tools/quick_links.js"></script>
-<script src="tools/tagmanager_globals.js"></script>
-<script src="tools/tagmanager_tm.js"></script>
-<script src="tools/tagmanager_tasks.js"></script>
-<script src="tools/tagmanager_alert.js"></script>
-<script src="tools/tagmanager_notice.js"></script>
-<script src="tools/tagmanager_db.js"></script>
-<script src="tools/tagmanager_config_store.js"></script>
-<script src="tools/tagmanager_local_store.js"></script>
-<script src="tools/tagmanager_wiki_full.js"></script>
-<script src="tools/tagmanager_booru_core.js"></script>
-<script src="tools/tagmanager_danbooru_core.js"></script>
-<script src="tools/tagmanager_e621_core.js"></script>
-<script src="tools/tagmanager_shared_settings.js"></script>
-<script src="tools/tagmanager_idle_fill.js"></script>
-<script src="tools/booru_status.js"></script>
-<script src="tools/tagmanager_batch_tagger.js"></script>
-<script src="tools/tagmanager_review_unconfirmed.js"></script>
-<script src="tools/tagmanager_caption_tag.js"></script>
-<script src="tools/tagmanager_danbooru_autocomplete.js"></script>
-<script src="tools/tagmanager_danbooru_alias.js"></script>
+<script src="tools/tagmanager/tagmanager_base.js"></script>
+></script>
+></script>
+></script>
+<script src="tools/tagmanager/tagmanager_notice.js"></script>
+<script src="tools/tagmanager/tagmanager_db.js"></script>
+<script src="tools/tagmanager/tagmanager_config_store.js"></script>
+<script src="tools/tagmanager/tagmanager_local_store.js"></script>
+<script src="tools/shared/tagmanager_wiki_full.js"></script>
+<script src="tools/shared/tagmanager_booru_core.js"></script>
+<script src="tools/shared/booru_cores.js"></script>
+></script>
+<script src="tools/shared/booru_shared.js"></script>
+></script>
+<script src="tools/shared/booru_status.js"></script>
+<script src="tools/tagmanager/tagmanager_batch_tagger.js"></script>
+<script src="tools/tagmanager/tagmanager_review_unconfirmed.js"></script>
+<script src="tools/tagmanager/tagmanager_caption_tag.js"></script>
+<script src="tools/shared/tagmanager_danbooru_autocomplete.js"></script>
+<script src="tools/tagmanager/tagmanager_alias.js"></script>
 
 <!-- Alias scripts + bridge -->
-<script src="tools/tagmanager_e621_alias.js"></script>
-<script src="tools/tagmanager_alias_bridge.js"></script>
+></script>
+></script>
 
-<script src="tools/tagmanager_nl_inline_editor.js"></script>
-<script src="tools/tagmanager_active_editor.js"></script>
-<script src="tools/tagmanager_master_list.js"></script>
-<script src="tools/tagmanager_ui_presets.js"></script>
-<script src="tools/tagmanager_ui_list.js"></script>
-<script src="tools/tagmanager_ui_core.js"></script>
-<script src="tools/tagmanager_nav.js"></script>
+<script src="tools/tagmanager/tagmanager_nl_inline_editor.js"></script>
+<script src="tools/tagmanager/tagmanager_active_editor.js"></script>
+<script src="tools/tagmanager/tagmanager_master_list.js"></script>
+<script src="tools/tagmanager/tagmanager_ui_presets.js"></script>
+<script src="tools/tagmanager/tagmanager_ui_list.js"></script>
+<script src="tools/tagmanager/tagmanager_ui_core.js"></script>
+<script src="tools/tagmanager/tagmanager_nav.js"></script>
 
 <!-- Auto-Caption VLM engines (same files as the Prompt Helper). tagmanager_batch_vlm.js must come first and after ui_core. -->
-<script src="tools/tagmanager_batch_vlm.js"></script>
-<script src="tools/prompt_helper_florence_webgpu.js"></script>
-<script src="tools/prompt_helper_florence_pytorch.js"></script>
+<script src="tools/tagmanager/tagmanager_batch_vlm.js"></script>
+<script src="tools/shared/prompt_helper_florence_webgpu.js"></script>
+<script src="tools/shared/prompt_helper_florence_pytorch.js"></script>
 
-<script src="tools/thumb_loader.js"></script>
-<script src="tools/tagmanager_render_hooks.js"></script>
+<script src="tools/shared/thumb_loader.js"></script>
+<script src="tools/tagmanager/tagmanager_hooks.js"></script>
 <!-- Double-click protection on tag removal (ghost double clicks from worn mice / Windows 11) -->
-<script src="tools/tagmanager_remove_cooldown.js"></script>
-<script src="tools/tagmanager_auto_task_queue.js"></script>
-<script src="tools/tagmanager_pin_image.js"></script>
-<script src="tools/tagmanager_color_groups.js"></script>
+></script>
+></script>
+<script src="tools/tagmanager/tagmanager_pin_image.js"></script>
+<script src="tools/tagmanager/tagmanager_color_groups.js"></script>
 <!-- PSD Import (replaces the old Compact View): loaded before bucket_check so the 🪣 button anchors next to it -->
-<script src="tools/tagmanager_psd.js"></script>
-<script src="tools/tagmanager_rule_conflict.js"></script>
-<script src="tools/tagmanager_rule_similar.js"></script>
-<script src="tools/tagmanager_rule_automerge.js"></script>
-<script src="tools/tagmanager_rule_highlight.js"></script>
-<script src="tools/tagmanager_rule_redudant.js"></script>
-<script src="tools/tagmanager_archive.js"></script>
-<script src="tools/tagmanager_danbooru_panel.js"></script>
-<script src="tools/tagmanager_duplicate_name_alert.js"></script>
-<script src="tools/tagmanager_copy_badge.js"></script>
-<script src="tools/tagmanager_rule_embed_quickadd.js"></script>
-<script src="tools/tagmanager_bucket_check.js"></script>
-<script src="tools/tagmanager_grayscale.js"></script>
-<script src="tools/tagmanager_clean_dataset.js"></script>
-<script src="tools/tagmanager_removed_history.js"></script>
-<script src="tools/tagmanager_popout_size.js"></script>
-<script src="tools/tagmanager_evaluator.js"></script>
-<script src="tools/tagmanager_assistant.js"></script>
-<script src="tools/tagmanager_help.js"></script>
-<script src="tools/tagmanager_settings_layout.js"></script>
+<script src="tools/tagmanager/tagmanager_psd.js"></script>
+<script src="tools/tagmanager/tagmanager_rule_conflict.js"></script>
+<script src="tools/tagmanager/tagmanager_rule_similar.js"></script>
+<script src="tools/tagmanager/tagmanager_rule_automerge.js"></script>
+<script src="tools/tagmanager/tagmanager_rule_highlight.js"></script>
+<script src="tools/tagmanager/tagmanager_rule_redudant.js"></script>
+<script src="tools/tagmanager/tagmanager_archive.js"></script>
+<script src="tools/tagmanager/tagmanager_danbooru_panel.js"></script>
+<script src="tools/tagmanager/tagmanager_duplicate_name_alert.js"></script>
+<script src="tools/tagmanager/tagmanager_copy_badge.js"></script>
+<script src="tools/tagmanager/tagmanager_rule_embed_quickadd.js"></script>
+<script src="tools/tagmanager/tagmanager_bucket_check.js"></script>
+<script src="tools/tagmanager/tagmanager_grayscale.js"></script>
+<script src="tools/tagmanager/tagmanager_clean_dataset.js"></script>
+<script src="tools/tagmanager/tagmanager_removed_history.js"></script>
+<script src="tools/tagmanager/tagmanager_popout_size.js"></script>
+<script src="tools/tagmanager/tagmanager_evaluator.js"></script>
+<script src="tools/tagmanager/tagmanager_assistant.js"></script>
+<script src="tools/tagmanager/tagmanager_help.js"></script>
+<script src="tools/tagmanager/tagmanager_settings_layout.js"></script>
 <script>
 /* Run mode under the title: green = localhost (recommended), yellow = online, red = opened as a file. */
 (function () {

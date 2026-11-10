@@ -511,7 +511,7 @@ async function manualHashSearch() {
 	}
 }
 
-// toggleCardPrompt/_cardPromptOpen/copyFromArea foram movidos para tools/lora_prompt_tools.js.
+// toggleCardPrompt/_cardPromptOpen/copyFromArea foram movidos para tools/lora/lora_ui.js.
 
 const dropzone  = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
@@ -595,7 +595,7 @@ async function readHeader(file) {
 }
 
 // SHA-256 (nativo ou em streaming para arquivos grandes) vive em
-// tools/lora_meta_reader.js — compartilhado com o Lora Evaluate.
+// tools/lora/lora_meta_reader.js — compartilhado com o Lora Evaluate.
 const computeSHA256 = (file, onProgress) => window.loraSha256(file, onProgress);
 
 const META_HASH_KEYS = ['sshs_model_hash', 'sha256_autov2', 'sha256_autov3', 'sha256', 'blake3', 'hash', 'model hash'];
@@ -887,13 +887,13 @@ async function collectAllTrainedWords(ver) {
 
 // Todo o parsing/leitura de metadados (FIELDS, findVal, resolvers, detecção de
 // timing/sistema, populateUI/setField — com o fix do bug de Epoch, chave
-// 'ss_num_epochs') vive em tools/lora_meta_reader.js.
+// 'ss_num_epochs') vive em tools/lora/lora_meta_reader.js.
 //
 // Galeria de imagens/vídeos e banners/status/feedback de conexão vivem em
-// tools/lora_ui_widgets.js.
+// tools/lora/lora_ui.js.
 //
 // UI de prompts (toggle do card, colapso de textarea, renderPrompts) e o
-// popout de detecção de tags no Danbooru vivem em tools/lora_prompt_tools.js.
+// popout de detecção de tags no Danbooru vivem em tools/lora/lora_ui.js.
 
 function resetUI() {
 	currentLoraName = ''; currentMeta = {}; currentFile = null; resetMediaPreview();
@@ -931,7 +931,7 @@ function resetUI() {
 	setStatus('','');
 }
 
-// sanitizeCivitaiDesc foi movida para tools/lora_meta_reader.js
+// sanitizeCivitaiDesc foi movida para tools/lora/lora_meta_reader.js
 // (export window.sanitizeCivitaiDescLocal também vive lá agora).
 
 
@@ -943,19 +943,19 @@ window.currentMetaLocal = () => currentMeta;
 
 // Popout de detecção de tags Danbooru (DANBOORU_CAT, openDetectPopout,
 // extractTagsFromMeta, renderDetectPopout, closeDetectPopout) vive em
-// tools/lora_prompt_tools.js (precisa carregar antes de tools/danbooru.js).
+// tools/lora/lora_ui.js (precisa carregar antes de tools/shared/danbooru.js).
 </script>
 
-<script src="tools/lora_meta_reader.js?v=7"></script>
-<script src="tools/lora_ui_widgets.js?v=7"></script>
-<script src="tools/lora_prompt_tools.js?v=7"></script>
+<script src="tools/lora/lora_meta_reader.js?v=7"></script>
+<script src="tools/lora/lora_ui.js?v=7"></script>
+></script>
 <script src="tools/quick_links.js?v=5"></script>
-<script src="tools/lora_tag_freq.js?v=5"></script>
-<script src="tools/lora_raw_meta.js?v=5"></script>
-<script src="tools/lora_meta_editor.js?v=5"></script>
-<script src="tools/danbooru.js?v=5"></script>
-<script src="tools/lora_civitai_result.js?v=5"></script>
-<script src="tools/lora_civitai_prompts.js?v=5"></script>
+<script src="tools/lora/lora_meta_tools.js?v=5"></script>
+></script>
+></script>
+<script src="tools/shared/danbooru.js?v=5"></script>
+<script src="tools/lora/lora_civitai.js?v=5"></script>
+></script>
 
 </body>
 </html>

@@ -399,7 +399,7 @@
             </div>
             <div class="status-line" id="oStatus">Ollama must be running locally. Models that follow instructions work best (llama3, qwen2.5, mistral, gemma2...).</div>
             </div>
-            <!-- Writer: filled by tools/prompt_helper_writer.js -->
+            <!-- Writer: filled by tools/prompt_helper/prompt_helper_writer.js -->
             <div class="o-subpane" id="oSub-writer"></div>
         </div>
 
@@ -482,33 +482,33 @@
 
 <!-- ===================== SCRIPTS (order matters) ===================== -->
 <!-- 1) Minimal settings/alert/queue layer (replaces tagmanager_db.js) -->
-<script src="tools/prompt_helper_settings.js"></script>
+<script src="tools/prompt_helper/prompt_helper_settings.js"></script>
 
 <!-- 2) Tag Manager cores: shared cache layer (write-through only).
      tagmanager_booru_core.js = implementação única usada pelos dois cores. -->
-<script src="tools/tagmanager_wiki_full.js"></script>
-<script src="tools/tagmanager_booru_core.js"></script>
-<script src="tools/tagmanager_danbooru_core.js"></script>
-<script src="tools/tagmanager_e621_core.js"></script>
-<script src="tools/tagmanager_shared_settings.js"></script>
-<script src="tools/tagmanager_idle_fill.js"></script>
+<script src="tools/shared/tagmanager_wiki_full.js"></script>
+<script src="tools/shared/tagmanager_booru_core.js"></script>
+<script src="tools/shared/booru_cores.js"></script>
+></script>
+<script src="tools/shared/booru_shared.js"></script>
+></script>
 <!-- Danbooru / e621 availability dots (Tag Lookup header) -->
-<script src="tools/booru_status.js"></script>
+<script src="tools/shared/booru_status.js"></script>
 
 <!-- 3) Prompt Helper modules -->
-<script src="tools/tagmanager_danbooru_autocomplete.js"></script>
-<script src="tools/prompt_helper_tags.js"></script>
-<script src="tools/prompt_helper_ui.js"></script>
-<script src="tools/prompt_helper_google.js"></script>
-<script src="tools/prompt_helper_ollama.js"></script>
-<script src="tools/prompt_helper_enhancer.js"></script>
-<script src="tools/prompt_helper_writer.js"></script>
+<script src="tools/shared/tagmanager_danbooru_autocomplete.js"></script>
+<script src="tools/prompt_helper/prompt_helper_tags.js"></script>
+<script src="tools/prompt_helper/prompt_helper_tools.js"></script>
+></script>
+></script>
+></script>
+<script src="tools/prompt_helper/prompt_helper_writer.js"></script>
 <!-- Image → Prompt: core first, then the engines (WebGPU + ONNX = any origin, PyTorch = localhost only) -->
-<script src="tools/prompt_helper_florence.js"></script>
-<script src="tools/prompt_helper_florence_webgpu.js"></script>
-<script src="tools/prompt_helper_florence_onnx.js"></script>
-<script src="tools/prompt_helper_florence_pytorch.js"></script>
-<script src="tools/prompt_helper_help.js"></script>
+<script src="tools/prompt_helper/prompt_helper_florence.js"></script>
+<script src="tools/shared/prompt_helper_florence_webgpu.js"></script>
+<script src="tools/prompt_helper/prompt_helper_florence_onnx.js"></script>
+<script src="tools/shared/prompt_helper_florence_pytorch.js"></script>
+<script src="tools/prompt_helper/prompt_helper_help.js"></script>
 
 <!-- Quick Links (+) — same balloon as the rest of the Modular AI Tools hub -->
 <script src="tools/quick_links.js"></script>

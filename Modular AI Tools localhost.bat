@@ -16,5 +16,5 @@ echo ========================================================
 echo   Modular AI Tools - Localhost Server
 echo ========================================================
 echo.
-%PY% server_max.py   %*
+%PY% tools\server\server_max.py   %*
 pause

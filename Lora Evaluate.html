@@ -148,8 +148,8 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 <div id="cr"><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank" rel="noopener">GitHub Repository</a><br>© 2026 shirosaki33</div>
 
 <!-- Mesmo módulo do Lora Metadata Reader: findVal, escHtml, detectSystemInfo, detectTrainingTiming, resolve*, sanitizeCivitaiDesc -->
-<script src="tools/thumb_loader.js"></script>
-<script src="tools/lora_meta_reader.js?v=7"></script>
+<script src="tools/shared/thumb_loader.js"></script>
+<script src="tools/lora/lora_meta_reader.js?v=7"></script>
 <script>
 const $=id=>document.getElementById(id),esc=s=>window.escHtml(s??''),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const fv=(m,k)=>{const v=findVal(m,k);return v&&v!=='None'&&v!=='null'?v:null};
@@ -431,7 +431,7 @@ render();
 if(!window.showDirectoryPicker){$('ntx').textContent='This browser does not support the File System Access API. Use Chrome, Edge, or another Chromium browser on a desktop.';$('nbt').style.display='none';$('notice').style.display='flex'}
 else init();
 </script>
-<script src="tools/lora_custom_cats.js"></script>
+<script src="tools/lora/lora_custom_cats.js"></script>
 <script src="tools/quick_links.js"></script>
 </body>
 </html>
