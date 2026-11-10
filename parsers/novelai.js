@@ -277,8 +277,15 @@
 
                 let label = '';
                 if (hasCoords) {
-                    const gridLabel = formatGridLabel(positions[i]?.x, positions[i]?.y);
-                    if (gridLabel) label = `Character ${gridLabel}`;
+                    const px = positions[i]?.x, py = positions[i]?.y;
+                    if (px !== null && px !== undefined && py !== null && py !== undefined) {
+                        // Old grid positions (V4 / V4.5) sit exactly on 0.1, 0.3 ... 0.9 -> "A1".."E5".
+                        // Free positions (V5) are shown as the real point, in % of the image.
+                        const onGrid = v => [0.1, 0.3, 0.5, 0.7, 0.9].some(c => Math.abs(Number(v) - c) < 0.005);
+                        label = (onGrid(px) && onGrid(py))
+                            ? `Character ${formatGridLabel(px, py)}`
+                            : `Character ${notes.length + 1} (x ${Math.round(px * 100)}%, y ${Math.round(py * 100)}%)`;
+                    }
                 }
                 if (!label) label = `Character ${notes.length + 1}`;
 
