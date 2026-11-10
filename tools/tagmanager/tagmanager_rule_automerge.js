@@ -34,7 +34,9 @@
         { name: 'solidbackground', tags: ['simple background', 'white background', 'black background', 'transparent background', 'blue background', 'red background', 'green background', 'yellow background', 'pink background', 'purple background', 'grey background', 'brown background', 'orange background'] }
     ];
 
-    FACTORY_EMBEDS.forEach((emb, i) => window.RulesDB.factoryRules.push({ id: 'def_emb_'+i, category: 'embed', isDefault: true, name: emb.name, tags: emb.tags }));
+    window.RulesDB.originalGroupNames = window.RulesDB.originalGroupNames || new Set();
+    FACTORY_EMBEDS.forEach(e => window.RulesDB.originalGroupNames.add(e.name));
+    FACTORY_EMBEDS.forEach((emb, i) => window.RulesDB.factoryRules.push({ id: 'def_emb_'+i, category: 'embed', isDefault: true, origin: 'group', name: emb.name, tags: emb.tags }));
 
     window.RulesDB.factoryRules.push({ id: 'def_am_0', category: 'automerge', isDefault: true, keepTag: 'nude', removeTags: ['completely nude'], require: [], exclude: ['full body', '@clothing'], isAutoFill: false });
     window.RulesDB.factoryRules.push({ id: 'def_am_1', category: 'automerge', isDefault: true, keepTag: 'completely nude', removeTags: ['nude'], require: ['full body'], exclude: ['@clothing'], isAutoFill: false });
@@ -656,71 +658,96 @@
         if (window.RulesUI.refreshModalBody) await window.RulesUI.refreshModalBody();
     };
 
+    const ORIG_SECTIONS = [['group', '📦 Groups', '#b890ff'], ['conflict', '🚨 From Conflicts', '#ff6060'], ['similar', '🟨 From Similar', '#ffcc66'], ['redundant', '🔁 From Redundant', '#2dd4bf']];
+    const _origSecOpen = new Set(['group']);
+    let _origSearch = '';
+
     window.RulesUI.registerSection(5, async (rows) => {
         const esc = window.RulesUI.escapeHTML;
         const wrap = document.createElement('div');
         wrap.className = 'panel';
-        wrap.style.cssText = 'flex: 0 0 280px; display:flex; flex-direction:column; background:#1b1b1b; border:1px solid #222; border-radius:10px; overflow:hidden; min-height:0;';
+        wrap.style.cssText = 'flex: 0 0 320px; display:flex; flex-direction:column; background:#1b1b1b; border:1px solid #222; border-radius:10px; overflow:hidden; min-height:0;';
         wrap.innerHTML = `
             <div style="background:#222; padding:12px 15px; font-size:13px; font-weight:bold; color:#b890ff; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
                 <span>📦 Original Groups (@)</span>
-                <button class="og-restore-all" title="Restore the original tags of both groups" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px;">🔄</button>
+                <button class="og-restore-all" title="Restore the original tags of every group" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px;">🔄</button>
             </div>
-            <div style="font-size:11px; color:#aaa; padding:10px 15px; background:#151515; border-bottom:1px solid #222; line-height:1.5;">
-                Built-in groups usable as <b>@name</b> in the other rules. Your own groups are the categories of User Presets.
-            </div>`;
+            <div style="font-size:11px; color:#aaa; padding:10px 15px 6px; background:#151515; line-height:1.5;">
+                Every original rule list is a group here, and the original rules point to it as <b>@name</b>: edit a group and all rules using it follow. Your own groups are the categories of User Presets.
+            </div>
+            <div style="padding:0 15px 8px; background:#151515; border-bottom:1px solid #222;"><input class="og-search" type="text" placeholder="Search groups or tags..." value="${esc(_origSearch)}" style="width:100%; box-sizing:border-box; font-size:11px; background:#222; border:1px solid #444; padding:5px 8px; border-radius:4px; color:#fff;"></div>`;
         wrap.querySelector('.og-restore-all').onclick = async () => {
-            if (!confirm('Restore the original tags of both groups?')) return;
+            if (!confirm('Restore the original tags of every group?')) return;
             await window.restoreEmbedDefaults();
         };
+        const search = wrap.querySelector('.og-search');
+        search.oninput = () => { _origSearch = search.value; window.RulesUI.refreshModalBody().then(() => { const s2 = document.querySelector('.og-search'); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } }); };
+        const q = _origSearch.trim().toLowerCase();
+
         const list = document.createElement('div');
         list.style.cssText = 'flex:1; overflow-y:auto; background:#111; padding:10px; display:flex; flex-direction:column; gap:6px;';
         wrap.appendChild(list);
 
         const embeds = rows.filter(r => r.category === 'embed' && !r.virtual);
-        for (const def of window.RulesDB.getFactoryRules().filter(r => r.category === 'embed')) {
-            const cur = embeds.find(e => String(e.name || '').toLowerCase() === def.name) || null;
-            const tags = cur ? (Array.isArray(cur.tags) ? cur.tags : []) : [];
-            const card = document.createElement('div');
-            card.style.cssText = 'background:#151515; border:1px solid #2a2a2a; border-left:3px solid #b890ff; border-radius:6px; padding:8px 10px; display:flex; flex-direction:column; gap:6px;';
-            if (!cur) {
-                card.innerHTML = `<div style="font-size:12px; color:#777;">@${esc(def.name)} was deleted.</div>
-                    <button class="og-back" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">↩ Restore</button>`;
-                card.querySelector('.og-back').onclick = async () => { await restoreOriginalGroup(def); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
-            } else if (_origEditing.id === cur.id) {
-                card.innerHTML = `<div style="font-size:11px; color:#b890ff; font-weight:bold;">✏️ Editing @${esc(def.name)}</div>
-                    <textarea style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-height:90px; resize:vertical;">${esc(tags.join(', '))}</textarea>
-                    <div style="display:flex; gap:6px; justify-content:flex-end;">
-                        <button class="og-cancel" style="background:#222; border:1px solid #444; color:#aaa; font-size:11px; padding:5px 12px; border-radius:4px; cursor:pointer;">✖ Cancel</button>
-                        <button class="og-save" style="background:#00aa66; border:none; color:#000; font-size:11px; padding:5px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">✅ Update</button>
-                    </div>`;
-                card.querySelector('.og-cancel').onclick = () => { _origEditing.id = null; window.RulesUI.refreshModalBody(); };
-                card.querySelector('.og-save').onclick = async () => {
-                    const nt = card.querySelector('textarea').value.split(',').map(t => t.trim()).filter(Boolean);
-                    if (!nt.length) { if (window.showAlert) window.showAlert('At least 1 tag is required.', 'warn'); return; }
-                    await window.RulesDB.updateRule(cur.id, { name: def.name, tags: nt });
-                    _origEditing.id = null;
-                    await window.RulesCore.applyUserRulesToGlobals();
-                    window.RulesUI.refreshModalBody();
-                };
-            } else {
-                const open = _origOpen.has(def.name);
-                const badge = cur.isDefault
-                    ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;">Original</span>'
-                    : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;">Edited</span>';
-                card.innerHTML = `<div style="display:flex; align-items:center; gap:6px;">
-                        <span class="og-head" style="flex:1; cursor:pointer; font-size:13px; font-weight:bold; color:#b890ff;" title="Show / hide the tags">${open ? '▾' : '▸'} @${esc(def.name)} <span style="color:#666; font-size:10px; font-weight:normal;">${tags.length}</span></span>
-                        ${badge}
-                        <button class="og-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:2px 7px; border-radius:4px; cursor:pointer;">✏️</button>
-                        ${cur.isDefault ? '' : '<button class="og-reset" title="Restore original tags" style="background:#222; border:1px solid #444; color:#aaa; font-size:12px; padding:2px 7px; border-radius:4px; cursor:pointer;">↩</button>'}
-                    </div>
-                    ${open ? `<div style="font-size:11px; color:#aaa; line-height:1.4; word-break:break-word;">${esc(tags.join(', '))}</div>` : ''}`;
-                card.querySelector('.og-head').onclick = () => { open ? _origOpen.delete(def.name) : _origOpen.add(def.name); window.RulesUI.refreshModalBody(); };
-                card.querySelector('.og-edit').onclick = () => { _origEditing.id = cur.id; window.RulesUI.refreshModalBody(); };
-                const rs = card.querySelector('.og-reset');
-                if (rs) rs.onclick = async () => { await restoreOriginalGroup(def); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+        const defs = window.RulesDB.getFactoryRules().filter(r => r.category === 'embed');
+
+        for (const [origin, label, color] of ORIG_SECTIONS) {
+            const secDefs = defs.filter(d => (d.origin || 'group') === origin);
+            if (!secDefs.length) continue;
+            const items = secDefs.map(def => ({ def, cur: embeds.find(e => String(e.name || '').toLowerCase() === def.name) || null }))
+                .filter(({ def, cur }) => !q || def.name.includes(q) || ((cur ? cur.tags : def.tags) || []).some(t => String(t).toLowerCase().includes(q)));
+            if (q && !items.length) continue;
+            const secOpen = !!q || _origSecOpen.has(origin);
+            const sh = document.createElement('div');
+            sh.style.cssText = `cursor:pointer; font-size:12px; font-weight:bold; color:${color}; padding:4px 2px; user-select:none;`;
+            sh.textContent = `${secOpen ? '▾' : '▸'} ${label} (${items.length})`;
+            sh.onclick = () => { if (q) return; secOpen ? _origSecOpen.delete(origin) : _origSecOpen.add(origin); window.RulesUI.refreshModalBody(); };
+            list.appendChild(sh);
+            if (!secOpen) continue;
+
+            for (const { def, cur } of items) {
+                const tags = cur ? (Array.isArray(cur.tags) ? cur.tags : []) : [];
+                const card = document.createElement('div');
+                card.style.cssText = `background:#151515; border:1px solid #2a2a2a; border-left:3px solid ${color}; border-radius:6px; padding:6px 8px; display:flex; flex-direction:column; gap:6px;`;
+                if (!cur) {
+                    card.innerHTML = `<div style="font-size:12px; color:#777;">@${esc(def.name)} was deleted.</div>
+                        <button class="og-back" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:11px; padding:4px 8px; border-radius:4px; cursor:pointer;">↩ Restore</button>`;
+                    card.querySelector('.og-back').onclick = async () => { await restoreOriginalGroup(def); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+                } else if (_origEditing.id === cur.id) {
+                    card.innerHTML = `<div style="font-size:11px; color:#b890ff; font-weight:bold;">✏️ Editing @${esc(def.name)}</div>
+                        <textarea style="font-size:11px; background:#222; border:1px solid #444; padding:6px 8px; border-radius:4px; color:#fff; min-height:90px; resize:vertical;">${esc(tags.join(', '))}</textarea>
+                        <div style="display:flex; gap:6px; justify-content:flex-end;">
+                            <button class="og-cancel" style="background:#222; border:1px solid #444; color:#aaa; font-size:11px; padding:5px 12px; border-radius:4px; cursor:pointer;">✖ Cancel</button>
+                            <button class="og-save" style="background:#00aa66; border:none; color:#000; font-size:11px; padding:5px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">✅ Update</button>
+                        </div>`;
+                    card.querySelector('.og-cancel').onclick = () => { _origEditing.id = null; window.RulesUI.refreshModalBody(); };
+                    card.querySelector('.og-save').onclick = async () => {
+                        const nt = card.querySelector('textarea').value.split(',').map(t => t.trim()).filter(Boolean);
+                        if (!nt.length) { if (window.showAlert) window.showAlert('At least 1 tag is required.', 'warn'); return; }
+                        await window.RulesDB.updateRule(cur.id, { name: def.name, tags: nt });
+                        _origEditing.id = null;
+                        await window.RulesCore.applyUserRulesToGlobals();
+                        window.RulesUI.refreshModalBody();
+                    };
+                } else {
+                    const open = !!q || _origOpen.has(def.name);
+                    const badge = cur.isDefault
+                        ? '<span style="background:#2a2a2a; color:#aaa; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #444;">Original</span>'
+                        : '<span style="background:#1a4d2e; color:#4caf50; font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid #2e7d32;">Edited</span>';
+                    card.innerHTML = `<div style="display:flex; align-items:center; gap:6px;">
+                            <span class="og-head" style="flex:1; min-width:0; cursor:pointer; font-size:12px; font-weight:bold; color:#b890ff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="Show / hide the tags">${open ? '▾' : '▸'} @${esc(def.name)} <span style="color:#666; font-size:10px; font-weight:normal;">${tags.length}</span></span>
+                            ${badge}
+                            <button class="og-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:2px 7px; border-radius:4px; cursor:pointer;">✏️</button>
+                            ${cur.isDefault ? '' : '<button class="og-reset" title="Restore original tags" style="background:#222; border:1px solid #444; color:#aaa; font-size:12px; padding:2px 7px; border-radius:4px; cursor:pointer;">↩</button>'}
+                        </div>
+                        ${open ? `<div style="font-size:11px; color:#aaa; line-height:1.4; word-break:break-word;">${esc(tags.join(', '))}</div>` : ''}`;
+                    card.querySelector('.og-head').onclick = () => { open && !q ? _origOpen.delete(def.name) : _origOpen.add(def.name); window.RulesUI.refreshModalBody(); };
+                    card.querySelector('.og-edit').onclick = () => { _origEditing.id = cur.id; window.RulesUI.refreshModalBody(); };
+                    const rs = card.querySelector('.og-reset');
+                    if (rs) rs.onclick = async () => { await restoreOriginalGroup(def); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+                }
+                list.appendChild(card);
             }
-            list.appendChild(card);
         }
         return wrap;
     });

@@ -64,7 +64,22 @@
         ['happy', 'sad', 'angry', 'expressionless', 'scared', 'surprised', 'shocked', 'bored', 'disgusted']
     ];
 
-    FACTORY_CONFLICTS.forEach((tags, i) => window.RulesDB.factoryRules.push({ id: 'def_conf_'+i, category: 'conflict', isDefault: true, tags }));
+    // Every original conflict / similar / redundant list is also an original @group (shown in Manage Rules > Original Groups).
+    // The original rule just points to its group (['@name']), so editing the group updates the rule everywhere.
+    window.RulesDB.originalGroupNames = window.RulesDB.originalGroupNames || new Set();
+    window.RulesDB.pushOriginalGroupRule = function(ruleId, category, tags, name) {
+        let base = String(name || tags.slice(0, 3).join('-')).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').slice(0, 40) || 'group';
+        let n = base, k = 2;
+        while (this.originalGroupNames.has(n)) n = base + '-' + (k++);
+        this.originalGroupNames.add(n);
+        this.factoryRules.push({ id: 'def_emb_' + ruleId, category: 'embed', isDefault: true, origin: category, name: n, tags: tags.slice() });
+        this.factoryRules.push({ id: ruleId, category, isDefault: true, tags: ['@' + n] });
+    };
+
+    const FACTORY_CONFLICT_NAMES = ['girls-count', 'boys-count', 'one-girl-multiple-girls', 'one-boy-multiple-boys', 'solo-girls-multi', 'solo-multiple-girls', 'solo-boys-multi', 'solo-multiple-boys',
+        'no-humans-solo', 'no-humans-girls-count', 'no-humans-multiple-girls', 'no-humans-boys-count', 'no-humans-multiple-boys', 'day-night', 'indoor-outdoor', 'sunlight-moonlight', 'monochrome-colorful',
+        'eyes-open-closed', 'censored-uncensored', 'poses-crouching', 'poses-squatting', 'body-side', 'looking-viewer-away', 'emotions'];
+    FACTORY_CONFLICTS.forEach((tags, i) => window.RulesDB.pushOriginalGroupRule('def_conf_' + i, 'conflict', tags, FACTORY_CONFLICT_NAMES[i]));
 
     // --- DB ABSTRACTION ---
     window.RulesDB.getFactoryRules = function() {

@@ -46,7 +46,11 @@
         ['dutch angle', 'tilted frame']
     ];
 
-    FACTORY_SIMILAR.forEach((tags, i) => window.RulesDB.factoryRules.push({ id: 'def_sim_'+i, category: 'similar', isDefault: true, tags }));
+    const FACTORY_SIMILAR_NAMES = ['happy-like', 'sad-like', 'angry-like', 'expressionless-like', 'shocked-like', 'mouth-state', 'crouch-squat', 'hair-length', 'hair-color', 'breast-size', 'nudity', 'shot-range', 'view-angle', 'tilted-frame'];
+    FACTORY_SIMILAR.forEach((tags, i) => {
+        if (typeof window.RulesDB.pushOriginalGroupRule === 'function') window.RulesDB.pushOriginalGroupRule('def_sim_' + i, 'similar', tags, FACTORY_SIMILAR_NAMES[i]);
+        else window.RulesDB.factoryRules.push({ id: 'def_sim_'+i, category: 'similar', isDefault: true, tags });
+    });
 
     window.IssueCounters.types.push('similar');
 

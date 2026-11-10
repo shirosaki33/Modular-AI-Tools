@@ -78,7 +78,11 @@
     function registerFactoryRules() {
         if (!window.RulesDB || !Array.isArray(window.RulesDB.factoryRules)) return;
         if (window.RulesDB.factoryRules.some(r => r.category === 'redundant')) return;
-        FACTORY_REDUNDANT.forEach((tags, i) => window.RulesDB.factoryRules.push({ id: 'def_redu_' + i, category: 'redundant', isDefault: true, tags }));
+        const NAMES = ['footwear-dupes', 'thigh-highs-dupes', 't-shirt-dupes', 'ponytail-dupes', 'sfw-dupes', 'nsfw-dupes'];
+        FACTORY_REDUNDANT.forEach((tags, i) => {
+            if (typeof window.RulesDB.pushOriginalGroupRule === 'function') window.RulesDB.pushOriginalGroupRule('def_redu_' + i, 'redundant', tags, NAMES[i]);
+            else window.RulesDB.factoryRules.push({ id: 'def_redu_' + i, category: 'redundant', isDefault: true, tags });
+        });
     }
 
     /* ---------- CHAVE DE PAR (reaproveita a de tagmanager_rule_similar.js; fallback local se ele não tiver carregado ainda) ---------- */
