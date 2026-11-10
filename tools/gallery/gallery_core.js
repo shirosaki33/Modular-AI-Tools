@@ -101,6 +101,9 @@ async function extractPNGMetadata(file) {
         if (textChunk) {
             let textChunkJson = null;
             try { textChunkJson = JSON.parse(textChunk); } catch {}
+            // NovelAI keeps the real model name in a separate "Source" chunk (the Comment JSON has none)
+            if (textChunkJson && typeof textChunkJson === 'object' && !textChunkJson.Source && chunks.get('Source') &&
+                (textChunkJson.v4_prompt || textChunkJson.uc !== undefined)) textChunkJson.Source = String(chunks.get('Source'));
             const parsed = _galleryParseText(textChunk, textChunkJson);
             if (parsed) return parsed;
         }

@@ -36,17 +36,21 @@
         
         const low = s.toLowerCase().replace(/[\s_]+/g, '-');
         
-        // V5 (released 2026-08-21)
-        if (/nai-diffusion-5-full/.test(low))    return 'NAI Diffusion 5 FULL';
-        if (/nai-diffusion-5-curated/.test(low)) return 'NAI Diffusion 5 Curated';
+        // V5
+        if (/nai-diffusion-5-full|v5.*full/.test(low))       return 'NAI Diffusion 5 FULL';
+        if (/nai-diffusion-5-curated|v5.*curated/.test(low)) return 'NAI Diffusion 5 Curated';
+        if (/nai-diffusion-v?5\b|diffusion-v5\b/.test(low)) return 'NAI Diffusion 5';
         // V4.5
         if (/nai-diffusion-4-5-full|v4\.5.*4bde2a90/.test(low))    return 'NAI Diffusion 4.5 FULL';
         if (/nai-diffusion-4-5-curated|v4\.5.*c02d4f98/.test(low)) return 'NAI Diffusion 4.5 Curated';
+        // Source text without a known hash (e.g. "NovelAI Diffusion V4.5 ...")
+        if (/diffusion-v4\.5.*curated/.test(low)) return 'NAI Diffusion 4.5 Curated';
+        if (/diffusion-v4\.5/.test(low) && !/4bde2a90|c02d4f98/.test(low)) return 'NAI Diffusion 4.5';
         // V4
         if (/nai-diffusion-4-full|v4.*37442fca/.test(low))          return 'NAI Diffusion 4.0 FULL';
         if (/nai-diffusion-4-curated|v4.*7abffa2a/.test(low))       return 'NAI Diffusion 4.0 Curated';
         // V3
-        if (/nai-diffusion-3/.test(low)) return 'NAI Diffusion 3';
+        if (/nai-diffusion-3|8ba2af87/.test(low)) return 'NAI Diffusion 3';
         // Anime V2
         if (/nai-diffusion-anime-v2/.test(low)) return 'NAI Diffusion Anime V2';
         // Anime V1
@@ -144,11 +148,12 @@
     }
 
     function formatGridLabel(x, y) {
-        // Converts fractional x/y (0–1) to a column letter + row number label.
+        // Converts fractional x/y (0–1) to a column letter (A–E) + row number (1–5) label.
         if (x === null || x === undefined || y === null || y === undefined) return '';
-        const col = x < 0.33 ? 'A' : x < 0.66 ? 'B' : 'C';
-        const row = y < 0.33 ? '1' : y < 0.66 ? '2' : '3';
-        return col + row;
+        // NovelAI's character grid is 5x5 (A1 ... E5); centers are 0.1, 0.3, 0.5, 0.7, 0.9
+        const ix = Math.min(4, Math.max(0, Math.floor(Number(x) * 5)));
+        const iy = Math.min(4, Math.max(0, Math.floor(Number(y) * 5)));
+        return 'ABCDE'[ix] + (iy + 1);
     }
 
     /* ================================================================
@@ -228,7 +233,7 @@
 
             steps     = String(json.steps     || '');
             cfg       = String(json.scale      || '');
-            seed      = String(json.seed       || '');
+            seed      = (json.seed === 0 || json.seed) ? String(json.seed) : '';
             size      = sizeRaw;
             sampler   = String(json.sampler    || '');
             scheduler = String(json.noise_schedule || '');

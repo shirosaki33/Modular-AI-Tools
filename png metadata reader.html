@@ -768,6 +768,9 @@ async function loadFile(file) {
 
     let jsonObj = null;
     try { jsonObj = JSON.parse(window.currentRawText); } catch(e) {}
+    // NovelAI keeps the real model name in a separate "Source" chunk (the Comment JSON has none)
+    if (jsonObj && typeof jsonObj === 'object' && !jsonObj.Source && window.currentChunks && window.currentChunks.get && window.currentChunks.get('Source') &&
+        (jsonObj.v4_prompt || jsonObj.uc !== undefined)) jsonObj.Source = String(window.currentChunks.get('Source'));
     const cleanJsonString = jsonObj ? JSON.stringify(jsonObj) : window.currentRawText;
 
     if (/Civitai\s+(resources|metadata)\s*:/i.test(window.currentRawText) || (jsonObj && jsonObj.ecosystem)) {
