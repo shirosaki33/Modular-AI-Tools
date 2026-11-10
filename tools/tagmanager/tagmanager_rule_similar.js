@@ -149,7 +149,10 @@
         const list = wrap.querySelector('.panel-list-scroll');
         if (list) {
             const block = window.RulesUI.buildIgnoredPairsBlock('Ignored Pairs', window.ignoredSimilarPairs, window.unignoreSimilarPair, formatPairKey);
-            list.insertBefore(block, list.firstChild);
+            // Originals block first (if any), Ignored Pairs right after it
+            const first = list.firstElementChild;
+            const hasOrig = first && first.querySelector && first.querySelector('.rule-ignored-toggle') && /Originals/.test(first.textContent);
+            list.insertBefore(block, hasOrig ? first.nextSibling : list.firstChild);
         }
         return wrap;
     });

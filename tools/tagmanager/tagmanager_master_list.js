@@ -185,7 +185,6 @@ window.renderMasterTagList = function() {
                 : '';
 
             const isAlreadyPreset = !isCustomNL && window._presetTagsSet && window._presetTagsSet.has(tag);
-            if (isAlreadyPreset && (presetsVisible || window.presetHighlightsAlwaysVisible) && window.enablePresetHighlight !== false) item.classList.add('is-preset');
             const ghostIconHtmlMaster = (window.enableGhostConvertIcon !== false && !isCustomNL) ? `<span class="tag-to-ghost" title="Convert to Ghost globally">💡</span>` : '';
 
             const dbAliasInfoHtml = aliasParts.icon;

@@ -46,7 +46,6 @@ window.loadSettings = async function() {
     const helpBtn = await window.getSetting('toggle-help-btn', true);
     const favHighlight = await window.getSetting('toggle-fav-highlight', true);
     const filterHighlight = await window.getSetting('toggle-filter-highlight', true);
-    const presetHighlight = await window.getSetting('toggle-preset-highlight', true);
     const ghostConvert = await window.getSetting('toggle-ghost-convert', true);
 
     const autoNl = await window.getSetting('toggle-auto-nl', true);
@@ -91,7 +90,6 @@ window.loadSettings = async function() {
     if (document.getElementById('toggle-help-btn')) document.getElementById('toggle-help-btn').checked = helpBtn;
     if (document.getElementById('toggle-fav-highlight')) document.getElementById('toggle-fav-highlight').checked = favHighlight;
     if (document.getElementById('toggle-filter-highlight')) document.getElementById('toggle-filter-highlight').checked = filterHighlight;
-    if (document.getElementById('toggle-preset-highlight')) document.getElementById('toggle-preset-highlight').checked = presetHighlight;
     if (document.getElementById('toggle-ghost-convert')) document.getElementById('toggle-ghost-convert').checked = ghostConvert;
 
     if (document.getElementById('thumb-slider')) document.getElementById('thumb-slider').value = thumbSize;
@@ -112,7 +110,6 @@ window.loadSettings = async function() {
     window.toggleHelpBtn(true);
     window.toggleFavHighlight(true);
     window.enableFilterHighlight = filterHighlight;
-    window.enablePresetHighlight = presetHighlight;
     window.enableGhostConvertIcon = ghostConvert;
     if (typeof window.updateUnsavedChangesUI === 'function') window.updateUnsavedChangesUI();
 
@@ -445,18 +442,6 @@ window.toggleFilterHighlight = function(skipSave = false) {
     if (!skipSave && typeof window.renderEditor === 'function') window.renderEditor();
 };
 
-window.enablePresetHighlight = true;
-window.togglePresetHighlight = function(skipSave = false) {
-    const checkbox = document.getElementById('toggle-preset-highlight');
-    if (checkbox) {
-        window.enablePresetHighlight = checkbox.checked;
-        if (!skipSave) window.saveSetting('toggle-preset-highlight', checkbox.checked);
-    }
-    if (!skipSave) {
-        if (typeof window.renderEditor === 'function') window.renderEditor();
-        if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
-    }
-};
 
 window.enableGhostConvertIcon = true;
 window.toggleGhostConvert = function(skipSave = false) {

@@ -220,7 +220,6 @@ window.renderEditor = function() {
             if (isFav && window.enableFavHighlight !== false) row.classList.add('glow-favorite');
             if (conflictsForThisTag.length > 0) row.classList.add('conflict');
             if (isFilterMatch) row.classList.add('filter-match');
-            if (isAlreadyPreset && (presetsVisible || window.presetHighlightsAlwaysVisible) && window.enablePresetHighlight !== false) row.classList.add('is-preset');
 
             let statusHtml = '';
             if (conflictsForThisTag.length > 0) {

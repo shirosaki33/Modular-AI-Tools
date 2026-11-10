@@ -56,7 +56,6 @@
         if (window._builtinHighlightCheckboxes) return;
         window._builtinHighlightCheckboxes = {
             favorite: relocateHighlightCheckbox('toggle-fav-highlight'),
-            preset: relocateHighlightCheckbox('toggle-preset-highlight'),
             filter: relocateHighlightCheckbox('toggle-filter-highlight')
         };
     };
@@ -107,7 +106,6 @@
         const { favorite: favColor, filter: filterColor, preset: presetColor, nl: nlColor, selection: selColor } = window._builtinHighlightColors;
         container.querySelectorAll('.glow-favorite').forEach(el => { el.style.setProperty('background-color', hexToRgba(favColor, 0.24), 'important'); el.style.setProperty('border-left-color', favColor, 'important'); });
         container.querySelectorAll('.filter-match').forEach(el => { el.style.setProperty('background-color', hexToRgba(filterColor, 0.14), 'important'); el.style.setProperty('box-shadow', `inset 0 0 0 1px ${filterColor}`, 'important'); });
-        container.querySelectorAll('.is-preset').forEach(el => { el.style.setProperty('background-color', hexToRgba(presetColor, 0.14), 'important'); el.style.setProperty('border-left-color', presetColor, 'important'); });
         if (typeof window.checkIfNL === 'function') {
             const nlActiveColor = window.enableNLHighlight !== false ? nlColor : '#ddd';
             container.querySelectorAll('.tag-name').forEach(el => { if (window.checkIfNL(el.dataset.nlRaw != null ? el.dataset.nlRaw : el.textContent)) el.style.setProperty('color', nlActiveColor, 'important'); });
@@ -210,7 +208,6 @@
 
         const builtinContainer = document.createElement('div'); builtinContainer.style.cssText = 'display: none; flex-direction: column; gap: 6px; margin-bottom: 6px;'; 
         builtinContainer.appendChild(buildLockedHighlightRow('favorite', '⭐ Favorite Tags', 'highlight-color-favorite', window._builtinHighlightCheckboxes && window._builtinHighlightCheckboxes.favorite));
-        builtinContainer.appendChild(buildLockedHighlightRow('preset', '🔖 Already Preset', 'highlight-color-preset', window._builtinHighlightCheckboxes && window._builtinHighlightCheckboxes.preset));
         builtinContainer.appendChild(buildLockedHighlightRow('filter', '🎯 Filter/Pin Match', 'highlight-color-filter', window._builtinHighlightCheckboxes && window._builtinHighlightCheckboxes.filter));
         builtinContainer.appendChild(buildLockedHighlightRow('nl', '📝 NL (Natural Language) Tags', 'highlight-color-nl', getOrCreateNLHighlightCheckbox()));
         builtinContainer.appendChild(buildLockedHighlightRow('selection', '🖱️ Tag Selection (click highlight)', 'highlight-color-selection', null, '🔒 Always On'));

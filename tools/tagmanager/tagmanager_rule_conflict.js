@@ -533,11 +533,18 @@
         const left = document.querySelector('#modal-conflict-manager .tool-modal > div:first-child > div:first-child');
         if (!left) return;
         let bar = document.getElementById('rules-panel-toggles');
+        let row = document.getElementById('rm-checks-row');
+        if (!row) {
+            row = document.createElement('div');
+            row.id = 'rm-checks-row';
+            row.style.cssText = 'display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; margin-bottom:10px;';
+            left.appendChild(row);
+        }
         if (!bar) {
             bar = document.createElement('div');
             bar.id = 'rules-panel-toggles';
-            bar.style.cssText = 'display:flex; flex-wrap:wrap; gap:15px; margin-bottom:10px; background:#111; padding:6px 10px; border-radius:6px; border:1px solid #333;';
-            left.appendChild(bar);
+            bar.style.cssText = 'display:flex; flex-wrap:wrap; gap:15px; background:#111; padding:6px 10px; border-radius:6px; border:1px solid #333;';
+            row.insertBefore(bar, row.firstChild);
         }
         bar.innerHTML = '';
         for (const t of window.RulesUI.PANEL_TOGGLES) {
@@ -569,7 +576,7 @@
             if (modalHeaderLeft && !document.getElementById('counter-checkboxes-container')) {
                 const checkDiv = document.createElement('div');
                 checkDiv.id = 'counter-checkboxes-container';
-                checkDiv.style.cssText = 'display:flex; gap:15px; margin-bottom:10px; background:#111; padding:6px 10px; border-radius:6px; border:1px solid #333;';
+                checkDiv.style.cssText = 'display:flex; gap:15px; background:#111; padding:6px 10px; border-radius:6px; border:1px solid #333;';
                 checkDiv.innerHTML = `
                     <label style="font-size: 11px; color: #ccc; display: flex; align-items: center; gap: 6px; cursor: pointer;">
                         <input type="checkbox" id="toggle-counter-conflict" style="margin:0;" ${window.enableCounterConflict !== false ? 'checked' : ''} onchange="window.IssueCounters.toggle('conflict')">
@@ -580,7 +587,7 @@
                         Show Issue Counters (Similars)
                     </label>
                 `;
-                modalHeaderLeft.appendChild(checkDiv);
+                (document.getElementById('rm-checks-row') || modalHeaderLeft).appendChild(checkDiv);
             }
         } catch (err) {
             console.error("Modal Render Error: ", err);
