@@ -377,34 +377,21 @@
         header.style.cssText = `background: #222; padding: 12px 15px; font-size: 13px; font-weight: bold; color: ${meta.color}; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;`;
         
         header.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px;">
+            <div class="rm-title" style="display:flex; align-items:center; gap:4px;">
                 <span>${meta.label}</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
-                <button onclick="window.RulesCore.restoreCategoryDefaults('automerge')" title="Restore original rules" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px; padding:0; transition:0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🔄</button>
+                <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:11px; color:#9fd8bb; font-weight:normal;" title="ON: the automatic run happens only the first time a dataset is opened and right after an Auto-Caption batch. OFF: it runs every time a dataset loads.">
+                    <input type="checkbox" id="cb-auto-once" ${isOnce ? 'checked' : ''} style="margin:0; cursor:pointer;"> Once per dataset
+                </label>
+                <button id="btn-auto-runnow" title="Run Auto-Do now on the dataset that is open" style="background:#00aa66; border:1px solid #00cc88; color:#000; font-size:11px; padding:3px 10px; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Run</button>
                 <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} rules</span>
             </div>
         `;
+        header.querySelector('#cb-auto-once').onchange = async (e) => { await window.saveSetting('rm_auto_once', e.target.checked); };
+        header.querySelector('#btn-auto-runnow').onclick = () => { if (window.runAutoMergeOnDataset) window.runAutoMergeOnDataset(true); };
+        header.querySelector('.rm-title').appendChild(window.RulesUI.helpIcon(`<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Trigger Tags are optional and accept <b>@embedName</b> too — leave them empty and use Require with an <b>@embedName</b> to fire a rule purely from an embed group (e.g. "any @clothing tag present → add 'clothed'").</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Rules run top to bottom (Originals first, then yours) and each one sees the result of the previous one. Merge puts the Main Tag where the first removed Trigger was. Every tag Auto-Do removes is listed in 🕘 Removed Tags History, marked ⚡ Auto-Do.</span> <br><br><b>Run automatically only once per dataset</b> — on its first open and right after Auto-Caption. After that it only runs with <b>▶ Run</b>. Uncheck to run on every dataset load.`, meta.color));
         wrap.appendChild(header);
-
-        /* USAGE RULE: automatic run only on first open + after Auto-Caption */
-        const optRow = document.createElement('div');
-        optRow.style.cssText = 'padding: 9px 15px; background: #0f1a14; border-bottom: 1px solid #222; flex-shrink: 0; font-size: 11px; color: #9fd8bb; line-height: 1.45; display:flex; align-items:flex-start; gap:10px;';
-        optRow.innerHTML = `
-            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; flex:1;" title="ON: the automatic run happens only the first time a dataset is opened and right after an Auto-Caption batch. OFF: it runs every time a dataset loads.">
-                <input type="checkbox" id="cb-auto-once" ${isOnce ? 'checked' : ''} style="margin:2px 0 0 0; cursor:pointer;">
-                <span><b>Run automatically only once per dataset</b> — on its first open and right after Auto-Caption. After that it only runs with <b>▶ Run</b>. Uncheck to run on every dataset load.</span>
-            </label>
-            <button id="btn-auto-runnow" title="Run Auto-Do now on the dataset that is open" style="flex-shrink:0; background:#00aa66; border:1px solid #00cc88; color:#000; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold;">▶ Run</button>
-        `;
-        optRow.querySelector('#cb-auto-once').onchange = async (e) => { await window.saveSetting('rm_auto_once', e.target.checked); };
-        optRow.querySelector('#btn-auto-runnow').onclick = () => { if (window.runAutoMergeOnDataset) window.runAutoMergeOnDataset(true); };
-        wrap.appendChild(optRow);
-
-        const hint = document.createElement('div');
-        hint.style.cssText = 'font-size:11px; color:#aaa; padding: 12px 15px; background: #151515; border-bottom: 1px solid #222; flex-shrink: 0; line-height: 1.5;';
-        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Trigger Tags are optional and accept <b>@embedName</b> too — leave them empty and use Require with an <b>@embedName</b> to fire a rule purely from an embed group (e.g. "any @clothing tag present → add 'clothed'").</span><br><span style="color:#666; margin-top:4px; display:inline-block;">Rules run top to bottom (Originals first, then yours) and each one sees the result of the previous one. Merge puts the Main Tag where the first removed Trigger was. Every tag Auto-Do removes is listed in 🕘 Removed Tags History, marked ⚡ Auto-Do.</span>`;
-        wrap.appendChild(hint);
 
         const list = document.createElement('div');
         list.className = 'panel-list-scroll';
@@ -416,6 +403,10 @@
             empty.textContent = 'No rules in this category.';
             list.appendChild(empty);
         }
+
+        const origRows = categoryRows.filter(r => r.isDefault);
+        const ob = origRows.length ? window.RulesUI.buildOriginalsBlock('automerge', origRows) : null;
+        if (ob) list.appendChild(ob.block);
 
         categoryRows.forEach(row => {
             const item = document.createElement('div');
@@ -504,6 +495,7 @@
                     : `<span style="color:#666; font-size:10px; margin-left:4px; font-style:italic;">[embed-only trigger]</span>`;
 
                 item.style.cssText = `display:flex; align-items:center; gap:8px; background:#151515; border:1px solid #2a2a2a; border-left:3px solid ${meta.color}; border-radius:6px; padding:8px 10px;`;
+                if (row.disabled) item.style.opacity = '0.45';
                 item.innerHTML = `
                     <div style="flex:1; display:flex; flex-direction: column; gap: 6px; overflow: hidden;">
                         <div>${badge}${modeBadge} ${triggerHtml} ${keep ? `<span style="color:#888; font-size:10px; margin: 0 4px;">→</span> <b style="color:#00ff99; font-size:12px;">${isAutoFill ? '+ ' : ''}${window.RulesUI.escapeHTML(keep)}</b>` : `<span style="color:#888; font-size:10px; margin-left:4px;">(Removed)</span>`}</div>
@@ -514,21 +506,24 @@
                     </div>
                     <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
                         <button class="btn-conflict-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
-                        <button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
+                        ${row.isDefault ? `<button class="btn-conflict-toggle" title="${row.disabled ? 'Disabled — click to enable this original' : 'Enabled — click to disable this original'}" style="background:#222; border:1px solid #444; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">${row.disabled ? '⚪' : '🟢'}</button>` : `<button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>`}
                     </div>
                 `;
                 item.querySelector('.btn-conflict-edit').onclick = () => {
                     _amEditingId = row.id;
                     window.RulesUI.refreshModalBody();
                 };
-                item.querySelector('.btn-conflict-delete').onclick = async () => {
+                const _tg = item.querySelector('.btn-conflict-toggle');
+                if (_tg) _tg.onclick = async () => { await window.RulesDB.setOriginalEnabled(row.id, !!row.disabled); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+                const _dl = item.querySelector('.btn-conflict-delete');
+                if (_dl) _dl.onclick = async () => {
                     if (!confirm('Remove this rule?')) return;
                     await window.RulesDB.deleteRule(row.id);
                     await window.RulesCore.applyUserRulesToGlobals();
                     window.RulesUI.refreshModalBody();
                 };
             }
-            list.appendChild(item);
+            (row.isDefault && ob ? ob.body : list).appendChild(item);
         });
         wrap.appendChild(list);
 
@@ -654,6 +649,7 @@
 
     window.restoreEmbedDefaults = async function() {
         for (const def of window.RulesDB.getFactoryRules().filter(r => r.category === 'embed')) await restoreOriginalGroup(def);
+        await window.saveSetting('disabled-original-rules', []);
         await window.RulesCore.applyUserRulesToGlobals();
         if (window.RulesUI.refreshModalBody) await window.RulesUI.refreshModalBody();
     };
@@ -670,14 +666,14 @@
         wrap.innerHTML = `
             <div style="background:#222; padding:12px 15px; font-size:13px; font-weight:bold; color:#b890ff; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
                 <span>📦 Original Groups (@)</span>
-                <button class="og-restore-all" title="Restore the original tags of every group" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px;">🔄</button>
+                <button class="og-restore-all" title="Restore the original tags of every group and re-enable all disabled originals" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px;">🔄</button>
             </div>
             <div style="font-size:11px; color:#aaa; padding:10px 15px 6px; background:#151515; line-height:1.5;">
                 Every original rule list is a group here, and the original rules point to it as <b>@name</b>: edit a group and all rules using it follow. Your own groups are the categories of User Presets.
             </div>
             <div style="padding:0 15px 8px; background:#151515; border-bottom:1px solid #222;"><input class="og-search" type="text" placeholder="Search groups or tags..." value="${esc(_origSearch)}" style="width:100%; box-sizing:border-box; font-size:11px; background:#222; border:1px solid #444; padding:5px 8px; border-radius:4px; color:#fff;"></div>`;
         wrap.querySelector('.og-restore-all').onclick = async () => {
-            if (!confirm('Restore the original tags of every group?')) return;
+            if (!confirm('Restore the original tags of every group and re-enable all disabled originals?')) return;
             await window.restoreEmbedDefaults();
         };
         const search = wrap.querySelector('.og-search');

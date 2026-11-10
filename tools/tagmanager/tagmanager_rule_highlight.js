@@ -192,17 +192,13 @@
         header.className = 'panel-header';
         header.style.cssText = `background: #222; padding: 12px 15px; font-size: 13px; font-weight: bold; color: ${meta.color}; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;`;
         header.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px;"><span>${meta.label}</span></div>
+            <div class="rm-title" style="display:flex; align-items:center; gap:4px;"><span>${meta.label}</span></div>
             <div style="display:flex; align-items:center; gap:8px;">
-                <button onclick="window.RulesUI.restoreHighlightColorDefaults()" title="Restore factory defaults" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px; padding:0; transition:0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🔄</button>
                 <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${catRows.length} groups</span>
             </div>
         `;
+        header.querySelector('.rm-title').appendChild(window.RulesUI.helpIcon(`<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span>`, meta.color));
         wrap.appendChild(header);
-
-        const hint = document.createElement('div'); hint.style.cssText = 'font-size:11px; color:#aaa; padding: 12px 15px; background: #151515; border-bottom: 1px solid #222; flex-shrink: 0; line-height: 1.5;';
-        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span>`;
-        wrap.appendChild(hint);
 
         const list = document.createElement('div'); list.className = 'panel-list-scroll'; list.style.cssText = 'flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: #111; padding: 10px; gap: 6px;';
 

@@ -32,7 +32,7 @@
     window.CATEGORY_META = {
         conflict: { label: "🚨 Conflicts (Red)", color: "#ff6060", hint: "Tags that must never coexist in the same image.", desc: "Prevents contradictory tags. Highlights them in red to warn you of a logical error." },
         similar: { label: "🟨 Similar (Yellow)", color: "#ffcc66", hint: "Redundant tags that trigger a visual warning.", desc: "Groups synonymous or overlapping tags. Highlights them in yellow to suggest keeping only one." },
-        automerge: { label: "⚡ Auto-Do (Unified)", color: "#00ff99", hint: "Consolidates redundant tags and applies advanced conditional checks.", desc: "Auto-Merge: Removes Trigger tags and adds Main Tag. Auto-Fill: Keeps Trigger tags and adds Main Tag." },
+        automerge: { label: "⚡ Auto-Do", color: "#00ff99", hint: "Consolidates redundant tags and applies advanced conditional checks.", desc: "Auto-Merge: Removes Trigger tags and adds Main Tag. Auto-Fill: Keeps Trigger tags and adds Main Tag." },
         origgroups: { label: "📦 Original Groups (@)", color: "#b890ff" },
         highlight: { label: "🎨 Custom Highlights", color: "#4db8ff", hint: "Custom-colored groups of tags, shown with an icon + tint in the tag lists.", desc: "Two kinds live here: 🔒 Built-in Highlights (Favorite/Preset/Filter) and 📁 Custom Groups." }
     };
@@ -96,12 +96,23 @@
         }
     };
 
-    window.RulesDB.getAllRules = async function() {
+    window.RulesDB.setOriginalEnabled = async function(id, enabled) {
+        let list = await window.getSetting('disabled-original-rules', []);
+        if (!Array.isArray(list)) list = [];
+        list = list.filter(x => x !== id);
+        if (!enabled) list.push(id);
+        await window.saveSetting('disabled-original-rules', list);
+    };
+
+    window.RulesDB.getAllRules = async function(includeDisabled = false) {
         let customRules = await window.getSetting('custom-conflict-rules', []);
         if (!Array.isArray(customRules)) customRules = [];
         let deletedDefaults = await window.getSetting('deleted-default-rules', []);
         if (!Array.isArray(deletedDefaults)) deletedDefaults = [];
-        const fRules = this.getFactoryRules().filter(r => !deletedDefaults.includes(r.id));
+        let disabledOrig = await window.getSetting('disabled-original-rules', []);
+        if (!Array.isArray(disabledOrig)) disabledOrig = [];
+        const fAll = this.getFactoryRules().filter(r => !deletedDefaults.includes(r.id));
+        const fRules = includeDisabled ? fAll.map(r => disabledOrig.includes(r.id) ? Object.assign({}, r, { disabled: true }) : r) : fAll.filter(r => !disabledOrig.includes(r.id));
         const base = [...fRules, ...customRules];
         // User Presets categories behave as @groups: every category becomes a virtual embed (never saved back).
         try { if (typeof loadPresetsToCache === 'function') await loadPresetsToCache(); } catch (e) {}
@@ -146,6 +157,7 @@
 
     window.RulesDB.updateRule = async function(id, data) {
         if (id.startsWith('def_')) {
+            await this.setOriginalEnabled(id, true);
             let deletedDefaults = await window.getSetting('deleted-default-rules', []);
             if (!Array.isArray(deletedDefaults)) deletedDefaults = [];
             if (!deletedDefaults.includes(id)) {
@@ -233,6 +245,56 @@
         this.sections.sort((a, b) => a.order - b.order);
     };
 
+
+    // ---- "?" help icon (like the Evaluator): floating text, not clipped by the panel ----
+    (function () {
+        const st = document.createElement('style');
+        st.textContent = `.rm-help { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:#333; color:#fff; font-size:11px; font-weight:bold; cursor:help; margin-left:6px; flex-shrink:0; }
+            .rm-help:hover { background:#555; }
+            .rm-help-pop { position:fixed; z-index:400; width:320px; background:#141414; border:1px solid #555; border-radius:8px; padding:9px 11px; font-size:11px; font-weight:normal; color:#ddd; line-height:1.5; box-shadow:0 6px 20px rgba(0,0,0,0.8); text-align:left; pointer-events:none; }`;
+        document.head.appendChild(st);
+        window.RulesUI.helpIcon = function (html, color) {
+            const el = document.createElement('span');
+            el.className = 'rm-help'; el.textContent = '?'; el.tabIndex = 0;
+            if (color) el.style.background = color;
+            let pop = null;
+            const show = () => {
+                hide();
+                pop = document.createElement('div'); pop.className = 'rm-help-pop'; pop.innerHTML = html;
+                if (color) pop.style.borderColor = color;
+                document.body.appendChild(pop);
+                const r = el.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+                let left = Math.min(r.left, window.innerWidth - pr.width - 10);
+                let top = r.bottom + 6; if (top + pr.height > window.innerHeight - 10) top = Math.max(10, r.top - pr.height - 6);
+                pop.style.left = Math.max(10, left) + 'px'; pop.style.top = top + 'px';
+            };
+            const hide = () => { if (pop) { pop.remove(); pop = null; } };
+            el.onmouseenter = show; el.onmouseleave = hide; el.onfocus = show; el.onblur = hide;
+            return el;
+        };
+
+        // Collapsible "Originals" block (same look as Ignored Pairs), closed by default.
+        window.RulesUI._origOpen = window.RulesUI._origOpen || new Set();
+        window.RulesUI.buildOriginalsBlock = function (category, origRows) {
+            const off = origRows.filter(r => r.disabled).length;
+            const block = document.createElement('div');
+            const toggle = document.createElement('div');
+            toggle.className = 'rule-ignored-toggle';
+            const open = window.RulesUI._origOpen.has(category);
+            toggle.innerHTML = `<span>📦 Originals <span style="font-size:9px; color:#666; text-transform:none; margin-left:5px;">(${origRows.length}${off ? ' · ' + off + ' off' : ''})</span></span> <span class="toggle-icon" style="font-size: 12px;">${open ? '▲' : '▼'}</span>`;
+            const body = document.createElement('div');
+            body.style.cssText = `display:${open ? 'flex' : 'none'}; flex-direction:column; gap:6px; padding:8px 0 4px;`;
+            toggle.onclick = () => {
+                const isClosed = body.style.display === 'none';
+                body.style.display = isClosed ? 'flex' : 'none';
+                toggle.querySelector('.toggle-icon').textContent = isClosed ? '▲' : '▼';
+                if (isClosed) window.RulesUI._origOpen.add(category); else window.RulesUI._origOpen.delete(category);
+            };
+            block.appendChild(toggle); block.appendChild(body);
+            return { block, body };
+        };
+    })();
+
     // --- GENERIC CATEGORY RENDERER (Used by Conflict and Similar) ---
     window.RulesUI.renderGenericCategorySection = function(category, rows, isChecked, settingKey) {
         const meta = window.CATEGORY_META[category];
@@ -251,13 +313,11 @@
         header.className = 'panel-header';
         header.style.cssText = `background: #222; padding: 12px 15px; font-size: 13px; font-weight: bold; color: ${meta.color}; border-bottom: 1px solid #333; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;`;
         
-        const cbId = 'cb-' + category + '-enable';
         header.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px;">
+            <div class="rm-title" style="display:flex; align-items:center; gap:4px;">
                 <span>${meta.label}</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
-                <button onclick="window.RulesCore.restoreCategoryDefaults('${category}')" title="Restore original rules for ${meta.label.split(' ')[0]}" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:14px; padding:0; transition:0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🔄</button>
                 <span style="background:#111; color:#aaa; padding:3px 8px; border-radius:6px; font-size:11px; border:1px solid #333;">${categoryRows.length} rules</span>
             </div>
         `;
@@ -265,11 +325,7 @@
         // The on/off checkbox of this panel lives in the toggles bar at the top of the window (see buildToggleBar).
 
         wrap.appendChild(header);
-
-        const hint = document.createElement('div');
-        hint.style.cssText = 'font-size:11px; color:#aaa; padding: 12px 15px; background: #151515; border-bottom: 1px solid #222; flex-shrink: 0; line-height: 1.5;';
-        hint.innerHTML = `<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span> <span style="color:#666;">You can also mix in <b>@embedName</b> references to a Custom Embed group.</span>`;
-        wrap.appendChild(hint);
+        header.querySelector('.rm-title').appendChild(window.RulesUI.helpIcon(`<b>${meta.hint}</b><br><span style="color:#777; margin-top:6px; display:inline-block;">${meta.desc}</span> <span style="color:#666;">You can also mix in <b>@embedName</b> references to a group (an Original Group or a User Presets category).</span>`, meta.color));
 
         const list = document.createElement('div');
         list.className = 'panel-list-scroll';
@@ -281,6 +337,10 @@
             empty.textContent = 'No rules in this category.';
             list.appendChild(empty);
         }
+
+        const origRows = categoryRows.filter(r => r.isDefault);
+        const ob = origRows.length ? window.RulesUI.buildOriginalsBlock(category, origRows) : null;
+        if (ob) list.appendChild(ob.block);
 
         categoryRows.forEach(row => {
             const item = document.createElement('div');
@@ -325,6 +385,7 @@
 
                 const safeTagsText = window.RulesUI.escapeHTML(safeTags.join(', '));
                 item.style.cssText = `display:flex; align-items:center; gap:8px; background:#151515; border:1px solid #2a2a2a; border-left:3px solid ${meta.color}; border-radius:6px; padding:8px 10px;`;
+                if (row.disabled) item.style.opacity = '0.45';
                 item.innerHTML = `
                     <div style="flex:1; display:flex; flex-direction: column; gap: 4px; overflow: hidden;">
                         <div>${badge}</div>
@@ -332,7 +393,7 @@
                     </div>
                     <div style="display:flex; flex-direction: column; gap:4px; flex-shrink:0;">
                         <button class="btn-conflict-edit" style="background:#222; border:1px solid #444; color:#4db8ff; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">✏️</button>
-                        <button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>
+                        ${row.isDefault ? `<button class="btn-conflict-toggle" title="${row.disabled ? 'Disabled — click to enable this original' : 'Enabled — click to disable this original'}" style="background:#222; border:1px solid #444; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">${row.disabled ? '⚪' : '🟢'}</button>` : `<button class="btn-conflict-delete" style="background:#2a0000; border:1px solid #7a222c; color:#ff6060; font-size:12px; padding:4px 8px; border-radius:4px; cursor:pointer;">🗑️</button>`}
                     </div>
                 `;
 
@@ -341,7 +402,10 @@
                     window.RulesUI.refreshModalBody();
                 };
 
-                item.querySelector('.btn-conflict-delete').onclick = async () => {
+                const _tg = item.querySelector('.btn-conflict-toggle');
+                if (_tg) _tg.onclick = async () => { await window.RulesDB.setOriginalEnabled(row.id, !!row.disabled); await window.RulesCore.applyUserRulesToGlobals(); window.RulesUI.refreshModalBody(); };
+                const _dl = item.querySelector('.btn-conflict-delete');
+                if (_dl) _dl.onclick = async () => {
                     if (!confirm('Remove this rule?')) return;
                     await window.RulesDB.deleteRule(row.id);
                     await window.RulesCore.applyUserRulesToGlobals();
@@ -349,7 +413,7 @@
                 };
             }
 
-            list.appendChild(item);
+            (row.isDefault && ob ? ob.body : list).appendChild(item);
         });
         wrap.appendChild(list);
 
@@ -423,8 +487,6 @@
                         </div>
                     </div>
                     <div style="display:flex; gap:8px;">
-                        <button class="btn-top-action" onclick="if(window.runAutoMergeOnDataset) window.runAutoMergeOnDataset(true)" style="background:#00aa66; border-color:#00cc88; color:#000;">▶ Run Auto-Do Now</button>
-                        <button class="btn-top-action" onclick="window.RulesCore.restoreDefaultRules()">🔄 Restore ALL Defaults</button>
                         <button class="btn-top-action" onclick="if(window.RulesUI.restoreHighlightColorDefaults) window.RulesUI.restoreHighlightColorDefaults()" style="background:#151515; color:#4db8ff; border-color:#2a5a8c;" title="Reset colors back to factory defaults">🎨 Restore Highlight Colors</button>
                         <button class="btn-top-action" onclick="window.RulesCore.clearAllRules()" style="color:#ff6060; border-color:#7a222c;">🗑️ Clear All</button>
                     </div>
@@ -445,7 +507,7 @@
         // FIX: two overlapping refreshes (double click, edit + restore...) both appended their panels → duplicated sections.
         // Only the latest call is allowed to write into the body.
         const seq = window.RulesUI._refreshSeq = (window.RulesUI._refreshSeq || 0) + 1;
-        const rows = await window.RulesDB.getAllRules();
+        const rows = await window.RulesDB.getAllRules(true);
         if (seq !== window.RulesUI._refreshSeq) return;
         body.innerHTML = '';
         for (const section of window.RulesUI.sections) {
@@ -464,7 +526,7 @@
         { order: 1,   cat: 'conflict',  key: 'rm_enable_red',       def: true,  fallback: '🚨 Conflicts (Red)' },
         { order: 2,   cat: 'similar',   key: 'rm_enable_yellow',    def: true,  fallback: '🟨 Similar (Yellow)' },
         { order: 2.5, cat: 'redundant', key: 'rm_enable_redundant', def: true,  fallback: '🔁 Redundant' },
-        { order: 3,   cat: 'automerge', key: 'rm_auto_merge',       def: false, fallback: '⚡ Auto-Do (Unified)' },
+        { order: 3,   cat: 'automerge', key: 'rm_auto_merge',       def: false, fallback: '⚡ Auto-Do' },
         { order: 5,   cat: 'origgroups', key: 'rm_show_origgroups', def: false, fallback: '📦 Original Groups (@)' }
     ];
     window.RulesUI.buildToggleBar = async function() {
