@@ -187,8 +187,10 @@ addEventListener('pagehide',()=>{clearTimeout(saveT);Object.keys(cache).length&&
 const cacheLabel=()=>({both:'Cache: local/ + library folders',api:'Cache: local/ (server)',fs:'Cache: library folders'}[mode]||'Cache: created in the library folder when you add one');
 const KEEP='status modelId versionId name version base type trained creator downloads latest images description versionDescription previewSaved previewUrl fileName size path root checkedAt'.split(' ');
 const slim=c=>Object.fromEntries(KEEP.filter(k=>{const v=c[k];return v!=null&&v!==''&&!(Array.isArray(v)&&!v.length)}).map(k=>[k,c[k]]));
+let cidxM=null,cidxS=-1;
+function cidx(){if(cidxM&&cidxS===stamp)return cidxM;cidxM=new Map();for(const e of Object.entries(cache)){const c=e[1];if(!c||c.fileName==null)continue;const k=c.size+'|'+c.fileName;let a=cidxM.get(k);a||cidxM.set(k,a=[]);a.push(e)}cidxS=stamp;return cidxM}
 function rec(it){if(it._hash&&cache[it._hash])return cache[it._hash];if(it._miss===stamp)return null;
-  const E=Object.entries(cache),sz=it.file.size,
+  const E=cidx().get(it.file.size+'|'+it.name)||[],sz=it.file.size,
   h=E.find(([,c])=>c&&c.size===sz&&c.fileName===it.name&&(!c.path||c.path===it.path)&&(!c.root||c.root===it.root.name))||E.find(([,c])=>c&&c.size===sz&&c.fileName===it.name);
   if(h){it._hash=h[0];return h[1]}it._miss=stamp;return null}
 function ensure(it,h){stamp++;it._hash=h;const c=cache[h]||{};Object.assign(c,{fileName:it.name,size:it.file.size,path:it.path,root:it.root.name});return cache[h]=c}
@@ -203,16 +205,47 @@ const dimAlpha=m=>{const a=fv(m,['ss_network_dim','network_dim','lora_rank','ran
 const trigger=it=>{const c=rec(it);return c&&c.trained&&c.trained[0]||fv(it.meta,['activation_text','activation_tag','trigger_word','trigger_phrase','trigger'])||''};
 const folderOf=it=>it.rel?it.root.name+'/'+it.rel:it.root.name;
 
-async function scan(root){const out=[];
+const lazyPv=new Map();
+async function dirFor(root,rel){root._d=root._d||new Map();if(!rel)return root.handle;let h=root._d.get(rel);if(h)return h;let d=root.handle;for(const part of rel.split('/'))d=await d.getDirectoryHandle(part);root._d.set(rel,d);return d}
+function lazyBlob(u){const m=lazyPv.get(u);return m?async()=>{const d=await dirFor(m.root,m.rel);return(await d.getFileHandle(m.pv)).getFile()}:undefined}
+const TLscan=(c,o)=>{if(!window.ThumbLoader){c.querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);return}
+  c.querySelectorAll('img[data-thumb]').forEach(i=>{const u=i.getAttribute('data-thumb');ThumbLoader.attach(i,u,Object.assign({},o,{getBlob:lazyBlob(u)}))})};
+const realUrl=async it=>{if(!it.url||!it.url.startsWith('lazy:'))return it.url;const f=lazyBlob(it.url);if(!f)return null;try{const u=URL.createObjectURL(await f());lazyPv.delete(it.url);it.url=u;return u}catch{return null}};
+const trimRaw=r=>{let t=0;const o={};for(const[k,v]of Object.entries(r||{})){if(typeof v==='string'&&v.length>600){t=1;continue}o[k]=v}return[o,t]};
+let recon=Promise.resolve();
+const realFile=async it=>{if(it.file&&it.file._stub)await recon;return it.file&&!it.file._stub?it.file:null};
+async function scan(root,known){const out=[];
   async function walk(dir,rel,d){if(d>8)return;const imgs=new Map(),sts=[];
     for await(const e of dir.values()){if(e.kind==='directory')await walk(e,rel?rel+'/'+e.name:e.name,d+1);else if(/\.safetensors$/i.test(e.name))sts.push(e);else if(/\.(png|jpe?g|webp)$/i.test(e.name))imgs.set(e.name.toLowerCase(),e)}
     for(const e of sts){const file=await e.getFile(),b=e.name.replace(/\.safetensors$/i,'').toLowerCase(),x=PREV.find(s=>imgs.has(b+s)),pv=x&&imgs.get(b+x),path=(rel?rel+'/':'')+e.name;let url=null;
-      if(pv)try{url=URL.createObjectURL(await pv.getFile())}catch{}
+      if(pv){url='lazy:'+root.name+'|'+path+'|'+pv.name;lazyPv.set(url,{root,rel,pv:pv.name})}
       out.push({root,dir,name:e.name,rel,path,file,previewName:pv?pv.name:null,key:path+'|'+file.size+'|'+file.lastModified,url,meta:{},cls:'Other'})}}
-  await walk(root.handle,'',0);for(const it of out){it.raw=await readHeader(it.file);it.meta=expandMeta(it.raw)}return out}
-async function scanAll(){window.ThumbLoader&&ThumbLoader.clear();items.forEach(i=>i.url&&i.url.startsWith('blob:')&&URL.revokeObjectURL(i.url));items=[];page=1;await loadFs();
-  for(const r of roots)items.push(...(r.handle?await scan(r):r.loose||[]));
-  items.forEach(i=>i.cls=classify(i));folders();render();await syncPrev();await runQueue()}
+  await walk(root.handle,'',0);
+  for(const it of out){const k=known&&known.get(it.key);if(k){it.raw=k.r;it._trim=k.t;it.meta=expandMeta(it.raw);continue}
+    const r=await readHeader(it.file),[tr,t]=trimRaw(r);it.raw=r;it.meta=expandMeta(r);if(t)it._slim=tr}return out}
+/* ---------- Saved scan (localhost only): local/lora_scan_cache.json ---------- */
+const SCAN_PATH='local/lora_scan_cache.json';
+async function loadScan(){if(!isLocal)return null;try{const r=await fetch('/'+SCAN_PATH+'?t='+Date.now(),{cache:'no-store'});if(!r.ok||!(r.headers.get('content-type')||'').includes('json'))return null;
+  const j=await r.json();return j&&j.v===1&&j.roots&&typeof j.roots==='object'?j:null}catch{return null}}
+function saveScan(){if(!isLocal)return;const o={v:1,savedAt:Date.now(),roots:{}};
+  for(const it of items){if(!it.root||!it.root.handle||!it.file||it.file._stub&&!it.file.size)continue;const[r,t]=it._slim?[it._slim,1]:it._trim?[it.raw,1]:trimRaw(it.raw);
+    (o.roots[it.root.name]=o.roots[it.root.name]||[]).push([it.rel,it.name,it.file.size,it.file.lastModified,it.previewName||'',r,t])}
+  fetch('/api/save_local_cache',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:SCAN_PATH,data:o})}).catch(()=>{})}
+const knownOf=(sc,name)=>{const m=new Map();for(const a of(sc&&sc.roots&&sc.roots[name])||[]){const p=(a[0]?a[0]+'/':'')+a[1];m.set(p+'|'+a[2]+'|'+a[3],{r:a[5]||{},t:a[6]||0})}return m};
+function stubsFrom(sc,r){const out=[];for(const a of(sc.roots[r.name])||[]){const rel=a[0],name=a[1],path=(rel?rel+'/':'')+name;let url=null;
+  if(a[4]){url='lazy:'+r.name+'|'+path+'|'+a[4];lazyPv.set(url,{root:r,rel,pv:a[4]})}
+  const raw=a[5]||{};out.push({root:r,dir:null,name,rel,path,file:{_stub:1,name,size:a[2],lastModified:a[3]},previewName:a[4]||null,key:path+'|'+a[2]+'|'+a[3],url,raw,_trim:a[6]||0,meta:expandMeta(raw),cls:'Other'})}return out}
+async function scanAll(fromSaved){const sc=fromSaved?null:await loadScan();
+  if(!fromSaved){window.ThumbLoader&&ThumbLoader.clear();items.forEach(i=>i.url&&i.url.startsWith('blob:')&&URL.revokeObjectURL(i.url));items=[];page=1}
+  await loadFs();const fresh=[];
+  for(const r of roots)fresh.push(...(r.handle?await scan(r,knownOf(fromSaved||sc,r.name)):r.loose||[]));
+  if(fromSaved){ /* the list is already on screen (from the saved scan): same files -> just attach the real handles */
+    const m=new Map(items.map(o=>[o.root.name+'|'+o.key,o])),same=fresh.length===items.length&&fresh.every(n=>m.has(n.root.name+'|'+n.key));let ch=0;
+    if(same){for(const n of fresh){const o=m.get(n.root.name+'|'+n.key);o.file=n.file;o.dir=n.dir;if(o.previewName!==n.previewName){o.previewName=n.previewName;o.url=n.url;ch=1}}ch&&(render(),saveScan())}
+    else{window.ThumbLoader&&ThumbLoader.clear();items=fresh;page=1;items.forEach(i=>i.cls=classify(i));folders();cur>=0?closeDetail():render()}
+    if(!same)saveScan()}
+  else{items.push(...fresh);items.forEach(i=>i.cls=classify(i));folders();render();saveScan()}
+  await syncPrev();await runQueue()}
 const rescan=()=>{$('fl').textContent='Reading folders…';return scanAll()};
 async function addFolder(){try{const h=await showDirectoryPicker({mode:'readwrite'});await idbOp('h',s=>s.put(h,h.name),1);roots.find(r=>r.name===h.name)||roots.push({name:h.name,handle:h});$('fl').textContent='Reading '+h.name+'…';await scanAll()}catch(e){e.name!=='AbortError'&&alert('Could not open the folder: '+e.message)}}
 async function addFiles(){try{const hs=await showOpenFilePicker({multiple:true,types:[{description:'LoRA',accept:{'application/octet-stream':['.safetensors']}}]});
@@ -242,7 +275,7 @@ async function lookup(h){const r=await fetch(API+'model-versions/by-hash/'+h);re
 async function checkOne(it){let h=it._hash,v=null;
   if(!h)for(const k of METAH){const x=(fv(it.meta,[k])||'').trim().toLowerCase();if(x.length<8||x.length>128)continue;
     $('fr').textContent='Looking up '+it.name+'…';v=await lookup(x);if(v===undefined)return false;if(v){h=x;break}}
-  if(!v){if(!h){$('fr').textContent='Hashing '+it.name+'…';await sleep(20);h=await sha256(it.file)}v=await lookup(h);if(v===undefined)return false}
+  if(!v){if(!h){$('fr').textContent='Hashing '+it.name+'…';await sleep(20);const rf=await realFile(it);if(!rf)return false;h=await sha256(rf)}v=await lookup(h);if(v===undefined)return false}
   const c=ensure(it,h);save();
   if(v){apply(c,v);await fillModel(c);await ensurePrev(it)}else{c.status='notfound';c.images=[]}
   c.checkedAt=Date.now();cache[h]=slim(c);it.cls=classify(it);save();return true}
@@ -298,12 +331,12 @@ const flTxt=s=>`${items.length} LoRA${items.length===1?'':'s'}${roots.length?' �
 function win(){const n=Math.max(1,Math.ceil(all.length/per)),lo=dyn?Math.max(1,page-1):page,hi=dyn?Math.min(n,page+1):page;return[(lo-1)*per,Math.min(all.length,hi*per)]}
 function cardsHtml(a,b){let h='';for(let i=a;i<b;i++)h+=card(all[i],i);return h}
 const blkRoot=()=>{const g=$('grid');window.ThumbLoader&&ThumbLoader.blocks&&ThumbLoader.blocks(g,{size:()=>per});return g};   /* preview blocks: 1 block = 1 page of the page-size button */
-function cardNodes(a,b){const t=document.createElement('div');t.innerHTML=cardsHtml(a,b);window.ThumbLoader?ThumbLoader.scan(t,'data-thumb',{root:blkRoot()}):t.querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);return[...t.children]}
+function cardNodes(a,b){const t=document.createElement('div');t.innerHTML=cardsHtml(a,b);TLscan(t,{root:blkRoot()});return[...t.children]}
 function render(){all=filtered();pager();const s=(page-1)*per;view=all.slice(s,s+per);renderCats();
   const[a,b]=win();wS=a;wE=b;const g=$('grid');
   g.innerHTML=view.length?'':empty();g.scrollTop=0;
   if(view.length){const t=document.createElement('div');t.innerHTML=cardsHtml(a,b);g.append(...t.children);
-    window.ThumbLoader?ThumbLoader.scan(g,'data-thumb',{root:blkRoot()}):g.querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);
+    TLscan(g,{root:blkRoot()});
     const tgt=focusIdx>=0?focusIdx:s;                         // back from the detail: show the opened card; otherwise start of the page
     const c=tgt>a||focusIdx>=0?g.querySelector(`.card[data-i="${tgt}"]`):null;
     if(c){focusIdx>=0?c.scrollIntoView({block:'center'}):g.scrollTop+=c.getBoundingClientRect().top-g.getBoundingClientRect().top}}
@@ -330,7 +363,7 @@ function onDyn(){dyn=$('dyn').checked;try{localStorage.setItem('loraEvalDynamic'
   const g=$('grid');if(g.style.display!=='none'){const a=firstCard(g);if(a)page=Math.floor(+a.dataset.i/per)+1;render()}}
 function updCard(it){const el=[...document.querySelectorAll('.card')].find(c=>c.dataset.k===it.key);if(!el)return;
   el.querySelector('.dot').className='dot '+st(it);el.querySelector('.tg').lastChild.textContent=it.cls;if(!it.url)return;
-  let i=el.querySelector('img');if(!i){i=document.createElement('img');i.alt='';el.querySelector('.ph').replaceWith(i)}if(window.ThumbLoader)ThumbLoader.attach(i,it.url,{root:blkRoot()});else if(i.src!==it.url)i.src=it.url}
+  let i=el.querySelector('img');if(!i){i=document.createElement('img');i.alt='';el.querySelector('.ph').replaceWith(i)}if(window.ThumbLoader)ThumbLoader.attach(i,it.url,{root:blkRoot(),getBlob:lazyBlob(it.url)});else if(i.src!==it.url&&!it.url.startsWith('lazy:'))i.src=it.url}
 $('grid').onclick=e=>{const s=e.target.closest('[data-star]');if(s){const it=all[+s.dataset.star];it&&toggleFav(it,e);return}const c=e.target.closest('.card');if(c&&!(window.ccClick&&ccClick(c,e))){const gi2=+c.dataset.i;page=Math.floor(gi2/per)+1;view=all.slice((page-1)*per,page*per);showDetail(gi2%per)}};
 
 /* ---------- Detalhe (campos via resolvers do lora_meta_reader.js) ---------- */
@@ -360,10 +393,13 @@ function showDetail(i,keep){
   if(i<0||i>=view.length)return;cur=i;const it=view[i],c=rec(it)||{},m=it.meta,s=st(it);
   $('grid').style.display=$('side').style.display=$('bar').style.display=$('pager').style.display='none';$('detail').style.display='flex';
   $('dl').innerHTML=view.map((x,j)=>`<div class="li${j===i?' on':''}" data-j="${j}">${x.url?`<img alt="" data-thumb="${esc(x.url)}">`:'<div class="ph"></div>'}<div><b>${esc(x.name.replace(/\.safetensors$/i,''))}</b><small>${esc(x.cls)}</small></div></div>`).join('');
-  window.ThumbLoader?(ThumbLoader.blocks&&ThumbLoader.blocks($('dl'),{size:()=>per}),ThumbLoader.scan($('dl'),'data-thumb',{root:$('dl')})):$('dl').querySelectorAll('img[data-thumb]').forEach(i=>i.src=i.dataset.thumb);
+  window.ThumbLoader&&ThumbLoader.blocks&&ThumbLoader.blocks($('dl'),{size:()=>per});TLscan($('dl'),{root:$('dl')});
   $('dl').querySelector('.li.on')?.scrollIntoView({block:'nearest'});
-  gal=[];if(it.url)gal.push({src:it.url,kind:'local'});
-  (c.images||[]).filter(u=>/^https:\/\//i.test(u)).slice(it.url&&c.previewSaved?1:0).forEach(u=>gal.push({src:u,kind:'remote'}));
+  if(it.url&&it.url.startsWith('lazy:')&&!it._ru){it._ru=1;realUrl(it).then(()=>{it._ru=0;cur>=0&&view[cur]===it&&showDetail(cur,1)})}
+  if(it._trim&&!it._ft){it._ft=1;realFile(it).then(f=>f&&readHeader(f)).then(r=>{if(r){it.raw=r;it.meta=expandMeta(r);it._trim=0;it._slim=null;cur>=0&&view[cur]===it&&showDetail(cur,1)}})}
+  const lz=it.url&&it.url.startsWith('lazy:');
+  gal=[];if(it.url&&!lz)gal.push({src:it.url,kind:'local'});
+  (c.images||[]).filter(u=>/^https:\/\//i.test(u)).slice(it.url&&!lz&&c.previewSaved?1:0).forEach(u=>gal.push({src:u,kind:'remote'}));
   if(!keep){gi=0;resetZoom()}if(gi>=gal.length)gi=0;drawStage();
   if(!keep&&autoRC&&!it._rc){it._rc=1;const id=it.key;recheckOne(it).finally(()=>{it._rc=0;cur>=0&&view[cur]&&view[cur].key===id&&showDetail(cur,1)})}
 
@@ -427,7 +463,11 @@ async function init(){await loadCache();const stored=await idbAll(),need=[];root
   $('notice').style.display=need.length?'flex':'none';
   if(need.length){$('ntx').textContent='The browser is asking for permission again for: '+need.join(', ');
     $('nbt').onclick=async()=>{for(const[n,h]of stored)if(need.includes(n))try{await h.requestPermission({mode:'readwrite'})}catch{}await init()}}
-  roots.length?($('fl').textContent='Reading folders…',await scanAll()):render()}
+  if(!roots.length){render();return}
+  const sc=await loadScan();
+  if(sc&&roots.some(r=>(sc.roots[r.name]||[]).length)){for(const r of roots)if(r.handle)items.push(...stubsFrom(sc,r));items.forEach(i=>i.cls=classify(i));folders();render();$('fl').textContent='Checking folders…';
+    recon=scanAll(sc).catch(e=>{console.warn('Background folder check failed:',e);$('fl').textContent=''});await recon}
+  else{$('fl').textContent='Reading folders…';await scanAll()}}
 render();
 if(!window.showDirectoryPicker){$('ntx').textContent='This browser does not support the File System Access API. Use Chrome, Edge, or another Chromium browser on a desktop.';$('nbt').style.display='none';$('notice').style.display='flex'}
 else init();
