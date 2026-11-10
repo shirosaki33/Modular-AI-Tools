@@ -1264,7 +1264,7 @@ window.archiveSelectedImages = async function () {
 
         overlay.innerHTML = `
             <div id="archive-zoom-wrapper" onclick="event.stopPropagation()">
-                <img id="archive-zoom-img" src="">
+                <img id="archive-zoom-img">
             </div>
         `;
         document.body.appendChild(overlay);

@@ -2,7 +2,6 @@
 <html lang="en-US">
 <head>
     <script src="tools/tagmanager/client_error_log.js"></script>
-    <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tag Manager</title>
@@ -707,7 +706,7 @@
 
 <div id="modal-image" class="modal-overlay" onclick="window.closeModal('modal-image')">
     <div id="image-zoom-wrapper" onclick="event.stopPropagation()">
-        <img id="image-popout" src="">
+        <img id="image-popout">
     </div>
     <div id="image-zoom-controls" onclick="event.stopPropagation()">
         <button onclick="window.zoomImagePopout(-0.25)" title="Zoom Out">➖</button>

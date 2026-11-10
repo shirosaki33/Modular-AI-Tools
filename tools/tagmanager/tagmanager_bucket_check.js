@@ -614,7 +614,7 @@
                 <div class="bucket-orient-bar" id="bucket-orient-bar"></div>
                 <div class="bucket-candidate-list" id="bucket-candidate-list"></div>
                 <div id="bucket-preview-wrap">
-                    <img id="bucket-preview-img" src="" alt="" draggable="false">
+                    <img id="bucket-preview-img" alt="" draggable="false">
                     <div id="bucket-crop-shade"></div>
                     <div id="bucket-crop-rect"></div>
                 </div>

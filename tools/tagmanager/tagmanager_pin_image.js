@@ -85,7 +85,7 @@
                 <button id="btn-unpin-image" title="Unpin image" style="background:transparent; border:none; color:#ff6060; font-size:16px; cursor:pointer; padding:0 4px;">✖</button>
             </div>
             <div id="pinned-image-wrap">
-                <div id="pinned-image-preview-box"><img id="pinned-image-preview" src=""></div>
+                <div id="pinned-image-preview-box"><img id="pinned-image-preview"></div>
                 <div id="pinned-image-name"></div>
                 <div id="pinned-image-folder"></div>
                 <div id="pinned-tags-title">Tags (select, then Add / Add to All)</div>

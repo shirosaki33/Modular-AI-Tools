@@ -106,20 +106,7 @@
     async function detectInstalled() {
         if (isRunningOnline) return;
 
-        // 1) manifesto gerado pelos .bat
-        const gotManifest = await new Promise(res => {
-            const s = document.createElement('script');
-            s.src = BASE + 'installed_tools.js?t=' + Date.now();
-            s.onload = () => { s.remove(); res(true); };
-            s.onerror = () => { s.remove(); res(false); };
-            document.head.appendChild(s);
-        });
-        if (gotManifest && Array.isArray(window.MAT_INSTALLED)) {
-            installedList = window.MAT_INSTALLED.map(n => String(n).toLowerCase());
-            return;
-        }
-
-        // 2) server_max.py: uma requisição lista todos os .html da pasta
+        // server_max.py: uma requisição lista todos os .html da pasta
         if (isLocalServer) {
             try {
                 const r = await fetch('/api/installed_tools', { cache: 'no-store' });
