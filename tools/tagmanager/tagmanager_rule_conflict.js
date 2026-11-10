@@ -33,6 +33,7 @@
         conflict: { label: "🚨 Conflicts (Red)", color: "#ff6060", hint: "Tags that must never coexist in the same image.", desc: "Prevents contradictory tags. Highlights them in red to warn you of a logical error." },
         similar: { label: "🟨 Similar (Yellow)", color: "#ffcc66", hint: "Redundant tags that trigger a visual warning.", desc: "Groups synonymous or overlapping tags. Highlights them in yellow to suggest keeping only one." },
         automerge: { label: "⚡ Auto-Do (Unified)", color: "#00ff99", hint: "Consolidates redundant tags and applies advanced conditional checks.", desc: "Auto-Merge: Removes Trigger tags and adds Main Tag. Auto-Fill: Keeps Trigger tags and adds Main Tag." },
+        origgroups: { label: "📦 Original Groups (@)", color: "#b890ff" },
         highlight: { label: "🎨 Custom Highlights", color: "#4db8ff", hint: "Custom-colored groups of tags, shown with an icon + tint in the tag lists.", desc: "Two kinds live here: 🔒 Built-in Highlights (Favorite/Preset/Filter) and 📁 Custom Groups." }
     };
 
@@ -448,7 +449,8 @@
         { order: 1,   cat: 'conflict',  key: 'rm_enable_red',       def: true,  fallback: '🚨 Conflicts (Red)' },
         { order: 2,   cat: 'similar',   key: 'rm_enable_yellow',    def: true,  fallback: '🟨 Similar (Yellow)' },
         { order: 2.5, cat: 'redundant', key: 'rm_enable_redundant', def: true,  fallback: '🔁 Redundant' },
-        { order: 3,   cat: 'automerge', key: 'rm_auto_merge',       def: false, fallback: '⚡ Auto-Do (Unified)' }
+        { order: 3,   cat: 'automerge', key: 'rm_auto_merge',       def: false, fallback: '⚡ Auto-Do (Unified)' },
+        { order: 5,   cat: 'origgroups', key: 'rm_show_origgroups', def: false, fallback: '📦 Original Groups (@)' }
     ];
     window.RulesUI.buildToggleBar = async function() {
         const left = document.querySelector('#modal-conflict-manager .tool-modal > div:first-child > div:first-child');
@@ -466,7 +468,7 @@
             const on = !!(await window.getSetting(t.key, t.def));
             const lb = document.createElement('label');
             lb.style.cssText = `font-size: 11px; color: ${meta ? meta.color : '#ccc'}; display: flex; align-items: center; gap: 6px; cursor: pointer;`;
-            lb.title = 'Turn this group of rules on/off. Off = the rules stop working and its box disappears from this window.';
+            lb.title = t.cat === 'origgroups' ? 'Show / hide the built-in @groups box. The groups keep working when hidden.' : 'Turn this group of rules on/off. Off = the rules stop working and its box disappears from this window.';
             lb.innerHTML = `<input type="checkbox" style="margin:0;" ${on ? 'checked' : ''}> ${meta ? meta.label : t.fallback}`;
             lb.querySelector('input').onchange = async (e) => {
                 await window.saveSetting(t.key, e.target.checked);

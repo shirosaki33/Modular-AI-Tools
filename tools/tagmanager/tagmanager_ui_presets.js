@@ -589,8 +589,8 @@ function ppSyncControls() {
     const ui = window._presetUI;
     const seg = document.getElementById('pp-seg-pos');
     if (seg) seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === ui.pos));
-    const ccb = document.getElementById('cb-preset-compact');
-    if (ccb) ccb.checked = ui.view === 'flat';
+    const vsel = document.getElementById('pp-view-style');
+    if (vsel) vsel.value = ui.view;
     [['pp-sort-cat', 'sortCat'], ['pp-sort-name', 'sortName']].forEach(([id, key]) => {
         const b = document.getElementById(id);
         if (!b) return;
@@ -695,19 +695,20 @@ function ensurePresetShell() {
     hcb.checked = !!window.presetHighlightsAlwaysVisible;
     hcb.onchange = () => window.togglePresetHighlightAlways(hcb.checked);
     hl.appendChild(hcb); hl.appendChild(document.createTextNode('Highlight'));
-    // Compact mode: no category bars — one flat list, like before
-    const cp = document.createElement('label'); cp.className = 'pp-hl';
-    cp.title = 'Compact mode: hides the category bars and shows one flat list (category beside each tag). Off = collapsible category bars, drag tags into a bar to move them.';
-    const ccb = document.createElement('input'); ccb.type = 'checkbox'; ccb.id = 'cb-preset-compact';
-    ccb.checked = window._presetUI.view === 'flat';
-    ccb.onchange = () => {
-        window._presetUI.view = ccb.checked ? 'flat' : 'grouped';
+    // List style: Groups (collapsible bars) / Compact (flat list) / Cards (one card per group, like the old Embeds box)
+    const cp = ppEl('label', 'display:flex; align-items:center; gap:4px; font-size:11px; color:#aaa;');
+    cp.title = 'List style. Groups = collapsible category bars. Compact = one flat list. Cards = one card per group with its tags.';
+    const vsel = document.createElement('select'); vsel.id = 'pp-view-style';
+    vsel.style.cssText = 'background:#222; border:1px solid #444; color:#ddd; font-size:11px; border-radius:4px; padding:2px 4px;';
+    [['grouped', 'Groups'], ['flat', 'Compact'], ['cards', 'Cards']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; vsel.appendChild(o); });
+    vsel.value = window._presetUI.view;
+    vsel.onchange = () => {
+        window._presetUI.view = vsel.value;
         if (typeof window.saveSetting === 'function') window.saveSetting('preset-view', window._presetUI.view);
         window.renderPresetTags();
     };
-    cp.appendChild(ccb); cp.appendChild(document.createTextNode('Compact'));
+    cp.appendChild(vsel);
     right.appendChild(cp);
-    right.appendChild(hl);
     header.appendChild(right);
     panel.appendChild(header);
 
@@ -892,6 +893,7 @@ function ppContainer() { return document.getElementById('preset-tag-list'); }
 
 window.filterPresetTagsByName = function (val) {
     window.presetTagNameFilter = (val || '').trim().toLowerCase();
+    if (window._presetUI.view === 'cards') { window.renderPresetTags(); return; }
     ppApplyFilterDOM();
 };
 
@@ -1006,6 +1008,7 @@ function ppHeadHTML(j, r) {
         `<span class="pp-caret">${open ? '▾' : '▸'}</span>` +
         `<span class="pp-catname" style="color:${col.fg};">${ppEsc(r.cat)}</span>` +
         `<span class="pp-catn">${r.n}</span>` +
+        (r.cat !== 'Uncategorized' ? `<span class="pp-cat-del" title="Delete category &quot;${ppEsc(r.cat)}&quot; (its tags go to Uncategorized — Undo available)" style="cursor:pointer; margin-left:6px; opacity:.7;">🗑️</span>` : '') +
         (r.n ? `<span class="pp-add sel pp-cat-add" data-act="sel" title="Add ALL ${r.n} tag(s) of &quot;${ppEsc(r.cat)}&quot; to the selected images">➕</span>` +
                `<span class="pp-add all pp-cat-add" data-act="all" title="Add ALL ${r.n} tag(s) of &quot;${ppEsc(r.cat)}&quot; to ALL images">🌐</span>` : '') +
         `</div>`;
@@ -1182,6 +1185,7 @@ function ppOnListClick(e) {
 /* ---------- category bars: collapse / expand, add the whole category ---------- */
 function ppOnHeadClick(e, head) {
     const cat = head.dataset.presetCat;
+    if (e.target.closest('.pp-cat-del')) { e.stopPropagation(); ppDeleteCategory(cat); return; }
     const add = e.target.closest('.pp-cat-add');
     if (add) {
         e.stopPropagation();
@@ -1266,6 +1270,104 @@ function ppEnsureViewport(container) {
     return PP.vp;
 }
 
+/* ---------- CARDS style: one card per group (layout of the old Embeds box) ---------- */
+function ppRenderCards(container, items, byCat, menuKeys, hiddenSet) {
+    if (!document.getElementById('pp-cards-style')) {
+        const st = document.createElement('style'); st.id = 'pp-cards-style';
+        st.textContent = `
+            #pp-cards { display:flex; flex-direction:column; gap:8px; padding:8px; }
+            .pp-card { background:#151515; border:1px solid #2a2a2a; border-left:3px solid #888; border-radius:6px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; }
+            .pp-card-head { display:flex; align-items:center; gap:6px; }
+            .pp-card-name { flex:1; font-size:13px; font-weight:bold; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+            .pp-card-n { color:#666; font-size:10px; }
+            .pp-card-btn { background:#222; border:1px solid #444; color:#ddd; font-size:11px; padding:2px 6px; border-radius:4px; cursor:pointer; }
+            .pp-card-btn:hover { border-color:#888; }
+            .pp-card-tags { display:flex; flex-wrap:wrap; gap:4px; }
+            .pp-chip { font-size:11px; background:#202020; border:1px solid #333; color:#ccc; padding:2px 6px; border-radius:10px; cursor:pointer; user-select:none; display:inline-flex; gap:4px; align-items:center; }
+            .pp-chip.sel { background:#12343a; border-color:#2dd4bf; color:#fff; }
+            .pp-chip .x { opacity:.5; } .pp-chip .x:hover { opacity:1; color:#ff6060; }
+            .pp-card-empty { font-size:11px; color:#555; font-style:italic; }`;
+        document.head.appendChild(st);
+    }
+    const f = window.presetTagNameFilter || '';
+    const wrap = document.createElement('div'); wrap.id = 'pp-cards';
+    const order = menuKeys.slice();
+    if (!order.includes('Uncategorized')) order.push('Uncategorized');
+    const collapsed = window.presetCategoryCollapseState || {};
+    let shown = 0;
+    order.forEach(cat => {
+        if (hiddenSet.has(cat)) return;
+        const all = (byCat.get(cat) || []).slice();
+        const tags = f ? all.filter(t => (t + ' ' + cat).toLowerCase().includes(f)) : all;
+        if (f && !tags.length) return;
+        shown++;
+        const col = ppCatColors(cat);
+        const card = ppEl('div'); card.className = 'pp-card'; card.style.borderLeftColor = col.fg;
+        const head = ppEl('div'); head.className = 'pp-card-head';
+        const closed = !f && collapsed[cat];
+        const nm = ppEl('span', `color:${col.fg};`, (closed ? '▸ ' : '▾ ') + cat); nm.className = 'pp-card-name'; nm.title = 'Click to collapse / expand';
+        nm.onclick = () => {
+            const st = window.presetCategoryCollapseState = window.presetCategoryCollapseState || {};
+            if (st[cat]) delete st[cat]; else st[cat] = true;
+            if (typeof window.saveSetting === 'function') window.saveSetting('preset-cat-collapse', st);
+            window.renderPresetTags();
+        };
+        head.appendChild(nm);
+        head.appendChild(ppEl('span', '', String(all.length))).className = 'pp-card-n';
+        const mk = (txt, title, fn) => { const b = ppEl('button', '', txt); b.className = 'pp-card-btn'; b.title = title; b.onclick = (e) => { e.stopPropagation(); fn(); }; head.appendChild(b); };
+        if (all.length) {
+            mk('➕', `Add ALL ${all.length} tag(s) of "${cat}" to the selected images`, () => window.applyPresetTags(all, 'selected'));
+            mk('🌐', `Add ALL ${all.length} tag(s) of "${cat}" to ALL images`, () => window.applyPresetTags(all, 'all'));
+        }
+        if (cat !== 'Uncategorized') {
+            mk('✏️', 'Rename category', () => {
+                const inp = document.createElement('input'); inp.type = 'text'; inp.value = cat;
+                inp.style.cssText = 'flex:1; min-width:0; font-size:12px; background:#222; border:1px solid #444; color:#fff; border-radius:4px; padding:2px 6px;';
+                let done = false;
+                const finish = async (commit) => {
+                    if (done) return; done = true;
+                    const v = inp.value.trim();
+                    if (commit && v && v !== cat) { if (await ppRenameCategory(cat, v)) return; }
+                    window.renderPresetTags();
+                };
+                inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); };
+                inp.onblur = () => finish(false);
+                nm.replaceWith(inp); inp.focus(); inp.select();
+            });
+            mk('🗑️', 'Delete category (its tags go to Uncategorized — Undo available)', () => ppDeleteCategory(cat));
+        }
+        card.appendChild(head);
+        if (!closed) {
+            const body = ppEl('div'); body.className = 'pp-card-tags';
+            if (!tags.length) body.appendChild(ppEl('span', '', 'No tags yet.')).className = 'pp-card-empty';
+            tags.forEach(tag => {
+                const chip = ppEl('span', '', tag); chip.className = 'pp-chip' + (presetSelectedTags.has(tag) ? ' sel' : ''); chip.title = 'Click to select · double-click to add to the selected images';
+                chip.onclick = () => {
+                    if (presetSelectedTags.has(tag)) presetSelectedTags.delete(tag); else presetSelectedTags.add(tag);
+                    chip.classList.toggle('sel', presetSelectedTags.has(tag));
+                    window.updatePresetSelectionActions();
+                };
+                chip.ondblclick = () => window.applyPresetTags([tag], 'selected');
+                const x = ppEl('span', '', '✕'); x.className = 'x'; x.title = 'Remove from presets (Undo available)';
+                x.onclick = async (e) => {
+                    e.stopPropagation();
+                    await window.deletePresetTag(tag, true);
+                    presetSelectedTags.delete(tag);
+                    await ppAfterMutation();
+                    ppSetStatus(`Removed "${tag}" from presets`, async () => { await ppSetCategory(tag, cat); await ppAfterMutation(); ppSetStatus(`Restored "${tag}".`); });
+                };
+                chip.appendChild(x);
+                body.appendChild(chip);
+            });
+            card.appendChild(body);
+        }
+        wrap.appendChild(card);
+    });
+    if (!shown) wrap.appendChild(ppEl('div', '', f ? 'No tag matches your search.' : 'All categories are hidden. Open ☰ Filter & sort to show them again.')).className = 'pp-empty';
+    PP.vp = null; PP.nodes.clear(); PP.filtered = []; PP.first = PP.last = -1;
+    container.replaceChildren(wrap);
+}
+
 window.renderPresetTags = async function () {
     ensurePresetShell();
     const container = ppContainer();
@@ -1306,6 +1408,22 @@ window.renderPresetTags = async function () {
         menuKeys.sort((a, b) => a === 'Uncategorized' ? 1 : b === 'Uncategorized' ? -1 : dir(ui.sortCat) * a.localeCompare(b, undefined, { sensitivity: 'base' }));
     }
     const hidden = new Set(ui.hiddenCats);
+    if (ui.view === 'cards') {
+        const input0 = document.getElementById('preset-add-input');
+        window.presetTagNameFilter = (window.presetSearchMode && input0) ? input0.value.trim().toLowerCase() : '';
+        PP.rows = []; PP.cats = menuKeys; PP.colors.clear();
+        if (items.filter(i => !i.tag.startsWith('_sys_cat_')).length === 0) {
+            PP.vp = null; PP.nodes.clear(); PP.filtered = [];
+            const msg = ppEl('div', '', 'No presets saved yet. Type a tag below and press Enter, or use the 📦 icon next to any tag.');
+            msg.className = 'pp-empty'; container.replaceChildren(msg);
+        } else ppRenderCards(container, items, byCat, menuKeys, hidden);
+        ppBuildViewMenu(menuKeys, byCat);
+        ppUpdateViewButton(keys.length);
+        ppQueueWikiLookup(Array.from(window._presetTagsSet));
+        ppSyncControls();
+        window.updatePresetSelectionActions();
+        return;
+    }
     const grouped = ui.view !== 'flat';
     let rows = [];
     if (grouped) {
@@ -1371,7 +1489,7 @@ async function ppLoadUISettings() {
         const hl = await window.getSetting('preset-highlights-always-visible', false);
         window._presetUI.pos = pos === 'top' ? 'top' : 'bottom';
         if (coll && typeof coll === 'object' && !Array.isArray(coll)) window.presetCategoryCollapseState = coll;
-        window.presetHighlightsAlwaysVisible = hl;
+        window.presetHighlightsAlwaysVisible = false;
         const okDir = (v) => (v === 'asc' || v === 'desc' || v === 'off') ? v : null;
         const old = await window.getSetting('preset-sort', null); // v2-v4 setting: 'category' | 'name'
         const sc = okDir(await window.getSetting('preset-sort-cat', null));
@@ -1379,7 +1497,7 @@ async function ppLoadUISettings() {
         window._presetUI.sortCat = sc || (old === 'name' ? 'off' : 'asc');
         window._presetUI.sortName = sn || 'asc';
         const vw = await window.getSetting('preset-view', 'grouped');
-        window._presetUI.view = vw === 'flat' ? 'flat' : 'grouped';
+        window._presetUI.view = (vw === 'flat' || vw === 'cards') ? vw : 'grouped';
         const hid = await window.getSetting('preset-hidden-cats', []);
         window._presetUI.hiddenCats = Array.isArray(hid) ? hid : [];
         const hcbx = document.getElementById('cb-highlight-always');
