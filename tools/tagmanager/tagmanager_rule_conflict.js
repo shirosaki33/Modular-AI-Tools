@@ -525,7 +525,6 @@
     window.RulesUI.PANEL_TOGGLES = [
         { order: 1,   cat: 'conflict',  key: 'rm_enable_red',       def: true,  fallback: '🚨 Conflicts (Red)' },
         { order: 2,   cat: 'similar',   key: 'rm_enable_yellow',    def: true,  fallback: '🟨 Similar (Yellow)' },
-        { order: 2.5, cat: 'redundant', key: 'rm_enable_redundant', def: true,  fallback: '🔁 Redundant' },
         { order: 3,   cat: 'automerge', key: 'rm_auto_merge',       def: false, fallback: '⚡ Auto-Do' },
         { order: 5,   cat: 'origgroups', key: 'rm_show_origgroups', def: false, fallback: '📦 Original Groups (@)' }
     ];

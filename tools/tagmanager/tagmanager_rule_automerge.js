@@ -597,7 +597,7 @@
         for (const row of rows) {
             if (row.category === 'embed') continue;
 
-            if (row.category === 'conflict' || row.category === 'similar' || row.category === 'redundant') {
+            if (row.category === 'conflict' || row.category === 'similar') {
                 const tags = Array.isArray(row.tags) ? row.tags : [];
                 const newTags = tags.map(t => (String(t).toLowerCase() === oldRef) ? newRef : t);
                 if (JSON.stringify(newTags) !== JSON.stringify(tags)) {
@@ -654,7 +654,7 @@
         if (window.RulesUI.refreshModalBody) await window.RulesUI.refreshModalBody();
     };
 
-    const ORIG_SECTIONS = [['group', '📦 Groups', '#b890ff'], ['conflict', '🚨 From Conflicts', '#ff6060'], ['similar', '🟨 From Similar', '#ffcc66'], ['redundant', '🔁 From Redundant', '#2dd4bf']];
+    const ORIG_SECTIONS = [['group', '📦 Groups', '#b890ff'], ['conflict', '🚨 From Conflicts', '#ff6060'], ['similar', '🟨 From Similar', '#ffcc66']];
     const _origSecOpen = new Set(['group']);
     let _origSearch = '';
 
