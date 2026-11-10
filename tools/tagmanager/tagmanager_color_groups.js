@@ -272,6 +272,12 @@
             el.style.boxShadow = '';
         });
 
+        // While images are hidden (👁️ Hide / 🎯 Focus) the group control bars (dividers) are hidden from the list too,
+        // until the images are revealed again. The row colors stay and the group data is untouched; collapsed groups
+        // are shown unfolded meanwhile (no bar to expand them with).
+        const hiddenMode = (typeof window.tmHasHiddenImages === 'function') && window.tmHasHiddenImages();
+        if (hiddenMode) { const pal = document.getElementById('cg-palette'); if (pal) pal.style.display = 'none'; }
+
         // 2) style the rows, find the groups still shown by the filters
         const shown = {}; const count = {};
         imageFiles.forEach(img => {
@@ -286,7 +292,7 @@
 
         // 3) dividers at every change of group, then fold the collapsed groups
         let prev = 0, first = true;
-        imageFiles.forEach(img => {
+        if (!hiddenMode) imageFiles.forEach(img => {
             const el = img.element;
             if (!el || !el.isConnected || img.hidden) return;
             const filtered = el.style.display === 'none';

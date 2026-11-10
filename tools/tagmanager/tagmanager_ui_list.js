@@ -547,8 +547,10 @@ window.updateListSelectionVisuals = function() {
     const listActions = document.getElementById('list-selection-actions');
     if(listActions) listActions.style.display = selectedIndices.size > 0 ? 'flex' : 'none';
     // 👁️ Hide / 🎯 Focus sit next to the image counter (same spot as 👁️‍🗨️ Unhide / 🔀 Invert)
+    // While anything is hidden (👁️ Hide / 🎯 Focus active) the three buttons (👁️ 🎯 🌈) stay out of the way until
+    // the images are revealed again (👁️‍🗨️ Unhide) — avoids hiding / grouping on top of a hidden set.
     const hfActions = document.getElementById('list-hidefocus-actions');
-    if(hfActions) hfActions.style.display = selectedIndices.size > 0 ? 'inline-flex' : 'none';
+    if(hfActions) hfActions.style.display = (selectedIndices.size > 0 && !window.tmHasHiddenImages()) ? 'inline-flex' : 'none';
 }
 
 window.refreshListStatus = function() {
@@ -639,12 +641,21 @@ window.unhideAllImages = function() {
     }
 };
 
+// true while some image is hidden (by 👁️ Hide or 🎯 Focus)
+window.tmHasHiddenImages = function() {
+    return (window.hiddenImagesStore && window.hiddenImagesStore.size > 0) || (typeof imageFiles !== 'undefined' && imageFiles.some(img => img.hidden));
+};
+
 window.updateUnhideButton = function() {
     const btn = document.getElementById('btn-unhide-all');
-    const hasHidden = window.hiddenImagesStore.size > 0 || imageFiles.some(img => img.hidden);
+    const hasHidden = window.tmHasHiddenImages();
     if (btn) btn.style.display = hasHidden ? 'inline-block' : 'none';
     const inv = document.getElementById('btn-invert-hidden');
     if (inv) inv.style.display = hasHidden ? 'inline-block' : 'none';
+    // 👁️ 🎯 🌈 follow the same state (hidden while images are hidden)
+    const hf = document.getElementById('list-hidefocus-actions');
+    if (hf && hasHidden) hf.style.display = 'none';
+    else if (typeof window.updateListSelectionVisuals === 'function') window.updateListSelectionVisuals();
 };
 
 /* 🔀 Invert (next to 👁️‍🗨️ Unhide, after Hide / Focus): the hidden images come
