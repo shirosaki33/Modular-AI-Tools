@@ -122,6 +122,73 @@ input[type="file"] { display: none; }
 .footerbar a:hover { text-decoration: underline; color: #9ecfff; }
 .footer-copy { margin-top: 8px; text-align: center; font-size: 11px; color: #555; }
 </style>
+<style id="modern-theme">
+/* ===== MODERN THEME (test) — overrides only; markup, IDs and JS untouched ===== */
+:root{--m-bg:#0b0e0d;--m-s1:#0f1312;--m-s2:#111513;--m-br:#1f2623;--m-br2:#1b211f;--m-tx:#e6ebe8;--m-mu:#8a968f;--m-dim:#6d7872;--m-ac:#2be39a;--m-acbg:#16231d;--m-acbr:#1f4a38}
+body{background:var(--m-bg)!important;color:var(--m-tx);font-family:'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#topbar{background:var(--m-s1)!important;border-bottom:1px solid var(--m-br)!important;box-shadow:none!important;min-height:52px}
+#app-title{font-size:15px!important;font-weight:500!important;letter-spacing:.2px!important;color:var(--m-tx)!important}
+#app-title .mt-badge{margin-left:10px;font-size:11px;font-weight:500;color:var(--m-ac);background:var(--m-acbg);border:1px solid var(--m-acbr);padding:2px 8px;border-radius:999px;letter-spacing:.04em;vertical-align:2px}
+.dropzone{border:1px dashed #2a3531!important;background:var(--m-s1)!important;border-radius:12px!important;color:var(--m-mu)!important;font-weight:500!important;transition:border-color .15s,background .15s,color .15s}
+.dropzone:hover,.dropzone.drag,.dropzone.dragover{border-color:var(--m-ac)!important;background:#0f1a15!important;color:var(--m-ac)!important}
+.copy-btn{color:var(--m-dim)!important;border-radius:6px!important}
+.copy-btn:hover,.copy-btn.copied{color:var(--m-ac)!important;background:var(--m-acbg)!important}
+.footerbar a,.footer-wrap a.toolLink{color:var(--m-ac)!important;text-shadow:none!important}
+.footer-copy,.footer-wrap .copyright{color:#4a554f!important}
+/* tools bar */
+#tools-bar-header{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+#tools-bar-header:hover{background:var(--m-s2)!important;border-color:#2a3531!important}
+#tools-bar-label{color:#b79cf7!important;font-weight:500!important}
+#tools-bar-body{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+.tool-module{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:10px!important}
+.tool-module-header{background:var(--m-s2)!important;font-weight:500!important}
+.tool-module-header:hover{background:#161c19!important}
+.tool-module-body{background:var(--m-bg)!important;border-top:1px solid var(--m-br)!important}
+.container{max-width:1180px!important;margin:18px auto!important}
+.dropzone{padding:18px 20px!important;margin-bottom:16px!important;font-size:13.5px}
+.grid{grid-template-columns:300px minmax(0,1fr)!important;gap:16px!important}
+.panel,.panel-left{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:14px!important;padding:14px!important}
+.panel-left img,.panel-left video{border-radius:10px!important;border:1px solid var(--m-br)}
+.small-text{color:var(--m-mu)!important;font-size:12px!important}
+.topbar-info{background:var(--m-s1)!important;border:1px solid var(--m-br2);border-radius:10px!important;padding:6px 12px!important;line-height:1.5!important}
+.topbar-row,.topbar-source-row{border-bottom:1px solid var(--m-br2)!important;padding:8px 0!important}
+.topbar-label{color:var(--m-dim)!important;font-weight:500!important;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.tabs{display:inline-flex!important;width:fit-content;background:var(--m-s1);border:1px solid var(--m-br);border-radius:10px;padding:3px;gap:2px!important;margin-bottom:14px!important}
+.tabbtn{background:transparent!important;color:var(--m-mu)!important;border-radius:7px!important;padding:6px 16px!important;font-weight:500!important;font-size:12.5px}
+.tabbtn:hover{color:var(--m-tx)!important}
+.tabbtn.active{background:var(--m-acbg)!important;color:var(--m-ac)!important}
+.tabbtn-raw-export{background:transparent!important;color:var(--m-ac)!important;border:1px solid var(--m-acbr)!important;border-radius:8px!important;padding:6px 12px!important;font-size:12.5px;font-weight:500!important}
+.tabbtn-raw-export:hover{background:var(--m-acbg)!important}
+#organized .png-section,.png-section{background:var(--m-s1)!important;border:1px solid var(--m-br);border-radius:12px!important;padding:6px 12px!important;margin-bottom:12px!important}
+.section-title b{color:#c3ccc7!important;font-weight:500}
+.section-title:hover .collapse-arrow{color:var(--m-ac)!important}
+.param-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding-bottom:8px}
+.param-grid>div{background:var(--m-bg)!important;border:1px solid var(--m-br2)!important;border-radius:9px!important;padding:7px 10px!important;display:flex;flex-direction:column;gap:1px}
+.param-grid>div>span:not(.topbar-label){color:#00ff99!important;font-size:13px}
+#loraList .lora-item{border-bottom:1px solid var(--m-br2)!important;padding:9px 0!important}
+.promptBlock{background:var(--m-s1)!important;border:1px solid var(--m-br);border-radius:12px!important;padding:10px 12px!important}
+.promptTitle{color:#c3ccc7!important;font-weight:500!important}
+.tabcontent textarea,.promptArea{background:var(--m-bg)!important;color:#00ff99!important;border:1px solid var(--m-br2)!important;border-radius:8px!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace!important;font-size:12.5px!important;line-height:1.6}
+.tabcontent textarea:focus{border-color:var(--m-acbr)!important}
+#alertBar{border-radius:10px!important;font-weight:500!important}
+@media(max-width:900px){.grid{grid-template-columns:1fr!important}.param-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+
+/* LoRAs section like the mockup */
+#loraBox{padding:0!important;overflow:hidden}
+#loraBox .section-title{padding:11px 12px!important;margin:0}
+#loraBox .section-title b{display:flex;align-items:baseline;gap:6px}
+.lora-count{color:var(--m-dim);font-weight:400;font-size:13px}
+#loraBox .section-content{padding:0}
+#loraList .lora-item{padding:9px 12px!important;border-top:1px solid var(--m-br2)!important;border-bottom:none!important;gap:12px}
+#loraList .lora-item>span:first-child{min-width:0;word-break:break-word}
+.lora-w{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--m-ac);background:#0d2a1f;border:1px solid #17432f;padding:2px 9px;border-radius:6px}
+.collapse-arrow{font-size:16px!important}
+
+/* civitai_lora.js forces block layout inline; restore row layout (name left, weight chip right) */
+#loraList{gap:0!important}
+#loraList .lora-item{display:flex!important;align-items:center!important;justify-content:space-between!important}
+#loraList .lora-item>span:not(.lora-w){display:block!important;width:auto!important;flex:1 1 auto;min-width:0}
+</style>
 </head>
 <body>
 
@@ -816,6 +883,36 @@ async function loadFile(file) {
     // Notifica os scripts de ferramentas que o carregamento terminou
     if (window.onMetadataLoaded) window.onMetadataLoaded();
 }
+</script>
+
+<script id="modern-lora-chips">
+(function(){
+  const list=document.getElementById('loraList'); if(!list) return;
+  const esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  function strip(node,ws){
+    const re=new RegExp('\\s*'+esc(ws)+'\\s*$');
+    Array.from(node.childNodes).forEach(n=>{
+      if(n.nodeType===3){ const t=n.nodeValue.replace(/\u00A0/g,' '); if(re.test(t)) n.nodeValue=t.replace(re,''); }
+      else if(n.nodeType===1 && !n.classList.contains('lora-w')){
+        if(n.textContent.replace(/\u00A0/g,' ').trim()===ws) n.remove(); else strip(n,ws);
+      }
+    });
+  }
+  function chipify(item){
+    const ws=(item.dataset.loraWeight||'').trim(); if(!ws) return;
+    const m=ws.match(/-?\d*\.?\d+/); if(!m) return;
+    const span=item.querySelector(':scope>span:not(.lora-w)'); if(!span) return;
+    strip(span,ws);
+    if(!item.querySelector('.lora-w')){ const c=document.createElement('span'); c.className='lora-w'; c.textContent=m[0]; item.appendChild(c); }
+  }
+  function sync(){
+    const items=list.querySelectorAll('.lora-item'); items.forEach(chipify);
+    const b=document.querySelector('#loraBox .section-title b'); if(!b) return;
+    const want=items.length?items.length:0;
+    if(b.dataset.n!==String(want)){ b.dataset.n=String(want); b.innerHTML='LoRAs'+(want?' <span class="lora-count">\u00B7 '+want+'</span>':''); }
+  }
+  new MutationObserver(sync).observe(list,{childList:true,subtree:true,characterData:true});
+})();
 </script>
 </body>
 </html>

@@ -226,13 +226,77 @@
 		.footer-wrap a.toolLink:hover { color: #ffffff; text-shadow: 0 0 8px rgba(0, 255, 153, 0.6); }
 		.footer-wrap .copyright { font-size: 12px; color: #555; margin: 0; }
 	</style>
+<style id="modern-theme">
+/* ===== MODERN THEME (test) — overrides only; markup, IDs and JS untouched ===== */
+:root{--m-bg:#0b0e0d;--m-s1:#0f1312;--m-s2:#111513;--m-br:#1f2623;--m-br2:#1b211f;--m-tx:#e6ebe8;--m-mu:#8a968f;--m-dim:#6d7872;--m-ac:#2be39a;--m-acbg:#16231d;--m-acbr:#1f4a38}
+body{background:var(--m-bg)!important;color:var(--m-tx);font-family:'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#topbar{background:var(--m-s1)!important;border-bottom:1px solid var(--m-br)!important;box-shadow:none!important;min-height:52px}
+#app-title{font-size:15px!important;font-weight:500!important;letter-spacing:.2px!important;color:var(--m-tx)!important}
+#app-title .mt-badge{margin-left:10px;font-size:11px;font-weight:500;color:var(--m-ac);background:var(--m-acbg);border:1px solid var(--m-acbr);padding:2px 8px;border-radius:999px;letter-spacing:.04em;vertical-align:2px}
+.dropzone{border:1px dashed #2a3531!important;background:var(--m-s1)!important;border-radius:12px!important;color:var(--m-mu)!important;font-weight:500!important;transition:border-color .15s,background .15s,color .15s}
+.dropzone:hover,.dropzone.drag,.dropzone.dragover{border-color:var(--m-ac)!important;background:#0f1a15!important;color:var(--m-ac)!important}
+.copy-btn{color:var(--m-dim)!important;border-radius:6px!important}
+.copy-btn:hover,.copy-btn.copied{color:var(--m-ac)!important;background:var(--m-acbg)!important}
+.footerbar a,.footer-wrap a.toolLink{color:var(--m-ac)!important;text-shadow:none!important}
+.footer-copy,.footer-wrap .copyright{color:#4a554f!important}
+/* tools bar */
+#tools-bar-header{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+#tools-bar-header:hover{background:var(--m-s2)!important;border-color:#2a3531!important}
+#tools-bar-label{color:#b79cf7!important;font-weight:500!important}
+#tools-bar-body{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+.tool-module{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:10px!important}
+.tool-module-header{background:var(--m-s2)!important;font-weight:500!important}
+.tool-module-header:hover{background:#161c19!important}
+.tool-module-body{background:var(--m-bg)!important;border-top:1px solid var(--m-br)!important}
+.container{max-width:1180px!important;margin:18px auto!important}
+.dropzone{padding:22px 20px!important;margin-bottom:14px!important;border-radius:12px!important}
+.dropzone #dropzoneLabel{font-size:15px!important}
+.manual-hash-row{gap:8px!important;margin-bottom:14px!important}
+.manual-hash-input{background:var(--m-s1)!important;border:1px solid #232b28!important;border-radius:10px!important;padding:10px 14px!important;font-size:13.5px!important}
+.manual-hash-input:focus{border-color:var(--m-ac)!important}
+.manual-hash-btn{background:var(--m-acbg)!important;color:var(--m-ac)!important;border:1px solid var(--m-acbr)!important;border-radius:10px!important;padding:0 20px!important;font-size:13.5px!important;font-weight:500!important}
+.manual-hash-btn:hover{background:#1c2f26!important}
+.main-grid{grid-template-columns:340px minmax(0,1fr)!important;gap:16px!important}
+.panel-left,.lora-data-box{background:var(--m-s2)!important;border:1px solid var(--m-br);border-radius:14px!important;padding:16px!important}
+.panel-title,.lora-data-title{font-size:13px!important;font-weight:500!important;color:var(--m-dim)!important;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px!important}
+.lora-name-display{background:var(--m-bg)!important;border:1px solid var(--m-br2);border-radius:8px!important;font-weight:500!important;font-size:14px!important}
+.lora-name-display a,.info-value a,.system-card-value a,.civitai-model-desc a,.creator-name-link{color:var(--m-ac)!important}
+.civitai-status.loading,.civitai-status.found{color:var(--m-ac)!important}
+.hash-progress-fill{background:var(--m-ac)!important}
+.model-image,.model-image-placeholder,.image-loading{height:380px!important;border-radius:10px!important;box-shadow:none!important;border:1px solid var(--m-br);background:var(--m-s1)!important}
+.image-loading{height:auto!important}
+.spinner{border-top-color:var(--m-ac)!important}
+.gallery-nav{background:rgba(11,14,13,.78)!important;border:1px solid #2a3531!important}
+.gallery-nav:hover{border-color:var(--m-ac)!important;background:rgba(11,14,13,.95)!important}
+.gallery-dot.active{background:var(--m-ac)!important}
+.info-label{font-size:11px!important;text-transform:uppercase;letter-spacing:.06em;color:var(--m-dim)!important}
+.info-value{background:var(--m-bg)!important;border:1px solid var(--m-br2);border-radius:8px!important;min-height:34px!important;margin-bottom:12px!important;font-size:13px}
+.card,.training-card,.cardprompt,.system-card{background:var(--m-s1)!important;border:1px solid var(--m-br);border-radius:12px!important;padding:14px!important}
+.card-title,.training-card-title,.system-card-title{font-size:13.5px!important;font-weight:500!important;color:#c3ccc7!important;border-bottom:1px solid var(--m-br2)!important;margin-bottom:10px!important;padding-bottom:8px!important}
+.summary-grid,.training-container,.system-container{gap:12px!important}
+.card-label{color:var(--m-dim)!important;font-weight:500!important}
+.dataset-tag{background:#0d2a1f!important;border:1px solid #17432f!important;color:var(--m-ac)!important;font-size:11.5px!important;padding:2px 9px!important}
+.promptArea{background:var(--m-bg)!important;color:#b9e8d3!important;border:1px solid var(--m-br2)!important;border-radius:8px!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace!important;font-size:12.5px!important}
+.prompt-block-toggle{border-color:var(--m-br)!important;color:var(--m-mu)!important;border-radius:8px!important}
+.prompt-block-toggle:hover{color:var(--m-ac)!important;border-color:var(--m-acbr)!important}
+.cardprompt-title{font-size:14px!important;font-weight:500!important}
+.cardprompt-toggle-btn{border-color:var(--m-br)!important;color:var(--m-mu)!important}
+.result-banner,.outdated-banner,.conn-alert{border-radius:10px!important;border-width:1px!important;font-weight:500!important}
+.creator-block{background:var(--m-bg)!important;border:1px solid var(--m-br2);border-radius:10px!important}
+.creator-avatar,.creator-avatar-placeholder{border-color:#17432f!important}
+.detect-popout{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:14px!important}
+.detect-popout-head,.detect-filter-row{background:var(--m-s1)!important;border-color:var(--m-br)!important}
+.detect-popout-head h3{color:var(--m-ac)!important}
+.detect-filter-btn.active{background:var(--m-acbg)!important;border-color:var(--m-acbr)!important;color:var(--m-ac)!important}
+@media(max-width:900px){.main-grid{grid-template-columns:1fr!important}}
+</style>
 </head>
 <body>
 
 <div id="topbar">
     <div class="topbar-section left" id="topbar-left"></div>
     <div class="topbar-section center">
-        <span id="app-title">📋 LoRa Metadata Reader 📋</span>
+        <span id="app-title">📋 LoRa Metadata Reader 📋</span></span>
     </div>
     <div class="topbar-section right" id="topbar-right"></div>
 </div>
