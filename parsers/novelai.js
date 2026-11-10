@@ -36,7 +36,9 @@
         
         const low = s.toLowerCase().replace(/[\s_]+/g, '-');
         
-        // V5
+        // V5 (model_hash from the metadata: Full 70AB5786, Curated DB276663)
+        if (/70ab5786/.test(low)) return 'NAI Diffusion 5 FULL';
+        if (/db276663/.test(low)) return 'NAI Diffusion 5 Curated';
         if (/nai-diffusion-5-full|v5.*full/.test(low))       return 'NAI Diffusion 5 FULL';
         if (/nai-diffusion-5-curated|v5.*curated/.test(low)) return 'NAI Diffusion 5 Curated';
         if (/nai-diffusion-v?5\b|diffusion-v5\b/.test(low)) return 'NAI Diffusion 5';
@@ -163,13 +165,16 @@
     function detectCheckpoint(text, json) {
         let raw = '';
         if (json && typeof json === 'object') {
-            raw = json.model || json.Source || '';
+            raw = json.model_name || json.model || json.Source || '';
+            if (json.model_hash && raw) raw = raw + ' ' + json.model_hash;
             // Se for apenas 'NovelAI', limpa para forçar a busca ou dedução abaixo
             if (raw && raw.toLowerCase() === 'novelai') raw = '';
         }
         
         if (!raw) {
-            raw = grab(String(text || ''), /"model"\s*:\s*"([^"]+)"/i);
+            raw = grab(String(text || ''), /"model_name"\s*:\s*"([^"]+)"/i) || grab(String(text || ''), /"model"\s*:\s*"([^"]+)"/i);
+            const mh = grab(String(text || ''), /"model_hash"\s*:\s*"([^"]+)"/i);
+            if (raw && mh) raw = raw + ' ' + mh;
         }
 
         let modelName = formatModelName(raw);
