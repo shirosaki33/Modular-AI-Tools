@@ -54,7 +54,7 @@
         #cg-filter-pop .cg-sw.cg-active { border-color:#fff; box-shadow:0 0 0 2px #ffcf70; }
         #cg-filter-pop .cg-none { margin-top:8px; width:100%; background:#1a2a3a; color:#9fd0ff; border:1px solid #2a5a8c; border-radius:6px; padding:4px; font-size:11px; cursor:pointer; }
         #cg-filter-pop .cg-title { font-size:10px; color:#999; margin-bottom:6px; }
-        #btn-group-filter { flex-shrink:0; padding:6px 10px; font-size:12px; font-weight:bold; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s; white-space:nowrap; display:none; }
+        #btn-group-filter { flex-shrink:0; padding:6px 10px; font-size:12px; font-weight:bold; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s; white-space:nowrap; }
         #btn-color-group { background:#1c1c2a; border-color:#4a4a8c; color:#b8b8ff; padding:2px 6px; font-size:14px; }
     `;
     document.head.appendChild(st);
@@ -386,6 +386,7 @@
         b.id = 'btn-group-filter';
         b.type = 'button';
         b.textContent = '🌈';
+        b.style.display = 'none';   // refreshFilterBtn() shows it once a group exists
         b.onclick = (e) => { e.stopPropagation(); openFilterPop(b); };
         if (anchor.id === 'btn-sort-az') anchor.parentNode.insertBefore(b, anchor);
         else anchor.parentNode.insertBefore(b, anchor.nextSibling);
@@ -429,7 +430,7 @@
             setTimeout(() => { if (typeof window.applyFilters === 'function') window.applyFilters(); }, 0);
         }
         const act = window.cgFilterGroup;
-        b.style.display = (Object.keys(counts).length > 0 || act) ? '' : 'none';
+        b.style.display = (Object.keys(counts).length > 0 || act) ? 'inline-block' : 'none';
         if (act) {
             const col = COLORS[act - 1] || '#888';
             b.textContent = '🌈 ' + act;
