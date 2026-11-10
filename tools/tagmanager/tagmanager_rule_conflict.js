@@ -923,4 +923,74 @@
         }
     });
 
+
+    /* ---------- @ AUTOCOMPLETE (Manage Rules inputs): suggests Original Groups + User Presets groups ---------- */
+    (function () {
+        const st = document.createElement('style');
+        st.textContent = `#rm-at-pop { position:fixed; z-index:500; background:#151515; border:1px solid #4a2a8c; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.8); max-height:240px; overflow-y:auto; min-width:220px; max-width:360px; padding:4px; }
+            #rm-at-pop .it { display:flex; justify-content:space-between; gap:12px; padding:5px 8px; border-radius:5px; font-size:12px; color:#ddd; cursor:pointer; }
+            #rm-at-pop .it.on, #rm-at-pop .it:hover { background:#2a1f45; }
+            #rm-at-pop .nm { color:#b890ff; font-weight:bold; } #rm-at-pop .ct { color:#666; font-size:10px; align-self:center; }`;
+        document.head.appendChild(st);
+
+        let pop = null, items = [], idx = 0, target = null, segStart = 0, seq = 0;
+
+        function close() { if (pop) { pop.remove(); pop = null; } items = []; target = null; }
+        function paint() {
+            if (!pop) return;
+            pop.innerHTML = '';
+            items.forEach((it, i) => {
+                const d = document.createElement('div'); d.className = 'it' + (i === idx ? ' on' : '');
+                d.innerHTML = `<span class="nm">@${window.RulesUI.escapeHTML(it.name)}</span><span class="ct">${it.tags.length} tags</span>`;
+                d.onmousedown = (e) => { e.preventDefault(); pick(i); };
+                pop.appendChild(d);
+            });
+            const on = pop.querySelector('.it.on'); if (on) on.scrollIntoView({ block: 'nearest' });
+        }
+        function pick(i) {
+            const it = items[i]; if (!it || !target) return;
+            const el = target, v = el.value, caret = el.selectionStart;
+            const lead = v.slice(segStart, caret).match(/^\s*/)[0];
+            el.value = v.slice(0, segStart) + lead + '@' + it.name + v.slice(caret);
+            const pos = segStart + lead.length + 1 + it.name.length;
+            el.setSelectionRange(pos, pos);
+            close();
+            el.focus();
+        }
+        async function onInput(e) {
+            const el = e.target;
+            if (!el || !(el.tagName === 'INPUT' && el.type === 'text' || el.tagName === 'TEXTAREA')) return;
+            if (!el.closest('#modal-conflict-manager')) return;
+            const caret = el.selectionStart;
+            const before = el.value.slice(0, caret);
+            const start = before.lastIndexOf(',') + 1;
+            const seg = before.slice(start).trimStart();
+            if (!seg.startsWith('@') || /\s/.test(seg)) { close(); return; }
+            const q = seg.slice(1).toLowerCase();
+            const my = ++seq;
+            const rows = await window.RulesDB.getAllRules();
+            if (my !== seq) return;
+            const list = rows.filter(r => r.category === 'embed' && r.name && String(r.name).toLowerCase().includes(q) && r.tags && r.tags.length)
+                .sort((a, b) => (String(a.name).toLowerCase().startsWith(q) ? 0 : 1) - (String(b.name).toLowerCase().startsWith(q) ? 0 : 1) || a.name.localeCompare(b.name))
+                .slice(0, 40);
+            if (!list.length) { close(); return; }
+            items = list; idx = 0; target = el; segStart = start;
+            if (!pop) { pop = document.createElement('div'); pop.id = 'rm-at-pop'; document.body.appendChild(pop); }
+            paint();
+            const r = el.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+            let top = r.bottom + 4; if (top + pr.height > window.innerHeight - 10) top = Math.max(10, r.top - pr.height - 4);
+            pop.style.left = Math.max(10, Math.min(r.left, window.innerWidth - pr.width - 10)) + 'px';
+            pop.style.top = top + 'px';
+        }
+        document.addEventListener('input', onInput, true);
+        document.addEventListener('keydown', (e) => {
+            if (!pop) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); idx = (idx + 1) % items.length; paint(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); idx = (idx - 1 + items.length) % items.length; paint(); }
+            else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); pick(idx); }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+        }, true);
+        document.addEventListener('mousedown', (e) => { if (pop && !pop.contains(e.target)) close(); }, true);
+        document.addEventListener('focusout', (e) => { if (e.target === target) setTimeout(() => { if (document.activeElement !== target) close(); }, 150); }, true);
+    })();
 })();
