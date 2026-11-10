@@ -377,6 +377,8 @@ window.applyFilters = function() {
             const nameLower = (img.name || '').toLowerCase();
             if (!nameLower.includes(window.imageNameFilter)) visible = false;
         }
+        // 🌈 group filter (button next to "Filter images by name"): only the images of the chosen color group
+        if (visible && window.cgFilterGroup && typeof window.tmImageGroup === 'function' && window.tmImageGroup(img) !== window.cgFilterGroup) visible = false;
         if (visible && window.pinnedMasterTag) {
             if (!tags.includes(window.pinnedMasterTag)) visible = false;
         }

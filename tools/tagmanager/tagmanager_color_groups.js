@@ -47,6 +47,14 @@
         #cg-palette .cg-sw:hover { border-color:#fff; }
         #cg-palette .cg-none { margin-top:8px; width:100%; background:#2a1111; color:#ffb6c0; border:1px solid #7a222c; border-radius:6px; padding:4px; font-size:11px; cursor:pointer; }
         #cg-palette .cg-title { font-size:10px; color:#999; margin-bottom:6px; }
+        #cg-filter-pop { position:fixed; z-index:99999; background:#1b1b1b; border:1px solid #444; border-radius:8px; padding:8px; display:none; box-shadow:0 6px 20px rgba(0,0,0,0.6); }
+        #cg-filter-pop .cg-pal-grid { display:grid; grid-template-columns:repeat(5, 28px); gap:6px; }
+        #cg-filter-pop .cg-sw { width:28px; height:28px; border-radius:6px; border:2px solid #111; cursor:pointer; font-size:11px; font-weight:bold; display:flex; align-items:center; justify-content:center; }
+        #cg-filter-pop .cg-sw:hover { border-color:#fff; }
+        #cg-filter-pop .cg-sw.cg-active { border-color:#fff; box-shadow:0 0 0 2px #ffcf70; }
+        #cg-filter-pop .cg-none { margin-top:8px; width:100%; background:#1a2a3a; color:#9fd0ff; border:1px solid #2a5a8c; border-radius:6px; padding:4px; font-size:11px; cursor:pointer; }
+        #cg-filter-pop .cg-title { font-size:10px; color:#999; margin-bottom:6px; }
+        #btn-group-filter { flex-shrink:0; padding:6px 10px; font-size:12px; font-weight:bold; background:transparent; border:1px solid #444; color:#aaa; transition:0.2s; white-space:nowrap; display:none; }
         #btn-color-group { background:#1c1c2a; border-color:#4a4a8c; color:#b8b8ff; padding:2px 6px; font-size:14px; }
     `;
     document.head.appendChild(st);
@@ -261,6 +269,7 @@
         if (_regrouping) return;
         if (!afterFilter && regroupIfSplit()) return;
         syncFlags();
+        refreshFilterBtn();
         const s = state();
         listDiv.querySelectorAll('.cg-divider').forEach(d => d.remove());
 
@@ -350,6 +359,89 @@
         paintSortBtn();
     };
 
+    /* ---------- 🌈 group filter (button next to "Filter images by name") ----------
+       Shown only while at least one image is in a color group. The pop-out lists just the groups in use; picking
+       one filters the list to that group (applyFilters reads window.cgFilterGroup), picking it again clears it. */
+    window.cgFilterGroup = 0;
+    window.tmImageGroup = groupOf;
+
+    function groupCounts() {
+        const n = {};
+        if (typeof imageFiles === 'undefined') return n;
+        imageFiles.forEach(img => { if (img.hidden) return; const g = groupOf(img); if (g > 0) n[g] = (n[g] || 0) + 1; });
+        return n;
+    }
+
+    function setGroupFilter(g) {
+        window.cgFilterGroup = g || 0;
+        if (typeof window.applyFilters === 'function') window.applyFilters();
+        refreshFilterBtn();
+    }
+
+    function injectFilterButton() {
+        if (document.getElementById('btn-group-filter')) return;
+        const anchor = document.getElementById('btn-sort-az') || document.getElementById('image-search-input');
+        if (!anchor || !anchor.parentNode) return;
+        const b = document.createElement('button');
+        b.id = 'btn-group-filter';
+        b.type = 'button';
+        b.textContent = '🌈';
+        b.onclick = (e) => { e.stopPropagation(); openFilterPop(b); };
+        if (anchor.id === 'btn-sort-az') anchor.parentNode.insertBefore(b, anchor);
+        else anchor.parentNode.insertBefore(b, anchor.nextSibling);
+    }
+
+    function openFilterPop(btn) {
+        let p = document.getElementById('cg-filter-pop');
+        if (!p) {
+            p = document.createElement('div'); p.id = 'cg-filter-pop';
+            p.onclick = e => e.stopPropagation();
+            document.body.appendChild(p);
+            document.addEventListener('click', () => { p.style.display = 'none'; });
+        }
+        if (p.style.display === 'block') { p.style.display = 'none'; return; }
+        const counts = groupCounts();
+        p.innerHTML = '<div class="cg-title">Show only one group</div><div class="cg-pal-grid"></div><button class="cg-none" type="button">Show all images</button>';
+        const grid = p.querySelector('.cg-pal-grid');
+        Object.keys(counts).map(Number).sort((a, b) => a - b).forEach(g => {
+            const sw = document.createElement('div');
+            sw.className = 'cg-sw' + (window.cgFilterGroup === g ? ' cg-active' : '');
+            sw.style.background = COLORS[g - 1] || '#888'; sw.style.color = swatchText(COLORS[g - 1] || '#888');
+            sw.textContent = String(g); sw.title = NAME(g) + ' — ' + counts[g] + ' image(s)';
+            sw.onclick = (e) => { e.stopPropagation(); p.style.display = 'none'; setGroupFilter(window.cgFilterGroup === g ? 0 : g); };
+            grid.appendChild(sw);
+        });
+        p.querySelector('.cg-none').onclick = (e) => { e.stopPropagation(); p.style.display = 'none'; setGroupFilter(0); };
+        const r = btn.getBoundingClientRect();
+        p.style.left = Math.max(4, Math.min(r.left, window.innerWidth - 200)) + 'px';
+        p.style.top = (r.bottom + 6) + 'px';
+        p.style.display = 'block';
+    }
+
+    // shows / hides the button, paints the active group, drops the filter when its group has no images any more
+    function refreshFilterBtn() {
+        injectFilterButton();
+        const b = document.getElementById('btn-group-filter'); if (!b) return;
+        const counts = groupCounts();
+        const g = window.cgFilterGroup;
+        if (g && !counts[g]) {
+            window.cgFilterGroup = 0;
+            setTimeout(() => { if (typeof window.applyFilters === 'function') window.applyFilters(); }, 0);
+        }
+        const act = window.cgFilterGroup;
+        b.style.display = (Object.keys(counts).length > 0 || act) ? '' : 'none';
+        if (act) {
+            const col = COLORS[act - 1] || '#888';
+            b.textContent = '🌈 ' + act;
+            b.style.background = col; b.style.color = swatchText(col); b.style.borderColor = '#fff';
+            b.title = NAME(act) + ' filter is on — click to change or clear it';
+        } else {
+            b.textContent = '🌈';
+            b.style.background = 'transparent'; b.style.color = '#aaa'; b.style.borderColor = '#444';
+            b.title = 'Filter the list by color group';
+        }
+    }
+
     /* ---------- hooks ---------- */
     function onConfigOrDataset() {
         const anyMuted = syncFlags();
@@ -358,12 +450,13 @@
 
     function install() {
         injectButton();
+        injectFilterButton();
         const TM = window.TM;
         if (TM && typeof TM.on === 'function') {
             TM.on('render:list', () => decorate(false));
             TM.on('filters:applied', () => decorate(true));
             TM.on('config:loaded', onConfigOrDataset);
-            TM.on('dataset:loaded', () => { injectButton(); onConfigOrDataset(); sortDir = 0; paintSortBtn(); });
+            TM.on('dataset:loaded', () => { window.cgFilterGroup = 0; injectButton(); onConfigOrDataset(); sortDir = 0; paintSortBtn(); refreshFilterBtn(); });
         } else if (typeof window.registerPostRenderImageList === 'function') {
             window.registerPostRenderImageList(() => decorate(false));
         }
