@@ -174,6 +174,7 @@ function enterMergeModeGrid() {
     if (!currentHandle) { showAlert('Load a folder first.', 'warn'); return false; }
     isMergeMode = true;
     markedPrimaryFile = null;
+    if (typeof ghClearSel === 'function') ghClearSel('merge-checkbox');
     document.getElementById('btn-merge').classList.add('active');
     showAlert('🔗 Select 2+ images. The last one you check stays highlighted and becomes the one shown in the grid.', 'info');
     renderGrid();
@@ -183,6 +184,7 @@ function enterMergeModeGrid() {
 function cancelMergeMode() {
     isMergeMode = false;
     markedPrimaryFile = null;
+    if (typeof ghClearSel === 'function') ghClearSel('merge-checkbox');
     const btn = document.getElementById('btn-merge');
     if (btn) btn.classList.remove('active');
     const dropdown = document.getElementById('merge-dropdown');
@@ -233,7 +235,7 @@ function toggleMergeMode() {
 async function confirmMergeSelected() {
     if (!currentHandle) return;
 
-    const checked = Array.from(document.querySelectorAll('.merge-checkbox:checked')).map(cb => cb.dataset.filename);
+    const checked = ghSelNames('merge-checkbox');
     if (checked.length < 2) {
         showAlert('❌ Select at least 2 images to merge.', 'warn');
         return;

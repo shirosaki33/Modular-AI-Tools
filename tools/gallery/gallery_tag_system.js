@@ -382,6 +382,7 @@ async function loadTagsIndex(dirHandle) {
 function enterTagModeGrid() {
     if (!currentHandle) { showAlert('Load a folder first.', 'warn'); return false; }
     isTagMode = true;
+    ghClearSel('tag-checkbox');
     document.getElementById('btn-batch-tag').classList.add('active');
 
     // Hide old bars if they still exist in the HTML
@@ -395,6 +396,7 @@ function enterTagModeGrid() {
 
 function cancelBatchTags() {
     isTagMode = false;
+    ghClearSel('tag-checkbox');
     document.getElementById('btn-batch-tag').classList.remove('active');
     const dropdown = document.getElementById('tag-dropdown');
     if (dropdown) dropdown.classList.remove('open');
@@ -474,7 +476,7 @@ async function applyBatchTags() {
         const currentFname = document.getElementById('file-name').value;
         if (currentFname) filesToUpdate.push(currentFname);
     } else {
-        document.querySelectorAll('.tag-checkbox:checked').forEach(cb => filesToUpdate.push(cb.dataset.filename));
+        ghSelNames('tag-checkbox').forEach(n => filesToUpdate.push(n));
     }
 
     if (filesToUpdate.length === 0) {
@@ -549,7 +551,7 @@ async function removeBatchTags() {
         const currentFname = document.getElementById('file-name').value;
         if (currentFname) filesToUpdate.push(currentFname);
     } else {
-        document.querySelectorAll('.tag-checkbox:checked').forEach(cb => filesToUpdate.push(cb.dataset.filename));
+        ghSelNames('tag-checkbox').forEach(n => filesToUpdate.push(n));
     }
 
     if (filesToUpdate.length === 0) {

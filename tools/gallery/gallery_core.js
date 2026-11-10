@@ -447,6 +447,7 @@ async function removeDirectory() {
     if (typeof memberToPrimary !== 'undefined') memberToPrimary.clear();
     if (typeof groupActiveIndex !== 'undefined') groupActiveIndex.clear();
     if (typeof isMergeMode !== 'undefined') isMergeMode = false;
+    if (typeof ghClearSel === 'function') ghClearSel();
     document.getElementById('merge-dropdown')?.classList.remove('open');
 
     document.getElementById('btn-remove').style.display = 'none'; 
@@ -730,6 +731,7 @@ function ghBuildCard(fileItem, idx) {
             cb.type = 'checkbox'; 
             cb.className = isRenameMode ? 'rename-checkbox' : (isMergeMode ? 'merge-checkbox' : 'tag-checkbox'); 
             cb.dataset.filename = fileItem.name;
+            if (typeof GH_SEL !== 'undefined' && GH_SEL[cb.className] && GH_SEL[cb.className].has(fileItem.name)) cb.checked = true;
             wrapper.appendChild(img); wrapper.appendChild(cb);
 
             // Modo Merge: a última imagem marcada fica destacada (borda dourada)
@@ -769,7 +771,7 @@ let ghList = [], ghWinStart = 0, ghWinEnd = 0, ghDynRAF = null;
 function ghInSelectionMode() {
     return (typeof isTagMode !== 'undefined' && isTagMode) || (typeof isRenameMode !== 'undefined' && isRenameMode) || (typeof isMergeMode !== 'undefined' && isMergeMode);
 }
-function ghIsDynamic() { return ghDynamic && !ghInSelectionMode(); }
+function ghIsDynamic() { return ghDynamic; }   // selection modes work with the dynamic loader too (the selection is kept by name, see GH_SEL)
 
 /* [start, end) of the items kept in the DOM while `page` is the current one */
 function ghWindowFor(page, total) {

@@ -329,18 +329,49 @@ window.addEventListener('DOMContentLoaded', async () => {
    ================================================================ */
 const SELECTION_COUNT_MAP = { 'tag-checkbox': 'tag-selection-count', 'rename-checkbox': 'rename-selection-count', 'merge-checkbox': 'merge-selection-count' };
 
+/* The selection lives in these sets (by file name), NOT in the checkboxes: with the dynamic page loader
+   the cards of other pages are added/removed while scrolling, and a checkbox that leaves the DOM would
+   lose its mark. Cards are built already checked from the set (ghBuildCard). */
+const GH_SEL = { 'tag-checkbox': new Set(), 'rename-checkbox': new Set(), 'merge-checkbox': new Set() };
+
+/* Selected file names, in grid order, limited to what the grid is showing now */
+function ghSelNames(className) {
+    const s = GH_SEL[className];
+    if (!s || !s.size) return [];
+    const list = (typeof ghList !== 'undefined' && Array.isArray(ghList)) ? ghList : [];
+    return list.filter(f => s.has(f.name)).map(f => f.name);
+}
+/* Same names as objects that look like checkboxes (the batch rename code only reads dataset.filename) */
+const ghSelItems = className => ghSelNames(className).map(n => ({ dataset: { filename: n } }));
+function ghClearSel(className) {
+    (className ? [className] : Object.keys(GH_SEL)).forEach(c => GH_SEL[c].clear());
+}
+function ghRefreshChecks(className) {
+    const s = GH_SEL[className];
+    document.querySelectorAll('.' + className).forEach(cb => { cb.checked = !!s && s.has(cb.dataset.filename); });
+}
+
+/* "Select All" = every image of the current list (all pages), not only the cards that are in the DOM */
 function selectAllCheckboxes(className) {
-    document.querySelectorAll('.' + className).forEach(cb => cb.checked = true);
+    const s = GH_SEL[className];
+    const list = (typeof ghList !== 'undefined' && Array.isArray(ghList)) ? ghList : [];
+    if (s) list.forEach(f => s.add(f.name));
+    ghRefreshChecks(className);
     updateSelectionCount(className);
 }
 
 function clearAllCheckboxes(className) {
-    document.querySelectorAll('.' + className).forEach(cb => cb.checked = false);
+    ghClearSel(className);
+    ghRefreshChecks(className);
+    if (className === 'merge-checkbox' && typeof markedPrimaryFile !== 'undefined') {
+        markedPrimaryFile = null;
+        if (typeof highlightMergePrimaryCandidate === 'function') highlightMergePrimaryCandidate();
+    }
     updateSelectionCount(className);
 }
 
 function updateSelectionCount(className) {
-    const count = document.querySelectorAll('.' + className + ':checked').length;
+    const count = ghSelNames(className).length;
     const el = document.getElementById(SELECTION_COUNT_MAP[className]);
     if (!el) return;
     el.textContent = `${count} image${count === 1 ? '' : 's'} selected`;
@@ -349,6 +380,13 @@ function updateSelectionCount(className) {
 
 // Delegated listener: keeps the live counter accurate no matter how the grid re-renders.
 document.addEventListener('change', (e) => {
+    const cl = e.target.classList;
+    if (cl) {
+        const cls = ['tag-checkbox', 'rename-checkbox', 'merge-checkbox'].find(c => cl.contains(c));
+        if (cls && e.target.dataset.filename) {
+            if (e.target.checked) GH_SEL[cls].add(e.target.dataset.filename); else GH_SEL[cls].delete(e.target.dataset.filename);
+        }
+    }
     if (e.target.classList && e.target.classList.contains('tag-checkbox')) updateSelectionCount('tag-checkbox');
     if (e.target.classList && e.target.classList.contains('rename-checkbox')) updateSelectionCount('rename-checkbox');
     if (e.target.classList && e.target.classList.contains('merge-checkbox')) {

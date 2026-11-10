@@ -94,6 +94,7 @@ let isRenameMode = false;
 function enterRenameModeGrid() {
     if (!currentHandle) { showAlert('Load a folder first.', 'warn'); return false; }
     isRenameMode = true;
+    ghClearSel('rename-checkbox');
 
     // Highlight the pencil button and hide the old bar (in case it still exists in the HTML)
     document.getElementById('btn-rename-top').classList.add('active');
@@ -108,6 +109,7 @@ function enterRenameModeGrid() {
 /** Cancels rename mode and refreshes the grid. */
 function cancelRenameMode() {
     isRenameMode = false;
+    ghClearSel('rename-checkbox');
     document.getElementById('btn-rename-top').classList.remove('active');
     document.getElementById('rename-dropdown').classList.remove('open');
 
@@ -210,7 +212,7 @@ async function _exists(name) {
    ================================================================ */
 async function renameCurrentImage() {
     const isDetailView = document.getElementById('detail-view').style.display === 'flex';
-    const checkboxes   = document.querySelectorAll('.rename-checkbox:checked');
+    const checkboxes   = ghSelItems('rename-checkbox');
 
     if (isDetailView) {
         await renameSingleImage();
@@ -404,6 +406,7 @@ async function batchRenameImages(checkboxes) {
     }
 
     isRenameMode = false;
+    ghClearSel('rename-checkbox');
     const selectControls = document.getElementById('rename-select-controls');
     const selectionCount = document.getElementById('rename-selection-count');
     if (selectControls) selectControls.style.display = 'none';
