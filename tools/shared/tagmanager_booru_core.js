@@ -44,13 +44,30 @@
         return Promise.resolve().then(fn).catch(() => {});
     }
 
-    async function postLocalCache(file, data) {
-        const body = JSON.stringify({ file, data });
-        await queueLocalWrite(async () => {
+    /* One write in flight per file; while it runs, newer requests REPLACE the pending one (newest wins) and the body is
+       built only when the write actually starts. Before, every request built its own copy of the whole file (tens of MB)
+       and queued it: when the disk/server was slower than the requests (Auto-fill when idle, Fill wiki), the queue kept
+       piling up full copies in memory until the page ran out of memory. `data` may be a function that returns the data. */
+    const _wPending = new Map(), _wBusy = new Set(), _wWaiters = new Map();
+    function postLocalCache(file, data) {
+        _wPending.set(file, data);
+        return new Promise(resolve => {
+            if (!_wWaiters.has(file)) _wWaiters.set(file, []);
+            _wWaiters.get(file).push(resolve);
+            pumpLocalCache(file);
+        });
+    }
+    function pumpLocalCache(file) {
+        if (_wBusy.has(file) || !_wPending.has(file)) return;
+        _wBusy.add(file);
+        const src = _wPending.get(file); _wPending.delete(file);
+        const waiters = _wWaiters.get(file) || []; _wWaiters.set(file, []);
+        queueLocalWrite(async () => {
             try {
+                const body = JSON.stringify({ file, data: typeof src === 'function' ? src() : src });
                 await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
             } catch (e) { console.warn('[Booru] Could not save', file, e); }
-        });
+        }).finally(() => { _wBusy.delete(file); waiters.forEach(r => r()); pumpLocalCache(file); });
     }
 
     // Ao fechar a aba: keepalive só para corpos pequenos (limite de 64 KB do navegador).
@@ -322,7 +339,7 @@
         async function persist(unload = false) {
             if (isLocalMode()) {
                 if (unload) postLocalCacheOnUnload(cfg.localFile, pack(cache()));
-                else await postLocalCache(cfg.localFile, pack(cache()));
+                else await postLocalCache(cfg.localFile, () => pack(cache()));
             } else if (typeof window.saveSetting === 'function') {
                 await window.saveSetting(cfg.settingKey, pack(cache()));
             }

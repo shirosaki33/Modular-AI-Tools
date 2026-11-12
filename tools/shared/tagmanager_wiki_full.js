@@ -60,22 +60,32 @@
         return loadPromise;
     }
 
+    /* Only ONE write in flight; while it runs, further requests just set `again` and the file is serialized again
+       when it ends. The body (the whole file, can be 100 MB) is built when the write starts — never queued as a copy:
+       the old code queued one full copy per request and ran out of memory when the disk was slower than the requests. */
+    let inFlight = false, again = false;
     function write(unload) {
         if (!loadOk) return;   // the file could not be read: writing now could erase what is saved
-        let body;
-        try { body = JSON.stringify({ file: FILE, data }); }
-        catch (e) { console.warn('[WikiFull] Could not serialize', FILE, e); return; }   // e.g. string too long: keep running, do not crash the page
-        const send = async () => {
-            try {
-                await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-            } catch (e) { console.warn('[WikiFull] Could not save', FILE, e); }
+        const serialize = () => {
+            try { return JSON.stringify({ file: FILE, data }); }
+            catch (e) { console.warn('[WikiFull] Could not serialize', FILE, e); return null; }   // e.g. string too long: keep running
         };
         if (unload) {
-            try { fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: body.length < 60 * 1024 }); } catch (e) {}
+            const body = serialize();
+            if (body) { try { fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: body.length < 60 * 1024 }); } catch (e) {} }
             return;
         }
-        if (typeof window._queueLocalCacheWrite === 'function') window._queueLocalCacheWrite(send);
-        else send();
+        if (inFlight) { again = true; return; }
+        inFlight = true;
+        const send = async () => {
+            try {
+                const body = serialize();
+                if (body) await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+            } catch (e) { console.warn('[WikiFull] Could not save', FILE, e); }
+        };
+        const done = () => { inFlight = false; if (again) { again = false; write(false); } };
+        const q = (typeof window._queueLocalCacheWrite === 'function') ? window._queueLocalCacheWrite(send) : send();
+        Promise.resolve(q).then(done, done);
     }
 
     /* Debounced write. During a long Fill wiki a new text arrives every ~0.4 s, so a plain debounce never fired and
