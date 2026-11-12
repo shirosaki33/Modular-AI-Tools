@@ -189,6 +189,60 @@
         const put = (key, patch) => { cache()[key] = Object.assign({}, cache()[key] || {}, patch); bump(); return cache()[key]; };
         const log = (...a) => console.log(`[${cfg.label}]`, ...a);
 
+        /* ---------- COOLDOWN / STANDBY (rate limit guard) ----------
+           When the API refuses a request (HTTP 429 / 403 / 502 / 503 / 504 / 52x, a network error, or the status gate in
+           booru_status.js blocking the call) a long run (Fill wiki, wiki scan, recursive Fill wiki) does NOT keep asking
+           and does NOT skip the tag: it goes on STANDBY, the counter freezes, it waits 1 min (2nd refusal in a row: 1.5 min,
+           3rd and later: 2 min — or the server's Retry-After, up to 5 min), saves what it already has, re-checks the site and then
+           asks for the SAME tag again. A successful answer resets the escalation.
+           Override with window.BooruCooldown = { first: ms, step: ms, max: ms }.
+           The panel listens to the "booru-standby" event ({ id, label, active, secondsLeft, totalSeconds, hits, status }). */
+        const COOL_DEFAULT = { first: 60000, step: 30000, max: 120000, retryAfterMax: 300000, hardFailLimit: 5 };
+        const cool = () => Object.assign({}, COOL_DEFAULT, window.BooruCooldown || {});
+        let coolHits = 0;          // standbys in a row without a good answer in between
+        let hardFails = 0;         // answers in a row that were errors but NOT a refusal (HTTP 500, broken body...)
+        let limitSeen = null;      // set by the request helpers when the API refused: { status, retryAfter(ms) }
+        const isLimitStatus = s => s === 429 || s === 403 || s === 502 || s === 503 || s === 504 || (s >= 520 && s <= 530);
+        function noteOk() { coolHits = 0; hardFails = 0; }
+        function noteRefused(status, res) {
+            let ra = 0;
+            try { ra = res && res.headers ? (parseInt(res.headers.get('Retry-After'), 10) || 0) * 1000 : 0; } catch (e) {}
+            limitSeen = { status: status || 0, retryAfter: ra };
+        }
+        function noteBadAnswer(status, res) {
+            if (isLimitStatus(status)) { noteRefused(status, res); return true; }
+            if (++hardFails >= cool().hardFailLimit) { hardFails = 0; noteRefused(status, res); return true; }
+            return false;
+        }
+        const takeRefusal = () => { const r = limitSeen; limitSeen = null; return r; };
+        function emitStandby(detail) {
+            try { window.dispatchEvent(new CustomEvent('booru-standby', { detail: Object.assign({ id: cfg.id, label: cfg.label }, detail) })); } catch (e) {}
+        }
+        // Waits out the cooldown. Returns false when the run was cancelled meanwhile.
+        async function standby(hit) {
+            hit = hit || { status: 0, retryAfter: 0 };
+            const c = cool();
+            coolHits++;
+            let ms = Math.min(c.first + c.step * (coolHits - 1), c.max);
+            if (hit.retryAfter) ms = Math.min(Math.max(ms, hit.retryAfter), c.retryAfterMax);
+            const until = Date.now() + ms, totalSeconds = Math.round(ms / 1000);
+            console.log(`[${cfg.label}] API refused the request${hit.status ? ' (HTTP ' + hit.status + ')' : ''} — standby for ${totalSeconds}s, then the same tag is asked again.`);
+            emitStandby({ active: true, secondsLeft: totalSeconds, totalSeconds, hits: coolHits, status: hit.status });
+            // save what was downloaded so far before waiting (a crash or a closed tab during the wait loses nothing)
+            try { await persist(); if (window.WikiFull && window.WikiFull.flushNow) window.WikiFull.flushNow(); } catch (e) {}
+            while (Date.now() < until) {
+                if (cancelled()) break;
+                emitStandby({ active: true, secondsLeft: Math.max(0, Math.ceil((until - Date.now()) / 1000)), totalSeconds, hits: coolHits, status: hit.status });
+                await sleep(500);
+            }
+            // the request gate (booru_status.js) blocks every call while the site is not Online: check it again now
+            if (!cancelled() && window.BooruStatus && typeof window.BooruStatus.recheck === 'function') {
+                try { await window.BooruStatus.recheck(cfg.id); } catch (e) {}
+            }
+            emitStandby({ active: false, secondsLeft: 0, totalSeconds, hits: coolHits, status: hit.status });
+            return !cancelled();
+        }
+
         let queue = Promise.resolve();
         let queued = 0;     // batches waiting or running (the idle auto-fill only works when this is 0)
         function queueBatch(fn) {
@@ -302,11 +356,13 @@
             const wanted = toApi(tagName);
             try {
                 const res = await fetch(`https://${host()}/tags.json?search[name]=${encodeURIComponent(wanted)}&limit=1`);
-                if (!res.ok) return { ok: false, status: res.status };
+                if (!res.ok) { noteBadAnswer(res.status, res); return { ok: false, status: res.status }; }
                 const arr = tagsArray(await res.json());
                 const row = arr.find(r => String(r.name || '').toLowerCase() === wanted) || null;
+                noteOk();
                 return { ok: true, row };
             } catch (e) {
+                noteRefused(0);
                 return { ok: false };
             }
         }
@@ -318,12 +374,15 @@
                 const res = await fetch(url);
                 if (!res.ok) {
                     console.warn(`[${cfg.label} Alias] HTTP error`, res.status, res.statusText, 'for', url);
+                    noteBadAnswer(res.status, res);
                     return { ok: false };
                 }
                 const data = await res.json();
                 const arr = Array.isArray(data) ? data : [];
+                noteOk();
                 return { ok: true, aliasTo: (arr[0] && arr[0].consequent_name) ? arr[0].consequent_name.replace(/_/g, ' ') : null };
             } catch (e) {
+                noteRefused(0);
                 return { ok: false };
             }
         }
@@ -502,12 +561,14 @@
         async function fetchWiki(wikiName) {
             try {
                 const res = await fetch(`https://${host()}/wiki_pages/${encodeURIComponent(wikiName)}.json`);
-                if (res.status === 404) return { ok: true, hasWikiInfo: false, description: '' };
-                if (!res.ok) return { ok: false };
+                if (res.status === 404) { noteOk(); return { ok: true, hasWikiInfo: false, description: '' }; }
+                if (!res.ok) { noteBadAnswer(res.status, res); return { ok: false, status: res.status }; }
                 const data = await res.json();
+                noteOk();
                 if (data && data.body && data.body.trim()) return { ok: true, hasWikiInfo: true, description: cleanWiki(data.body), full: String(data.body).trim() };
                 return { ok: true, hasWikiInfo: false, description: '' };
             } catch (e) {
+                noteRefused(0);   // network error, status gate closed, or a body that is not JSON (error page)
                 return { ok: false };
             }
         }
@@ -528,20 +589,36 @@
                 });
                 if (toFetch.length === 0) return { fetched: 0, found: 0 };
 
-                let processed = 0, found = 0;
+                let processed = 0, found = 0, sincePersist = 0, lastPersist = Date.now();
                 for (const tag of toFetch) {
                     if (cancelled()) break;
-                    const key = tag.toLowerCase();
-                    const wikiName = (cache()[key] && cache()[key].wikiName) || toApi(tag);
-                    const w = await fetchWiki(wikiName);
-                    // Só grava wikiChecked quando a API respondeu de verdade (OK ou 404).
-                    if (w.ok) applyWiki(key, w, now);
-                    if (w.hasWikiInfo) found++;
-                    processed++;
-
-                    if (onEachTag) onEachTag(key, !!w.hasWikiInfo);
-                    if (onProgress) onProgress(processed, toFetch.length, found);
-                    if (processed % 8 === 0) await persist();   // checkpoint de segurança
+                    try {
+                        const key = tag.toLowerCase();
+                        const wikiName = (cache()[key] && cache()[key].wikiName) || toApi(tag);
+                        // Ask again for the SAME tag until the API answers (cooldown between refusals, see standby()).
+                        let w;
+                        for (;;) {
+                            limitSeen = null;
+                            w = await fetchWiki(wikiName);
+                            if (w.ok || !limitSeen) break;
+                            if (!(await standby(takeRefusal()))) break;
+                        }
+                        if (cancelled() && !w.ok) break;
+                        // Só grava wikiChecked quando a API respondeu de verdade (OK ou 404).
+                        if (w.ok) { applyWiki(key, w, Date.now()); sincePersist++; }
+                        if (w.hasWikiInfo) found++;
+                        processed++;
+                        if (onEachTag) onEachTag(key, !!w.hasWikiInfo);
+                        if (onProgress) onProgress(processed, toFetch.length, found);
+                    } catch (e) {
+                        console.warn(`[${cfg.label}] Fill wiki: skipped "${tag}" after an error`, e);   // one bad tag never ends the whole run
+                        processed++;
+                        if (onProgress) onProgress(processed, toFetch.length, found);
+                    }
+                    // checkpoint: only when something changed, and not on every few tags (the whole cache file is rewritten each time)
+                    if (sincePersist >= 150 || (sincePersist > 0 && Date.now() - lastPersist > 90000)) {
+                        await persist(); sincePersist = 0; lastPersist = Date.now();
+                    }
 
                     await sleep(D.wiki);
                 }
@@ -597,7 +674,12 @@
                     if (seed) {
                         const needs = !isUnknown(k) && (!c || !c.wikiChecked || (storeOn() && c.hasWikiInfo && textMissing(k)) || (now - (c.wikiTs || 0)) > TTL.wiki);
                         if (needs) {
+                            limitSeen = null;
                             const w = await fetchWiki((c && c.wikiName) || toApi(k));
+                            if (!w.ok && limitSeen) {            // refused: standby, then the same tag again (not counted yet)
+                                if (!(await standby(takeRefusal()))) break;
+                                q.unshift({ k, d, seed }); continue;
+                            }
                             requested = true;
                             if (w.ok) applyWiki(k, w, now);
                             body = w.full || null;
@@ -607,7 +689,12 @@
                     } else if (c && c.wikiChecked && !(storeOn() && c.hasWikiInfo && textMissing(k))) {
                         body = fullOf(k);   // already saved: nothing to download, just follow its links
                     } else if (added < maxNew) {
+                        limitSeen = null;
                         await lookupSingleTag(k);
+                        if (limitSeen) {                          // refused somewhere inside the lookup: standby, then the same tag again
+                            if (!(await standby(takeRefusal()))) break;
+                            q.unshift({ k, d, seed }); continue;
+                        }
                         requested = true;
                         if (isUnknown(k)) unmarkUnknown(k);   // a wiki link to something that is not a tag: do not flag it as an unknown tag
                         else if (cache()[k]) added++;
@@ -621,7 +708,7 @@
                     if (opts.onProgress) opts.onProgress(done, done + q.length, added);
                     if (requested) {
                         requests++;
-                        if (requests % 8 === 0) await persist();
+                        if (requests % 150 === 0) await persist();
                         await sleep(D.wiki);
                     }
                 }

@@ -1371,7 +1371,7 @@
     /* ---------- CONTADOR NO BOTÃO DO TOPBAR ----------
        While a scan / Fill wiki runs, the 🏷️ Tag Interrogator button shows "done/total"
        (so it is visible with the panel closed) and goes back to its label when it ends. */
-    let _tbLast = 0, _tbWatch = null;
+    let _tbLast = 0, _tbWatch = null, _tbCur = null;
     // Shows "<site icon> done/total" of the site being worked on (each site has its own numbers; they are never added up).
     const TB_ICONS = { danbooru: '🅱️', e621: '🦊' }, TB_NAMES = { danbooru: 'Danbooru', e621: 'e621' };
     function tbSetCounter(done, total, site) {
@@ -1380,14 +1380,35 @@
         if (b.dataset.label === undefined) { b.dataset.label = b.textContent; b.dataset.title = b.title; b.style.minWidth = b.offsetWidth + 'px'; }
         b.textContent = `${TB_ICONS[site] || ''} ${done}/${total}`.trim();
         b.title = `Tag Interrogator is working on ${TB_NAMES[site] || 'tags'}: ${done} of ${total}. Click to open the panel.`;
+        _tbCur = { done, total, site };
         _tbLast = Date.now();
         if (!_tbWatch) _tbWatch = setInterval(() => {
             // safety net: if a scan ended without clearing (error), restore the button
             if (!window._dbInfoScanRunning && Date.now() - _tbLast > 5000) tbClearCounter();
         }, 1500);
     }
+    /* ---------- STANDBY (API cooldown) ----------
+       When Danbooru / e621 refuse a request (429, 403, 5xx, network error) the run pauses (see standby() in
+       tagmanager_booru_core.js), the done/total counter freezes and shows the time left; then the same tag is asked again. */
+    window.addEventListener('booru-standby', (ev) => {
+        const d = ev && ev.detail;
+        if (!d || !d.active) return;
+        const left = Math.max(0, d.secondsLeft | 0);
+        const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+        const b = document.getElementById('btn-open-tag-interrogator');
+        if (b && b.dataset.label !== undefined && _tbCur) {
+            b.textContent = `⏸ ${TB_ICONS[_tbCur.site] || ''} ${_tbCur.done}/${_tbCur.total} · ${clock}`.replace(/\s+/g, ' ').trim();
+            b.title = `Standby: ${d.label} refused the request${d.status ? ' (HTTP ' + d.status + ')' : ''}. Resuming in ${clock}.`;
+            _tbLast = Date.now();
+        }
+        const progress = document.getElementById('dbpScanProgress');
+        if (progress && progress.style.display !== 'none' && _tbCur) {
+            progress.textContent = `⏸ Standby — ${d.label} refused the request${d.status ? ' (HTTP ' + d.status + ')' : ''}. Resuming in ${clock} (${_tbCur.done} / ${_tbCur.total} kept, nothing is skipped).`;
+        }
+    });
+
     function tbClearCounter() {
-        clearInterval(_tbWatch); _tbWatch = null;
+        clearInterval(_tbWatch); _tbWatch = null; _tbCur = null;
         const b = document.getElementById('btn-open-tag-interrogator');
         if (!b || b.dataset.label === undefined) return;
         b.textContent = b.dataset.label; b.title = b.dataset.title || '';
@@ -1452,7 +1473,7 @@
         const minutes = Math.max(1, Math.round(total * 0.4 / 60));
         if (recursive) {
             if (!confirm(`Recursive Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''}: starts from ${total} saved tag(s), follows the links inside their wikis up to ${depth} level(s) and downloads the linked tags that are not saved yet (up to 1000 new tags per site).\nThe Tag Interrogator button shows the progress.\n\nContinue?`)) return;
-        } else if (total > 150 && !confirm(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} will download the full wiki of ${total} saved tag(s) (about ${minutes} min).\nYou can close this panel — the Tag Interrogator button shows the progress.\n\nContinue?`)) return;
+        } else if (total > 150 && !confirm(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} will download the full wiki of ${total} saved tag(s) (about ${minutes} min, plus a 1–2 min standby each time the API refuses a request).\nYou can close this panel — the Tag Interrogator button shows the progress. Run it again later to continue where it stopped.\n\nContinue?`)) return;
 
         window._dbInfoScanRunning = true;
         window._dbBackgroundScanCancelled = false;

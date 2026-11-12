@@ -62,7 +62,9 @@
 
     function write(unload) {
         if (!loadOk) return;   // the file could not be read: writing now could erase what is saved
-        const body = JSON.stringify({ file: FILE, data });
+        let body;
+        try { body = JSON.stringify({ file: FILE, data }); }
+        catch (e) { console.warn('[WikiFull] Could not serialize', FILE, e); return; }   // e.g. string too long: keep running, do not crash the page
         const send = async () => {
             try {
                 await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
@@ -76,14 +78,21 @@
         else send();
     }
 
+    /* Debounced write. During a long Fill wiki a new text arrives every ~0.4 s, so a plain debounce never fired and
+       NOTHING reached the disk until the very end (a crash lost the whole run). MAX_WAIT forces a write at least every
+       2 minutes while data keeps arriving; flushNow() writes right away (used before a cooldown/standby). */
+    const MAX_WAIT = 120000;
+    let dirtySince = 0;
     function schedule() {
         dirty = true;
+        if (!dirtySince) dirtySince = Date.now();
         clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => { saveTimer = null; dirty = false; write(false); }, 1500);
+        const wait = Math.max(0, Math.min(1500, MAX_WAIT - (Date.now() - dirtySince)));
+        saveTimer = setTimeout(() => { saveTimer = null; dirty = false; dirtySince = 0; write(false); }, wait);
     }
     function flush(unload) {
         if (!dirty) return;
-        clearTimeout(saveTimer); saveTimer = null; dirty = false;
+        clearTimeout(saveTimer); saveTimer = null; dirty = false; dirtySince = 0;
         write(unload);
     }
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(false); });
@@ -97,6 +106,7 @@
 
     window.WikiFull = {
         load,
+        flushNow() { flush(false); },
         ready() { return loadOk; },
         /* Wiki save mode (window.danbooruWikiMode): 'off' | 'short' (800 chars, default) | 'full' */
         mode() { return ['off', 'short', 'full'].includes(window.danbooruWikiMode) ? window.danbooruWikiMode : 'short'; },
