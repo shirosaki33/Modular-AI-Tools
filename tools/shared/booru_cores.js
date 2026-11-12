@@ -35,7 +35,7 @@ if (typeof window.createBooruClient !== 'function') {
     window.isTagUnknownDb           = key => DB.isUnknown(key);
     window.dbGetCachedTag           = tag => DB.getCachedTag(tag);
     window.dbResolveAlias           = tag => DB.resolveAlias(tag);
-    window.dbFetchCountsBatch       = (tags, force = false) => DB.fetchCountsBatch(tags, force);
+    window.dbFetchCountsBatch       = (tags, force = false, onProgress) => DB.fetchCountsBatch(tags, force, onProgress);
     window.dbFetchWikiBatch         = (tags, force = false, onEachTag, onProgress) => DB.fetchWikiBatch(tags, force, onEachTag, onProgress);
     window.dbLookupSingleTag        = raw => DB.lookupSingleTag(raw);
     window.dbSaveWikiFull           = (tag, body) => DB.saveWikiFull(tag, body);
@@ -103,7 +103,7 @@ if (typeof window.createBooruClient !== 'function') {
     window.isTagUnknownE621         = key => E6.isUnknown(key);
     window.e621GetCachedTag         = tag => E6.getCachedTag(tag);
     window.e621ResolveAlias         = tag => E6.resolveAlias(tag);
-    window.e621FetchCountsBatch     = (tags, force = false) => E6.fetchCountsBatch(tags, force);
+    window.e621FetchCountsBatch     = (tags, force = false, onProgress) => E6.fetchCountsBatch(tags, force, onProgress);
     window.e621FetchWikiBatch       = (tags, force = false, onEachTag, onProgress) => E6.fetchWikiBatch(tags, force, onEachTag, onProgress);
     window.e621LookupSingleTag      = raw => E6.lookupSingleTag(raw);
     window.e621SaveWikiFull         = (tag, body) => E6.saveWikiFull(tag, body);

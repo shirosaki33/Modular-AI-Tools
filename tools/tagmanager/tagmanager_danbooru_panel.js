@@ -515,6 +515,7 @@
                 </div>
 
                 <div id="dbpScanProgress" style="font-size:11px; color:#aaa; margin-top:8px; flex-shrink:0; display:none;"></div>
+                <button class="dbp-btn-recheck" id="dbpStopBtn" style="display:none; margin-top:8px; flex-shrink:0; border-color:#c0392b; color:#ff8a80;" title="Stops every download in progress (scan, Fill wiki, Recheck unknown) right away — including a standby wait — and turns off 🤖 Auto-fill when idle so it does not start again by itself. What was already downloaded stays saved; run it again later to continue.">⏹ Stop downloading</button>
                 <details class="dbp-settings" id="dbpSettings">
                     <summary>⚙️ Settings &amp; tools</summary>
                     <div class="dbp-settings-body">
@@ -597,7 +598,7 @@
                     <button class="dbp-btn-scan-force" id="dbpFillWikiE6Btn" style="flex:1; white-space:nowrap;" title="Same as 📚 Fill wiki, but only for the tags saved in the e621 cache file (Danbooru is left alone). Needs Enable e621 and 💾 Wiki text = Short or Full (localhost).">🦊 Fill wiki (e621)</button>
                 </div>
                 <div style="display:flex; gap:10px; align-items:center; margin-top:8px; font-size:12px; color:#bbb;">
-                    <label id="dbpFillRecLbl" style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Applies to all three Fill wiki buttons. Wiki texts link to other tags ([[long hair]]). In recursive mode Fill wiki also reads the links inside the wikis already saved (needs 💾 Wiki text = Full to read them from the file) and inside every wiki it downloads: a linked tag that is already saved is not downloaded again, a linked tag that is missing is downloaded (count, category, wiki and text) and its own links are followed in turn. Up to 1000 new tags per site per run."><input type="checkbox" id="dbpFillRecursive"> 🔁 Recursive (follow links in wikis)</label>
+                    <label id="dbpFillRecLbl" style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Applies to all three Fill wiki buttons. Wiki texts link to other tags ([[long hair]]). In recursive mode Fill wiki also reads the links inside the wikis already saved (needs 💾 Wiki text = Full to read them from the file) and inside every wiki it downloads: a linked tag that is already saved is not downloaded again, a linked tag that is missing is downloaded (count, category, wiki and text) and its own links are followed in turn. No limit: it keeps going until every link is resolved (use ⏹ Stop downloading to cancel)."><input type="checkbox" id="dbpFillRecursive"> 🔁 Recursive (follow links in wikis)</label>
                     <label style="display:flex; gap:5px; align-items:center;" title="How many link levels to follow: 1 = only the tags linked by the tags being filled; 2 = also the tags linked by those; and so on.">Depth
                         <select id="dbpFillDepth" style="background:#1a1a1a; color:#ddd; border:1px solid #333; border-radius:4px; padding:2px 4px;"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select>
                     </label>
@@ -674,6 +675,7 @@
 
         // Re-verifies the tags saved as "unknown".
         document.getElementById('dbpRecheckBtn').onclick = () => window.recheckUnknownTags();
+        document.getElementById('dbpStopBtn').onclick = () => window.stopAllWikiDownloads();
 
         // Options (state + handlers)
         bindModalOptions();
@@ -1353,8 +1355,27 @@
             const b = document.getElementById(id);
             if (b) b.disabled = disabled;
         });
+        const stop = document.getElementById('dbpStopBtn');
+        if (stop) { stop.style.display = disabled ? 'block' : 'none'; if (disabled) { stop.disabled = false; stop.textContent = '⏹ Stop downloading'; } }
         if (!disabled) updateFillWikiState();
     }
+
+    /* ⏹ Stop downloading: cancels scan / Fill wiki / Recheck (also during a standby wait) and turns off Auto-fill when idle
+       (otherwise it would start the downloads again 15 s later). Nothing already downloaded is lost. */
+    window.stopAllWikiDownloads = function () {
+        window._dbBackgroundScanCancelled = true;
+        window._e621BackgroundScanCancelled = true;
+        let idleOff = false;
+        try {
+            if (window.IdleFill && window.IdleFill.enabled()) {
+                window.IdleFill.setEnabled(false); idleOff = true;
+                const cb = document.getElementById('dbpOptIdleFill'); if (cb) cb.checked = false;
+            }
+        } catch (e) {}
+        const stop = document.getElementById('dbpStopBtn');
+        if (stop) { stop.disabled = true; stop.textContent = '⏹ Stopping…'; }
+        if (window.showAlert) window.showAlert('Stopping downloads — what was already downloaded stays saved.' + (idleOff ? ' 🤖 Auto-fill when idle was turned off (turn it on again in Settings & tools).' : ''), 'info');
+    };
 
     // 📚 Fill wiki is only usable on localhost with Wiki text = Short or Full.
     function updateFillWikiState() {
@@ -1472,7 +1493,7 @@
         }
         const minutes = Math.max(1, Math.round(total * 0.4 / 60));
         if (recursive) {
-            if (!confirm(`Recursive Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''}: starts from ${total} saved tag(s), follows the links inside their wikis up to ${depth} level(s) and downloads the linked tags that are not saved yet (up to 1000 new tags per site).\nThe Tag Interrogator button shows the progress.\n\nContinue?`)) return;
+            if (!confirm(`Recursive Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''}: starts from ${total} saved tag(s), follows the links inside their wikis up to ${depth} level(s) and downloads the linked tags that are not saved yet (no limit — it runs until everything is resolved; ⏹ Stop downloading cancels).\nThe Tag Interrogator button shows the progress.\n\nContinue?`)) return;
         } else if (total > 150 && !confirm(`Fill wiki${siteLabel ? ' (' + siteLabel + ')' : ''} will download the full wiki of ${total} saved tag(s) (about ${minutes} min, plus a 1–2 min standby each time the API refuses a request).\nYou can close this panel — the Tag Interrogator button shows the progress. Run it again later to continue where it stopped.\n\nContinue?`)) return;
 
         window._dbInfoScanRunning = true;
@@ -1499,8 +1520,8 @@
 
         try {
             if (recursive) {
-                if (dbSeeds.length && window.dbWikiRecursive) await window.dbWikiRecursive(dbSeeds, { depth, maxNew: 1000, onProgress: (d, t, a) => { added.danbooru = a; show(d, 'danbooru', t); } });
-                if (e6Seeds.length && window.e621WikiRecursive) await window.e621WikiRecursive(e6Seeds, { depth, maxNew: 1000, onProgress: (d, t, a) => { added.e621 = a; show(d, 'e621', t); } });
+                if (dbSeeds.length && window.dbWikiRecursive) await window.dbWikiRecursive(dbSeeds, { depth, onProgress: (d, t, a) => { added.danbooru = a; show(d, 'danbooru', t); } });
+                if (e6Seeds.length && window.e621WikiRecursive) await window.e621WikiRecursive(e6Seeds, { depth, onProgress: (d, t, a) => { added.e621 = a; show(d, 'e621', t); } });
             } else {
                 if (dbTags.length) await window.dbFetchWikiBatch(dbTags, false, () => scheduleIconRefresh(), (d) => show(d, 'danbooru'));
                 if (e6Tags.length && typeof window.e621FetchWikiBatch === 'function') {
@@ -1509,6 +1530,8 @@
             }
         } finally {
             window._dbInfoScanRunning = false;
+            window._dbBackgroundScanCancelled = false;     // a Stop must not leave the flags set (they would block the next scan)
+            window._e621BackgroundScanCancelled = false;
             tbClearCounter();
             if (progress) progress.style.display = 'none';
             setScanButtonsDisabled(false);
@@ -1591,6 +1614,8 @@
         }
 
         window._dbInfoScanRunning = false;
+        window._dbBackgroundScanCancelled = false;
+        window._e621BackgroundScanCancelled = false;
         tbClearCounter();
         setScanButtonsDisabled(false);
         if (progress) progress.style.display = 'none';
@@ -1682,7 +1707,7 @@
                 window._danbooruCacheVersion = (window._danbooruCacheVersion || 0) + 1;
                 if (typeof window.saveUnknownTags === 'function') await window.saveUnknownTags();
 
-                await window.dbFetchCountsBatch(dbKeys, true);
+                await window.dbFetchCountsBatch(dbKeys, true, (d, t) => { tbSetCounter(d, t, 'danbooru'); say(`Rechecking Danbooru: ${d} / ${t}`); });
 
                 const restored = [];
                 dbKeys.forEach(k => {
@@ -1708,7 +1733,7 @@
                 window._e621CacheVersion = (window._e621CacheVersion || 0) + 1;
                 if (typeof window.saveUnknownTags === 'function') await window.saveUnknownTags();
 
-                await window.e621FetchCountsBatch(e6Keys, true);
+                await window.e621FetchCountsBatch(e6Keys, true, (d, t) => { tbSetCounter(d, t, 'e621'); say(`Rechecking e621: ${d} / ${t}`); });
 
                 const restored = [];
                 e6Keys.forEach(k => {
@@ -1727,6 +1752,8 @@
         }
 
         window._dbInfoScanRunning = false;
+        window._dbBackgroundScanCancelled = false;
+        window._e621BackgroundScanCancelled = false;
         tbClearCounter();
         setScanButtonsDisabled(false);
         if (progress) progress.style.display = 'none';
@@ -1787,6 +1814,8 @@
         }
 
         window._dbInfoScanRunning = false;
+        window._dbBackgroundScanCancelled = false;
+        window._e621BackgroundScanCancelled = false;
         tbClearCounter();
         setScanButtonsDisabled(false);
         if (progress) progress.style.display = 'none';

@@ -447,9 +447,12 @@
 
         /* Resolve as tags com 0 posts: alias -> conta da tag destino;
            sem alias -> checagem exata antes de marcar como unknown. */
-        async function resolveZeroCountTags(zeroTags, force) {
+        async function resolveZeroCountTags(zeroTags, force, onProgress, base, grand) {
+            let idx = 0;
             for (const tag of zeroTags) {
-                if (!enabled()) break;
+                if (cancelled()) break;
+                if (onProgress) onProgress(Math.min(grand, base + idx), grand);
+                idx++;
                 const key = tag.toLowerCase();
                 const already = cache()[key];
                 if (already && already.aliasChecked && !force) continue;
@@ -478,7 +481,7 @@
         /* ---------- LOTE: contagem + categoria ---------- */
         // Site offline / having issues: nothing is scanned or requested (the status is checked first, see booru_status.js).
         async function siteUp() { return !window.BooruStatus || await window.BooruStatus.ensure(cfg.id); }
-        function fetchCountsBatch(tags, force = false) {
+        function fetchCountsBatch(tags, force = false, onProgress) {
             return queueBatch(async () => {
                 if (!(await siteUp())) return { fetched: 0, offline: true };
                 const now = Date.now();
@@ -499,7 +502,8 @@
 
                 if (cfg.batchCounts) {
                     for (let i = 0; i < toFetch.length; i += 50) {
-                        if (!enabled()) break;
+                        if (cancelled()) break;
+                        if (onProgress) onProgress(i, toFetch.length);
                         const chunk = toFetch.slice(i, i + 50);
                         const query = chunk.map(t => encodeURIComponent(toApi(t))).join(',');
                         try {
@@ -525,8 +529,10 @@
                         await sleep(D.batch);
                     }
                 } else {
+                    let n = 0;
                     for (const tag of toFetch) {
-                        if (!enabled()) break;
+                        if (cancelled()) break;
+                        if (onProgress) onProgress(n++, toFetch.length);
                         const info = await fetchSingleTagInfo(tag, force, true);
                         await sleep(D.single);
                         if (info === null) continue; // erro: tenta no próximo scan
@@ -536,7 +542,9 @@
                     }
                 }
 
-                await resolveZeroCountTags(zero, force);
+                // progress continues over the tags with 0 posts (alias / exact-name checks), which is most of the time for rechecks
+                await resolveZeroCountTags(zero, force, onProgress, toFetch.length - zero.length, toFetch.length);
+                if (onProgress && !cancelled()) onProgress(toFetch.length, toFetch.length);
                 schedulePersist();
                 return { fetched };
             });
@@ -670,7 +678,7 @@
         function wikiRecursive(seeds, opts) {
             opts = opts || {};
             return queueBatch(async () => {
-                const maxDepth = Math.max(0, opts.depth == null ? 3 : opts.depth), maxNew = opts.maxNew || 1000;
+                const maxDepth = Math.max(0, opts.depth == null ? 3 : opts.depth), maxNew = opts.maxNew || Infinity;   // no limit by default: it runs until every link is resolved (the Stop button cancels)
                 const visited = new Set(), q = [];
                 (seeds || []).forEach(t => {
                     const k = toKey(t);
