@@ -158,6 +158,7 @@
         .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
         #model-select, #hardware-select, #vlm-model-select, #ollama-model-select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+        #vlm-task-row { display: contents; }   /* Task select sits on the Model row; show()/hide keeps the row layout */
         .progress-box { width: 100%; background: #111; border: 1px solid #333; border-radius: 6px; overflow: hidden; display: none; height: 12px; margin-top: 15px;}
         .progress-fill { width: 0%; height: 100%; background: #00ff99; transition: 0.2s; }
         .progress-text { font-size: 11px; text-align: center; margin-top: 5px; color: #aaa; display: none; font-weight: bold;}
@@ -528,8 +529,12 @@
                 </div>
 
                 <label class="meta-label">Model</label>
-                <div class="vlm-row vlm-model-row">
+                <div class="vlm-row vlm-model-row" style="flex-wrap:wrap;">
                     <select id="vlm-model-select"></select>
+                    <span id="vlm-task-row">
+                        <span class="vlm-sub">Task</span>
+                        <select id="vlm-task" style="flex:0 0 230px; width:230px;"></select>
+                    </span>
                     <button type="button" class="vlm-btn" id="vlm-hf-toggle" style="display:none;" title="Hugging Face token (faster, authenticated downloads)">🔑</button>
                     <button type="button" class="vlm-btn vlm-btn-warn" id="vlm-delete" title="Delete the downloaded files of the selected model">🧹 Delete downloaded model</button>
                 </div>
@@ -538,11 +543,6 @@
                     <span class="vlm-sub" id="vlm-storage-label">Storage</span>
                     <select id="vlm-storage" style="flex:1;"></select>
                     <button type="button" class="vlm-btn" id="vlm-pick-folder" style="display:none;" title="Add a folder with models (WebGPU: org/model/onnx/...; PyTorch: any folder with models)">📁 Set model folder</button>
-                </div>
-
-                <div class="vlm-row" id="vlm-task-row">
-                    <span class="vlm-sub">Task</span>
-                    <select id="vlm-task" style="flex:1;"></select>
                 </div>
 
                 <div id="vlm-prompt-row" style="display:none; margin-bottom: 15px;">

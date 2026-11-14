@@ -24,6 +24,7 @@
                                           which extra controls are shown
                                           (pickFolder / canDelete may be fn(ui)/fn(ui,id))
    storageOptions [[value,label],...]     optional, replaces the Storage choices
+   needsText(modelId, task) -> bool   optional, the task also needs a text typed by the user
    taskKind(modelId)  'florence' | 'prompt' | 'tagger'
                                           task list / free prompt / tagger controls
    tasksFor(modelId) -> [[value,label]]   optional, task list that depends on the model
@@ -124,6 +125,7 @@
             device: $('fDevice').value,
             task: $('fTask').value,
             prompt: $('fPrompt').value.trim() || DEFAULT_PROMPT,
+            promptRaw: $('fPrompt').value.trim(),
             maxTokens: clamp($('fMaxTokens').value, 16, 1024, 256),
             beams: clamp($('fBeams').value, 1, 8, 3),
             storage: $('fStorage').value,
@@ -153,7 +155,11 @@
         syncTasks();
         show('fTask', kind === 'florence');
         show('fTaskLabel', kind === 'florence');
-        show('fPromptRow', kind === 'prompt');
+        const needsText = kind === 'florence' && !!engine.needsText && !!engine.needsText(model, $('fTask').value);
+        show('fPromptRow', kind === 'prompt' || needsText);
+        const pl = $('fPromptRow') && $('fPromptRow').querySelector('.lang-label');
+        if (pl) pl.textContent = needsText ? 'Text' : 'Prompt';
+        if ($('fPrompt')) $('fPrompt').placeholder = needsText ? 'Phrase to locate / what to segment / question about the document' : 'Describe this image in detail.';
         show('fTaggerRow', kind === 'tagger');
         show('fTokensRow', kind !== 'tagger');
         show('fBeams', !!engine.features.beams && kind !== 'tagger');
@@ -332,7 +338,7 @@
         $('fMode').onchange = () => run2(() => applyMode($('fMode').value));
         $('fModel').onchange = () => { writePref(key('fModel'), $('fModel').value); applyVisibility(); refresh(); };
         $('fDevice').onchange = () => { writePref(key('fDevice'), $('fDevice').value); refresh(); };
-        $('fTask').onchange = () => writePref(key('fTask'), $('fTask').value);
+        $('fTask').onchange = () => { writePref(key('fTask'), $('fTask').value); applyVisibility(); };
         $('fStorage').onchange = async () => {
             writePref(key('fStorage'), $('fStorage').value);
             applyVisibility();

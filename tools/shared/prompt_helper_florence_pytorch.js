@@ -45,13 +45,22 @@
         ['cuda', '🚀 GPU (CUDA)'],
         ['cpu', '🐌 CPU']
     ];
+    // Florence-2 tasks (same set as ComfyUI-Florence2; 'region_caption' there is <OD> here).
     const TASKS = [
+        ['OD', 'Region caption (object labels)'],
+        ['DENSE_REGION_CAPTION', 'Dense region caption'],
+        ['REGION_PROPOSAL', 'Region proposal (boxes)'],
         ['CAPTION', 'Caption (short)'],
         ['DETAILED_CAPTION', 'Detailed caption'],
         ['MORE_DETAILED_CAPTION', 'More detailed caption'],
+        ['CAPTION_TO_PHRASE_GROUNDING', 'Caption to phrase grounding (needs text)'],
+        ['REFERRING_EXPRESSION_SEGMENTATION', 'Referring expression segmentation (needs text)'],
         ['OCR', 'OCR (read text)'],
-        ['OD', 'Object labels (tag-like list)']
+        ['OCR_WITH_REGION', 'OCR with region'],
+        ['DOCVQA', 'DocVQA (question about a document, needs text)']
     ];
+    // Tasks that also need a text typed by the user (phrase to locate / question).
+    const TASKS_NEED_TEXT = ['CAPTION_TO_PHRASE_GROUNDING', 'REFERRING_EXPRESSION_SEGMENTATION', 'DOCVQA'];
     // MiaoshouAI/Florence-2-*-PromptGen-v2.0
     const TASKS_PROMPTGEN = [
         ['GENERATE_TAGS', 'Generate tags'],
@@ -202,6 +211,7 @@
         const v = ui.values();
         const qs = new URLSearchParams({ task: v.task, max_tokens: String(v.maxTokens), beams: String(v.beams) });
         if (familyOf(v.model) === 'vlm') { qs.set('prompt', v.prompt); if (v.extra) qs.set('extra', v.extra); }
+        else if (TASKS_NEED_TEXT.includes(v.task)) qs.set('text', v.promptRaw || '');
         if (isTagger(v.model)) {
             qs.set('threshold', String(v.threshold));
             qs.set('exclude', v.exclude);
@@ -266,6 +276,7 @@
         },
         taskKind: id => (isTagger(id) ? 'tagger' : (familyOf(id) === 'vlm' ? 'prompt' : 'florence')),
         tasksFor: id => (familyOf(id) === 'promptgen' ? TASKS_PROMPTGEN : TASKS),
+        needsText: (id, task) => familyOf(id) === 'florence' && TASKS_NEED_TEXT.includes(task),
         listModels, refresh, ensureLoaded, generate,
         cancel, unload, pickFolder,
         deleteTarget: () => 'models/ folder',

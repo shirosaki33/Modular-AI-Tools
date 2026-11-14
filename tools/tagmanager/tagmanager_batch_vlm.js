@@ -120,6 +120,7 @@
             // other engines get it appended to their prompt.
             prompt: ($('batch-vlm-prompt').value.trim() || (curMode === 'pytorch' ? '' : DEFAULT_PROMPT))
                 + (curMode !== 'pytorch' && extraInfo().enabled ? ' ' + extraInfo().text : ''),
+            promptRaw: $('batch-vlm-prompt').value.trim(),
             extra: curMode === 'pytorch' && extraInfo().enabled ? extraInfo().text : '',
             maxTokens: clamp($('vlm-max-tokens').value, 16, 1024, 256),
             beams: clamp($('vlm-beams').value, 1, 8, 3),
@@ -188,7 +189,11 @@
         const kind = engine.taskKind(model);
         syncTasks();
         show('vlm-task-row', kind === 'florence');
-        show('vlm-prompt-row', kind === 'prompt');
+        const needsText = kind === 'florence' && !!engine.needsText && !!engine.needsText(model, $('vlm-task').value);
+        show('vlm-prompt-row', kind === 'prompt' || needsText);
+        show('vlm-extra-box', kind === 'prompt');   // "additional details" only belongs to chat-style VLMs
+        const ta = $('batch-vlm-prompt');
+        if (ta) ta.placeholder = needsText ? 'Text for this task: phrase to locate / what to segment / question about the document' : 'Empty = default instruct';
         show('vlm-tagger-row', kind === 'tagger');
         show('vlm-tagger-extra', kind === 'tagger');
         show('vlm-tokens-row', kind !== 'tagger');
@@ -401,7 +406,7 @@
 
     function bind() {
         $('vlm-model-select').onchange = () => { writePref(key('model'), $('vlm-model-select').value); applyVisibility(); refresh(); };
-        $('vlm-task').onchange = () => writePref(key('task'), $('vlm-task').value);
+        $('vlm-task').onchange = () => { writePref(key('task'), $('vlm-task').value); applyVisibility(); };
         $('vlm-storage').onchange = async () => {
             writePref(key('storage'), $('vlm-storage').value);
             applyVisibility();
@@ -470,7 +475,7 @@
         const v = values();
         const kind = engine.taskKind(v.model);
         if (kind === 'tagger') return 'tags';
-        if (kind === 'florence' && (v.task === 'GENERATE_TAGS' || v.task === 'OD')) return 'tags';
+        if (kind === 'florence' && ['GENERATE_TAGS', 'OD', 'DENSE_REGION_CAPTION', 'CAPTION_TO_PHRASE_GROUNDING'].includes(v.task)) return 'tags';
         return 'nl';
     }
 

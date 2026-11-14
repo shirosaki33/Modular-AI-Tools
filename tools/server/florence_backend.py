@@ -33,12 +33,22 @@ import sys
 import threading
 import time
 
+# Debug aid: makes CUDA errors point at the exact failing line instead of a later, unrelated one (slightly slower).
+# Remove this line (or set FLORENCE_CUDA_FAST=1) once the generation is stable.
+if not os.environ.get('FLORENCE_CUDA_FAST'):
+    os.environ.setdefault('CUDA_LAUNCH_BLOCKING', '1')
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # project root (this file lives in tools/server/)
 MODELS_DIR = os.path.join(ROOT, 'models')
 FOLDERS_FILE = os.path.join(ROOT, 'local', 'model_folders.json')
 
 # ---------------------------------------------------------------- tasks
-TASKS_FLORENCE = ('CAPTION', 'DETAILED_CAPTION', 'MORE_DETAILED_CAPTION', 'OCR', 'OD')
+# Florence-2 task tokens. OD is "region_caption" in ComfyUI-Florence2 naming.
+TASKS_FLORENCE = ('CAPTION', 'DETAILED_CAPTION', 'MORE_DETAILED_CAPTION', 'OCR', 'OD',
+                  'DENSE_REGION_CAPTION', 'REGION_PROPOSAL', 'CAPTION_TO_PHRASE_GROUNDING',
+                  'REFERRING_EXPRESSION_SEGMENTATION', 'OCR_WITH_REGION', 'DOCVQA')
+# Tasks that also need a text from the user (phrase to find / question to answer).
+TASKS_NEED_TEXT = ('CAPTION_TO_PHRASE_GROUNDING', 'REFERRING_EXPRESSION_SEGMENTATION', 'DOCVQA')
 # MiaoshouAI/Florence-2-*-PromptGen-v2.0 (see the model card).
 TASKS_PROMPTGEN = ('GENERATE_TAGS', 'CAPTION', 'DETAILED_CAPTION', 'MORE_DETAILED_CAPTION',
                    'ANALYZE', 'MIXED_CAPTION', 'MIXED_CAPTION_PLUS')
@@ -391,9 +401,24 @@ def _model_dir(model_id):
 
 
 def _is_cached(model_id):
-    snaps = os.path.join(_model_dir(model_id), 'snapshots')
+    """True only when a snapshot really holds a loadable model: config.json + weights, no half-downloaded blobs.
+    (An interrupted download leaves a snapshot folder with only some files; the old check 'any snapshot exists'
+    skipped the download and from_pretrained then failed with "Can't load the configuration of ...".)"""
+    base = _model_dir(model_id)
+    snaps = os.path.join(base, 'snapshots')
     try:
-        return os.path.isdir(snaps) and any(os.scandir(snaps))
+        blobs = os.path.join(base, 'blobs')
+        if os.path.isdir(blobs) and any(n.endswith('.incomplete') for n in os.listdir(blobs)):
+            return False
+        for d in os.scandir(snaps):
+            if not d.is_dir():
+                continue
+            names = os.listdir(d.path)
+            has_cfg = 'config.json' in names
+            has_w = any(n.endswith(('.safetensors', '.bin')) or n.startswith('pytorch_model') for n in names)
+            if has_cfg and has_w:
+                return True
+        return False
     except OSError:
         return False
 
@@ -554,6 +579,91 @@ def _free_cuda(torch):
         pass
 
 
+def _compat_legacy_config(tf):
+    """transformers 5.x no longer defines some legacy generation attributes on every config. The remote code of
+    Florence-2 / PromptGen still reads them (AttributeError: ... no attribute 'forced_bos_token_id'), so give
+    them a class-level default (None) when the installed transformers does not define them."""
+    base = getattr(tf, 'PreTrainedConfig', None) or getattr(tf, 'PretrainedConfig', None)
+    if base is None:
+        return
+    for name in ('forced_bos_token_id', 'forced_eos_token_id'):
+        if not hasattr(base, name):
+            try:
+                setattr(base, name, None)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _compat_legacy_tokenizer(tf):
+    """transformers 5.x renamed tokenizer.additional_special_tokens -> extra_special_tokens. The Florence-2 /
+    PromptGen processor (remote code) still reads/writes the old name; map it to the new one."""
+    base = getattr(tf, 'PreTrainedTokenizerBase', None)
+    if base is None or isinstance(base.__dict__.get('additional_special_tokens'), property):
+        return
+    if 'additional_special_tokens' in getattr(base, 'SPECIAL_TOKENS_ATTRIBUTES', ()):
+        return   # transformers 4.x still has the original attribute: nothing to do
+
+    def _get(self):
+        return list(getattr(self, 'extra_special_tokens', None) or [])
+
+    def _set(self, value):
+        self.extra_special_tokens = list(value or [])
+
+    try:
+        base.additional_special_tokens = property(_get, _set)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _compat_generation_mixin(tf, model):
+    """transformers >= 4.50/5.x: PreTrainedModel no longer inherits GenerationMixin, and the Florence-2 / PromptGen
+    remote code does not either (AttributeError: ... object has no attribute 'generate'). Add the mixin to the
+    language model (and to the wrapper) at runtime."""
+    mixin = getattr(tf, 'GenerationMixin', None)
+    if mixin is None:
+        return
+    GenerationConfig = getattr(tf, 'GenerationConfig', None)
+    for obj in (getattr(model, 'language_model', None), model):
+        if obj is None or isinstance(obj, mixin):
+            continue
+        obj.__class__ = type(obj.__class__.__name__, (obj.__class__, mixin), {})
+        if getattr(obj, 'generation_config', None) is None and GenerationConfig is not None:
+            try:
+                obj.generation_config = GenerationConfig.from_model_config(obj.config)
+            except Exception:  # noqa: BLE001
+                obj.generation_config = GenerationConfig()
+
+
+def _compat_legacy_tied_weights(tf):
+    """transformers 5.x expects PreTrainedModel._tied_weights_keys to be a dict {target: source}; the remote code of
+    Florence-2 / PromptGen still declares the old list format (AttributeError: 'list' object has no attribute 'keys').
+    Convert the old list to the new mapping on the fly (every listed weight -> the shared embedding)."""
+    cls = getattr(tf, 'PreTrainedModel', None)
+    if cls is None or getattr(cls, '_florence_tied_patch', False):
+        return
+    orig = getattr(cls, 'get_expanded_tied_weights_keys', None)
+    if orig is None:
+        return
+
+    def patched(self, all_submodels=False):
+        tw = getattr(self, '_tied_weights_keys', None)
+        if all_submodels or not isinstance(tw, (list, tuple, set)):
+            return orig(self, all_submodels=all_submodels)
+        if not getattr(self.config, 'tie_word_embeddings', True):
+            return {}
+        names = {n for n, _ in self.named_parameters(remove_duplicate=False)}
+        cands = sorted((n for n in names if n.endswith('shared.weight')), key=len)
+        if not cands:
+            cands = sorted((n for n in names if n.endswith('embed_tokens.weight')), key=len)
+        if not cands:
+            return {}
+        src = cands[0]
+        return {t: src for t in tw if t in names and t != src}
+
+    cls.get_expanded_tied_weights_keys = patched
+    cls._florence_tied_patch = True
+
+
 def _build(torch, tf, spec, dtype, device='cpu'):
     src = spec['src']
     # transformers >= 4.56 renamed torch_dtype -> dtype (the old name only prints a deprecation warning)
@@ -599,8 +709,12 @@ def _build(torch, tf, spec, dtype, device='cpu'):
         model = cls.from_pretrained(src, **kw)
         processor = tf.AutoProcessor.from_pretrained(src, **pkw)
     else:
+        _compat_legacy_config(tf)
+        _compat_legacy_tied_weights(tf)
+        _compat_legacy_tokenizer(tf)
         model = tf.AutoModelForCausalLM.from_pretrained(src, trust_remote_code=True, attn_implementation='eager', **kw)
         processor = tf.AutoProcessor.from_pretrained(src, trust_remote_code=True, **pkw)
+        _compat_generation_mixin(tf, model)
     return model, processor
 
 
@@ -703,8 +817,29 @@ def _load_worker(model_id, device_pref):
                 try:
                     snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS,
                                       tqdm_class=_make_tqdm())
-                except TypeError:  # very old huggingface_hub without tqdm_class
-                    snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS)
+                except _Cancelled:
+                    raise
+                except Exception as e:  # noqa: BLE001  (custom progress bar / hf-xet incompatibility, e.g. "process() takes no keyword arguments")
+                    import traceback
+                    traceback.print_exc()
+                    print('[florence] download with progress failed ({}); retrying with the plain downloader (no hf-xet)'.format(e), flush=True)
+                    _set(message='Retrying download (plain mode)...')
+                    try:
+                        import huggingface_hub.constants as _hc
+                        _hc.HF_HUB_DISABLE_XET = True
+                    except Exception:  # noqa: BLE001
+                        pass
+                    os.environ['HF_HUB_DISABLE_XET'] = '1'
+                    try:
+                        snapshot_download(model_id, cache_dir=MODELS_DIR, ignore_patterns=IGNORE_PATTERNS)
+                    except _Cancelled:
+                        raise
+                    except Exception as e2:  # noqa: BLE001
+                        if 'keyword arguments' in str(e2) or 'keyword arguments' in str(e):
+                            raise RuntimeError("The 'brotli' package is too old for the HTTP library used by huggingface_hub "
+                                               "(process() takes no keyword arguments). Close the server and run:  "
+                                               "pip install -U brotli  -- then load the model again.")
+                        raise
             finally:
                 stop_mon.set()
             _P.update(speed=0, eta=0)
@@ -743,6 +878,8 @@ def _load_worker(model_id, device_pref):
         _free()
         _set(state='cancelled', message='', error='Cancelled.')
     except Exception as e:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()   # the terminal showed nothing before: always print the real traceback
         _free()
         _set(state='error', message='', error=str(e))
 
@@ -819,22 +956,99 @@ def _generate_tagger(obj, image_bytes, params, device):
     return {'text': ', '.join(final), 'count': len(final), 'seconds': round(time.time() - t0, 2), 'device': device}
 
 
-def _florence_text(parsed, token, decoded):
+def _florence_text(parsed, token, decoded, task=''):
+    """Turns the structured Florence-2 answer into text. Label tasks give a tag-like list; OCR tasks give the text;
+    region proposals / segmentation give the numbers as compact text (there is no label to show)."""
     out = parsed.get(token) if isinstance(parsed, dict) else parsed
     if isinstance(out, str):
         text = out
         if text.startswith(token):
             text = text[len(token):]
         return text
-    if isinstance(out, dict) and isinstance(out.get('labels'), list):
-        seen, labels = set(), []
-        for lb in out['labels']:
-            lb = _clean(lb).lower()
-            if lb and lb not in seen:
-                seen.add(lb)
-                labels.append(lb)
-        return ', '.join(labels)
+    if isinstance(out, dict):
+        labels = out.get('labels')
+        if task == 'OCR_WITH_REGION' and isinstance(labels, list):
+            return ' '.join(_clean(lb.replace('</s>', '').replace('<s>', '')) for lb in labels if _clean(lb))
+        if isinstance(labels, list) and any(_clean(lb) for lb in labels):
+            seen, items = set(), []
+            for lb in labels:
+                lb = _clean(lb).lower()
+                if lb and lb not in seen:
+                    seen.add(lb)
+                    items.append(lb)
+            return ', '.join(items)
+        boxes = out.get('bboxes')
+        if isinstance(boxes, list) and boxes:
+            return '; '.join(','.join(str(int(round(float(v)))) for v in b) for b in boxes)
+        polys = out.get('polygons')
+        if isinstance(polys, list):
+            n = sum(len(p) for p in polys)
+            return '{} polygon(s) found'.format(n) if n else 'nothing found'
+        return json.dumps(out, ensure_ascii=False)[:2000]
     return None
+
+
+def _target_size(processor):
+    """(width, height) the Florence-2 image processor should produce; 768x768 when it cannot be read."""
+    try:
+        sz = getattr(processor.image_processor, 'size', None)
+        if isinstance(sz, dict):
+            h, w = sz.get('height'), sz.get('width')
+        else:
+            h, w = getattr(sz, 'height', None), getattr(sz, 'width', None)
+        if h and w:
+            return int(w), int(h)
+    except Exception:  # noqa: BLE001
+        pass
+    return 768, 768
+
+
+def _fit_image(processor, image):
+    """transformers 5.x image processors can leave large images at their original size (e.g. 1536x1536), which gives
+    thousands of image tokens and overflows the 1024 position embeddings of the language model (CUDA index error).
+    Resize here so the result never depends on the processor's own resize."""
+    from PIL import Image
+    w, h = _target_size(processor)
+    if image.size != (w, h):
+        image = image.resize((w, h), Image.BICUBIC)
+    return image
+
+
+def _fix_pixel_size(torch, processor, raw):
+    """Last safety net: if pixel_values still do not have the expected size, resize the tensor."""
+    try:
+        pix = raw.get('pixel_values')
+        w, h = _target_size(processor)
+        if pix is not None and tuple(pix.shape[-2:]) != (h, w):
+            print('[florence] pixel_values {} -> resizing to {}x{}'.format(tuple(pix.shape), w, h), flush=True)
+            raw['pixel_values'] = torch.nn.functional.interpolate(pix.float(), size=(h, w), mode='bicubic', align_corners=False)
+    except Exception as e:  # noqa: BLE001
+        print('[florence] pixel size check skipped ({})'.format(e), flush=True)
+    return raw
+
+
+def _check_token_ids(model, processor, raw):
+    """Token ids outside the embedding table crash CUDA with an unreadable 'device-side assert' (and poison the
+    CUDA context until the server restarts). Check on the CPU first and report the real numbers."""
+    try:
+        ids = raw['input_ids']
+        emb = model.get_input_embeddings()
+        n = int(getattr(emb, 'num_embeddings', 0) or emb.weight.shape[0])
+        lo, hi = int(ids.min()), int(ids.max())
+        if lo < 0 or hi >= n:
+            tok = getattr(processor, 'tokenizer', None)
+            raise RuntimeError(
+                'Token id out of range for the embedding table (ids {}..{}, embedding rows {}, len(tokenizer) {}, '
+                'first ids {}). The tokenizer from this transformers version does not match the model vocabulary.'.format(
+                    lo, hi, n, len(tok) if tok is not None else '?', ids[0][:12].tolist()))
+        extra = 0
+        pix = raw.get('pixel_values')
+        print('[florence] input check ok: text ids {}..{} (rows {}), text tokens {}, pixel_values {}'.format(
+            lo, hi, n, ids.shape[-1], tuple(pix.shape) if pix is not None else None), flush=True)
+    except RuntimeError:
+        raise
+    except Exception as e:  # noqa: BLE001   (never block generation because of the check itself)
+        print('[florence] input check skipped ({})'.format(e), flush=True)
 
 
 def generate(image_bytes, params):
@@ -902,8 +1116,18 @@ def generate(image_bytes, params):
         task = str(params.get('task', 'MORE_DETAILED_CAPTION'))
         if task not in tasks_for(spec['family']):
             raise ValueError('Unknown task for this model: {}'.format(task))
-        token = '<{}>'.format(task)
-        inputs = to_dev(processor(text=token, images=image, return_tensors='pt'))
+        token = '<DocVQA>' if task == 'DOCVQA' else '<{}>'.format(task)
+        user_text = _clean(params.get('text', ''))
+        if task in TASKS_NEED_TEXT and not user_text:
+            raise ValueError({'CAPTION_TO_PHRASE_GROUNDING': 'Type the caption/phrases to locate in the text box first.',
+                              'REFERRING_EXPRESSION_SEGMENTATION': 'Type what to segment (e.g. "the person") in the text box first.',
+                              'DOCVQA': 'Type the question about the document in the text box first.'}[task])
+        prompt_text = token + user_text if task in TASKS_NEED_TEXT else token
+        image = _fit_image(processor, image)   # exact size the model was trained with (768x768 for Florence-2)
+        raw_inputs = processor(text=prompt_text, images=image, return_tensors='pt')
+        raw_inputs = _fix_pixel_size(torch, processor, raw_inputs)
+        _check_token_ids(model, processor, raw_inputs)   # clear error instead of a CUDA device-side assert
+        inputs = to_dev(raw_inputs)
         if not spec['native']:
             kwargs['use_cache'] = False  # works around remote-code issues on newer transformers
         with torch.inference_mode():
@@ -913,13 +1137,16 @@ def generate(image_bytes, params):
 
         decoded = processor.batch_decode(ids, skip_special_tokens=False)[0]
         text = None
-        try:
-            parsed = processor.post_process_generation(decoded, task=token, image_size=(image.width, image.height))
-            text = _florence_text(parsed, token, decoded)
-        except Exception as e:  # noqa: BLE001
-            if spec['family'] != 'promptgen':
-                raise
-            print('[florence] post_process_generation failed ({}); using the raw text'.format(e), flush=True)
+        if task == 'DOCVQA':
+            text = _strip_special(decoded, token)   # plain-text answer; the stock processor has no post-processing for it
+        else:
+            try:
+                parsed = processor.post_process_generation(decoded, task=token, image_size=(image.width, image.height))
+                text = _florence_text(parsed, token, decoded, task)
+            except Exception as e:  # noqa: BLE001
+                if spec['family'] != 'promptgen':
+                    raise
+                print('[florence] post_process_generation failed ({}); using the raw text'.format(e), flush=True)
         if text is None:
             if spec['family'] != 'promptgen':
                 raise ValueError('This Florence-2 task returned structured data that is not supported as text.')
@@ -1152,4 +1379,6 @@ def handle(method, route, query, body):
     except _Cancelled:
         return 499, {'error': 'Cancelled.'}
     except Exception as e:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()   # full traceback in the terminal (the interface only shows the short message)
         return 500, {'error': str(e)}
