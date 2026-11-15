@@ -75,6 +75,7 @@
         { key: 'png_reader',       icon: '🕵️', label: 'PNG Metadata Reader',    localFile: 'png metadata reader.html',   onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/png%20metadata%20reader.html' },
         { key: 'lora_reader',      icon: '📋',  label: 'LoRA Metadata Reader',   localFile: 'Lora Metadata Reader.html',  onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Metadata%20Reader.html' },
         { key: 'gallery',          icon: '🖼️', label: 'Gallery Holder',         localFile: 'gallery holder.html',        onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/gallery%20holder.html' },
+        { key: 'timeline',         icon: '🕒',  label: 'Gallery Timeline',       localFile: 'gallery timeline.html',      onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/gallery%20timeline.html' },
         { key: 'tag_manager',      icon: '🏷️', label: 'Tag Manager',            localFile: 'tag manager.html',           onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/tag%20manager.html' },
         { key: 'lora_calc',        icon: '🧮',  label: 'LoRA Calculator',        localFile: 'lora calculator.html',       onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/lora%20calculator.html' },
         { key: 'lora_evaluate',    icon: '📚',  label: 'Lora Evaluate',          localFile: 'Lora Evaluate.html',         onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Evaluate.html' },
@@ -151,6 +152,7 @@
         if (/lora/i.test(uiTitle) || /lora/i.test(title)) return 'lora_reader';
         if (/png/i.test(uiTitle) || /png/i.test(title)) return 'png_reader';
 
+        if (/timeline/i.test(uiTitle) || /timeline/i.test(title) || /timeline/i.test(filename)) return 'timeline';
         if (/gallery/i.test(uiTitle) || /gallery/i.test(title)) return 'gallery';
         if (/prompt helper/i.test(uiTitle) || /prompt helper/i.test(title) || /prompt.?helper/i.test(filename)) return 'prompt_helper';
         if (/tag/i.test(uiTitle) || /tag/i.test(title)) return 'tag_manager';
