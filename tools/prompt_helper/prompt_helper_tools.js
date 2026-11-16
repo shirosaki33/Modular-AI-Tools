@@ -54,9 +54,62 @@ function debounce(fn, ms) { let t; return () => { clearTimeout(t); t = setTimeou
                (bindPersist, bindPersistCheckbox, debounce)
 ========================================================================= */
 
-bindPersist('gFrom', 'g_from', 'pt');
+// "I type in" defaults to Detect language (new key so an old saved language does not override it once)
+bindPersist('gFrom', 'g_from_v2', 'auto');
 bindPersist('gTo', 'g_to', 'en');
 ['gFix', 'gLive'].forEach(bindPersistCheckbox);
+
+let gSeq = 0, gLastKey = '';
+
+// ---------- Multi translate: extra target languages (up to 5) ----------
+// Saved in the user's config (local/user_config.json on localhost, localStorage elsewhere) through SharedSettings.
+const G_MULTI_KEY = 'ph-multi-translate', G_MAX_EXTRA = 5;
+let gExtra = [];   // extra target language codes, in order
+const gLangOpts = document.getElementById('gTo').innerHTML;
+const gLangLabel = code => { const o = document.querySelector(`#gTo option[value="${code}"]`); return o ? o.textContent : code; };
+
+function gRenderExtra() {
+    const box = document.getElementById('gExtraLangs'), res = document.getElementById('gExtraResults');
+    box.innerHTML = ''; res.innerHTML = '';
+    gExtra.forEach((code, i) => {
+        const w = document.createElement('span'); w.className = 'x-lang';
+        w.innerHTML = '<span class="lang-label">+</span><select></select><button class="swap-btn" title="Remove this language">✕</button>';
+        const sel = w.querySelector('select'); sel.innerHTML = gLangOpts; sel.value = code;
+        sel.onchange = () => { gExtra[i] = sel.value; gRenderExtra(); gSaveMulti(); gLastKey = ''; gLiveRun(); };
+        w.querySelector('button').onclick = () => { gExtra.splice(i, 1); gRenderExtra(); gSaveMulti(); gLastKey = ''; gLiveRun(); };
+        box.appendChild(w);
+        const ta = document.createElement('textarea'); ta.className = 'result-ta'; ta.readOnly = true;
+        ta.placeholder = gLangLabel(code) + ' translation appears here...';
+        res.appendChild(ta);
+    });
+    document.getElementById('gAddLang').style.display = gExtra.length >= G_MAX_EXTRA ? 'none' : '';
+    document.querySelector('#tab-google .translate-area').classList.toggle('multi', gExtra.length > 0);
+}
+const gExtraResults = () => Array.from(document.querySelectorAll('#gExtraResults textarea'));
+function gSaveMulti() {
+    const v = { langs: gExtra.slice() };
+    try { if (window.SharedSettings) window.SharedSettings.set(G_MULTI_KEY, v); } catch (e) {}
+    _phSet('ph_g_multi', JSON.stringify(v));
+}
+function gApplyMulti(v) {   // updates UI only, never publishes
+    let langs = [];
+    if (v && Array.isArray(v.langs)) langs = v.langs;
+    else if (v && v.on && v.lang) langs = [v.lang];   // old single-language format
+    gExtra = langs.filter(c => document.querySelector(`#gTo option[value="${c}"]`)).slice(0, G_MAX_EXTRA);
+    gRenderExtra(); gLastKey = '';
+}
+(function initMulti() {
+    let saved = null; try { saved = JSON.parse(_phGet('ph_g_multi') || 'null'); } catch (e) {}
+    gApplyMulti(saved);
+    if (window.SharedSettings) window.SharedSettings.register(G_MULTI_KEY, v => { gApplyMulti(v); _phSet('ph_g_multi', JSON.stringify({ langs: gExtra })); });
+})();
+document.getElementById('gAddLang').onclick = () => {
+    if (gExtra.length >= G_MAX_EXTRA) return;
+    const used = [document.getElementById('gTo').value].concat(gExtra);
+    const next = Array.from(document.querySelectorAll('#gTo option')).map(o => o.value).find(c => !used.includes(c));
+    if (!next) return;
+    gExtra.push(next); gRenderExtra(); gSaveMulti(); gLastKey = ''; gLiveRun();
+};
 
 // dt=qca asks Google for a spelling suggestion (response index 7) in the source language.
 async function googleCall(text, from, to) {
@@ -73,32 +126,33 @@ async function googleCall(text, from, to) {
 }
 
 const LANG_NAMES = { en: 'English', pt: 'Portuguese', es: 'Spanish', ja: 'Japanese', 'zh-CN': 'Chinese', zh: 'Chinese', ko: 'Korean', fr: 'French', de: 'German', ru: 'Russian', it: 'Italian' };
-let gSeq = 0, gLastKey = '';
 
 // live=true: called while typing (silent, never touches the source box, skips unchanged input)
+// The buttons act on every field: all targets (1 or 2) are translated / fixed together.
 async function runGoogle(fixOnly, live) {
     const srcEl = document.getElementById('gSource');
-    const resEl = document.getElementById('gResult');
+    const resEls = [document.getElementById('gResult')].concat(gExtraResults());
     const status = document.getElementById('gStatus');
     const text = srcEl.value.trim();
+    const targets = [document.getElementById('gTo').value];
+    gExtra.forEach(c => targets.push(c));
     if (!text) {
-        if (live) { gSeq++; gLastKey = ''; resEl.value = ''; status.textContent = ''; }
+        if (live) { gSeq++; gLastKey = ''; resEls.forEach(r => r.value = ''); status.textContent = ''; }
         else window.showAlert('Type something first.', 'warn');
         return;
     }
     const from = document.getElementById('gFrom').value;
-    const to = document.getElementById('gTo').value;
     const wantFix = fixOnly || document.getElementById('gFix').checked;
-    const key = [text, from, to, wantFix, fixOnly].join('\u0001');
+    const key = [text, from, targets.join('|'), wantFix, fixOnly].join('\u0001');
     if (live && key === gLastKey) return;
     const seq = ++gSeq;
-    const btns = ['gTranslateBtn', 'gTranslateTop', 'gFixBtn'].map(id => document.getElementById(id));
+    const btns = ['gTranslateBtn', 'gFixBtn'].map(id => document.getElementById(id));
     if (!live) btns.forEach(b => b.disabled = true);
     status.textContent = fixOnly ? 'Fixing...' : 'Translating...';
     try {
         let src = from, probe = null, working = text, note = '';
         if (from === 'auto') {
-            probe = await googleCall(text, 'auto', to);
+            probe = await googleCall(text, 'auto', targets[0]);
             if (seq !== gSeq) return;
             src = probe.detected || 'en';
         }
@@ -109,20 +163,25 @@ async function runGoogle(fixOnly, live) {
             else note = 'No corrections suggested. ';
         }
         const detNote = from === 'auto' ? `Detected: ${LANG_NAMES[src] || src}. ` : '';
-        if (fixOnly || src === to) {
-            resEl.value = working;
-            status.textContent = detNote + note + (src === to && !fixOnly ? 'Already in the target language, nothing to translate.' : 'Done.');
+        if (fixOnly) {
+            resEls.forEach(r => r.value = working);
+            status.textContent = detNote + note + 'Done.';
             gLastKey = key;
             return;
         }
-        let tr = (probe && working === text) ? probe : await googleCall(working, src, to);
+        const results = await Promise.all(targets.map((to, i) => {
+            if (src === to) return Promise.resolve({ translation: working, same: true });
+            if (i === 0 && probe && working === text) return Promise.resolve(probe);
+            return googleCall(working, src, to);
+        }));
         if (seq !== gSeq) return;
-        resEl.value = tr.translation;
+        results.forEach((r, i) => { resEls[i].value = r.translation; });
         if (working !== text) {
             if (live) note += `Corrected: "${working}". `;
             else srcEl.value = working;
         }
-        status.textContent = detNote + note + 'Done.';
+        const same = results.some(r => r.same);
+        status.textContent = detNote + note + (same ? 'Source is already in a target language (copied as is). ' : '') + 'Done.';
         gLastKey = key;
     } catch (e) {
         if (seq !== gSeq) return;
@@ -134,7 +193,6 @@ async function runGoogle(fixOnly, live) {
 }
 
 document.getElementById('gTranslateBtn').onclick = () => runGoogle(false);
-document.getElementById('gTranslateTop').onclick = () => runGoogle(false);
 document.getElementById('gFixBtn').onclick = () => runGoogle(true);
 document.getElementById('gSource').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runGoogle(false); }
@@ -143,6 +201,7 @@ document.getElementById('gSource').addEventListener('keydown', (e) => {
 document.getElementById('gClearBtn').onclick = () => {
     document.getElementById('gSource').value = '';
     document.getElementById('gResult').value = '';
+    gExtraResults().forEach(r => r.value = '');
     document.getElementById('gStatus').textContent = '';
     gSeq++; gLastKey = '';
 };
@@ -163,6 +222,8 @@ document.getElementById('gSwap').onclick = () => {
     const s = document.getElementById('gSource');
     const r = document.getElementById('gResult');
     const t = s.value; s.value = r.value; r.value = t;
+    gExtraResults().forEach(r => r.value = '');   // stale after the swap; live translate refills them
+    gLastKey = '';
 };
 
 // ---------- Live translate (debounced while typing) ----------

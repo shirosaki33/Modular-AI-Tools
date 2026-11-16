@@ -64,7 +64,8 @@
             <ul>
                 <li><b>Fix vocabulary / spelling</b>: asks Google for a spelling suggestion in your language first, then translates the corrected text. <b>Fix only</b> corrects without translating.</li>
                 <li><b>Live translate</b>: translates by itself a moment after you stop typing.</li>
-                <li><b>Detect language</b> works as the source language.</li>
+                <li><b>Detect language</b> is the default source language.</li>
+                <li><b>＋ Language</b> adds an extra target language (up to 5): each one gets its own result box, and Translate / Fix only / Live translate / Clear work on all fields at once. <b>✕</b> removes a language. The list is saved in your user config.</li>
             </ul>`],
         ['ollama', '🦙 Ollama Translate', '#66ccff', `
             <p>Same idea as the Google tab, but the translation is done by a model running in your own <a href="https://ollama.com" target="_blank">Ollama</a>.</p>

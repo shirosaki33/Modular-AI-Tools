@@ -133,6 +133,10 @@
         .lang-row select { min-width: 110px; }
         .lang-row .swap-btn { background: #222; color: #aaa; padding: 8px 10px; }
         .lang-row .swap-btn:hover { background: #333; color: #fff; }
+        .lang-row .swap-btn#gRemoveLang:hover { background: #5c1a1a; color: #ff8080; }
+        #gExtraLangs .x-lang { display: inline-flex; align-items: center; gap: 4px; }
+        .translate-area { overflow-y: auto; }
+        .translate-area.multi textarea { min-height: 70px; }
 
         .translate-area { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
         .translate-area textarea {
@@ -285,33 +289,34 @@
             <div class="lang-row">
                 <span class="lang-label">I type in</span>
                 <select id="gFrom">
-                    <option value="auto">Detect language</option>
+                    <option value="auto" selected>Detect language</option>
                     <option value="en">English</option>
-                    <option value="pt" selected>Português</option>
-                    <option value="es">Español</option>
-                    <option value="ja">日本語</option>
-                    <option value="zh-CN">中文 (简体)</option>
-                    <option value="ko">한국어</option>
-                    <option value="fr">Français</option>
-                    <option value="de">Deutsch</option>
-                    <option value="ru">Русский</option>
-                    <option value="it">Italiano</option>
+                    <option value="pt">Português — Portuguese</option>
+                    <option value="es">Español — Spanish</option>
+                    <option value="ja">日本語 — Japanese</option>
+                    <option value="zh-CN">中文 (简体) — Chinese (Simplified)</option>
+                    <option value="ko">한국어 — Korean</option>
+                    <option value="fr">Français — French</option>
+                    <option value="de">Deutsch — German</option>
+                    <option value="ru">Русский — Russian</option>
+                    <option value="it">Italiano — Italian</option>
                 </select>
                 <button class="swap-btn" id="gSwap" title="Swap languages">⇄</button>
                 <span class="lang-label">Translate to</span>
                 <select id="gTo">
                     <option value="en" selected>English</option>
-                    <option value="pt">Português</option>
-                    <option value="es">Español</option>
-                    <option value="ja">日本語</option>
-                    <option value="zh-CN">中文 (简体)</option>
-                    <option value="ko">한국어</option>
-                    <option value="fr">Français</option>
-                    <option value="de">Deutsch</option>
-                    <option value="ru">Русский</option>
-                    <option value="it">Italiano</option>
+                    <option value="pt">Português — Portuguese</option>
+                    <option value="es">Español — Spanish</option>
+                    <option value="ja">日本語 — Japanese</option>
+                    <option value="zh-CN">中文 (简体) — Chinese (Simplified)</option>
+                    <option value="ko">한국어 — Korean</option>
+                    <option value="fr">Français — French</option>
+                    <option value="de">Deutsch — German</option>
+                    <option value="ru">Русский — Russian</option>
+                    <option value="it">Italiano — Italian</option>
                 </select>
-                <button class="btn-lang-translate" id="gTranslateTop" title="Translate (Ctrl+Enter)">Translate</button>
+                <span id="gExtraLangs" style="display:contents;"></span>
+                <button class="btn-lang-translate" id="gAddLang" title="Translate into one more language at the same time (up to 5 extra, saved in your settings)">＋ Language</button>
             </div>
             <label class="opt-row" title="Asks Google for a spelling suggestion in the language you type in and uses it before translating"><input type="checkbox" id="gFix" checked> Fix vocabulary / spelling before translating</label>
             <label class="opt-row" title="Translates and fixes automatically while you type"><input type="checkbox" id="gLive" checked> Live translate as I type</label>
@@ -323,6 +328,7 @@
                     <button class="btn-secondary" id="gClearBtn" style="flex:0;">Clear</button>
                 </div>
                 <textarea id="gResult" class="result-ta" placeholder="Result appears here..." readonly></textarea>
+                <div id="gExtraResults" style="display:contents;"></div>
             </div>
             <div class="status-line" id="gStatus"></div>
         </div>
