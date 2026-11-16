@@ -134,7 +134,7 @@
         .lang-row .swap-btn { background: #222; color: #aaa; padding: 8px 10px; }
         .lang-row .swap-btn:hover { background: #333; color: #fff; }
         .lang-row .swap-btn#gRemoveLang:hover { background: #5c1a1a; color: #ff8080; }
-        #gExtraLangs .x-lang { display: inline-flex; align-items: center; gap: 4px; }
+        #gExtraLangs .x-lang, #oExtraLangs .x-lang { display: inline-flex; align-items: center; gap: 4px; }
         .translate-area { overflow-y: auto; }
         .translate-area.multi textarea { min-height: 70px; }
 
@@ -379,7 +379,8 @@
                     <option value="Russian">Russian</option>
                     <option value="Italian">Italian</option>
                 </select>
-                <button class="btn-lang-translate" id="oTranslateTop" title="Translate (Ctrl+Enter)">Translate</button>
+                <span id="oExtraLangs" style="display:contents;"></span>
+                <button class="btn-lang-translate" id="oAddLang" title="Translate into one more language at the same time (up to 5 extra, saved in your settings)">＋ Language</button>
             </div>
             <label class="opt-row" title="The model first corrects typos and wrong vocabulary in the language you type in, then translates"><input type="checkbox" id="oFix" checked> Fix vocabulary / spelling before translating</label>
             <label class="opt-row" title="Translates and fixes automatically while you type (each request cancels the previous one)"><input type="checkbox" id="oLive" checked> Live translate as I type</label>
@@ -402,6 +403,7 @@
                     <button class="btn-secondary" id="oClearBtn" style="flex:0;">Clear</button>
                 </div>
                 <textarea id="oResult" class="result-ta" placeholder="Result appears here..." readonly></textarea>
+                <div id="oExtraResults" style="display:contents;"></div>
             </div>
             <div class="status-line" id="oStatus">Ollama must be running locally. Models that follow instructions work best (llama3, qwen2.5, mistral, gemma2...).</div>
             </div>

@@ -69,6 +69,7 @@
             </ul>`],
         ['ollama', '🦙 Ollama Translate', '#66ccff', `
             <p>Same idea as the Google tab, but the translation is done by a model running in your own <a href="https://ollama.com" target="_blank">Ollama</a>.</p>
+            <p><b>＋ Language</b> works here too: up to 5 extra target languages, one result box each (translated one after another by the model). Translate / Fix only / Live translate / Clear act on all fields. "Enhance after translating" only improves the first result. The list is saved in your user config.</p>
             <ol>
                 <li>Install Ollama and pull a model that follows instructions, for example <code>ollama pull qwen2.5</code>, <code>llama3</code>, <code>mistral</code> or <code>gemma2</code>.</li>
                 <li>Keep the URL as <code>http://127.0.0.1:11434</code> (change it only if Ollama runs elsewhere), press <b>🔄</b> and choose the model.</li>

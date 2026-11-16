@@ -242,6 +242,47 @@ bindPersist('oFrom', 'o_from', 'Portuguese');
 bindPersist('oTo', 'o_to', 'English');
 ['oFix', 'oLive'].forEach(bindPersistCheckbox);
 
+// ---------- Multi translate (Ollama): extra target languages (up to 5), saved in the user's config ----------
+const O_MULTI_KEY = 'ph-multi-translate-ollama', O_MAX_EXTRA = 5;
+let oExtra = [];
+const oLangOpts = document.getElementById('oTo').innerHTML;
+const oExtraResults = () => Array.from(document.querySelectorAll('#oExtraResults textarea'));
+
+function oRenderExtra() {
+    const box = document.getElementById('oExtraLangs'), res = document.getElementById('oExtraResults');
+    box.innerHTML = ''; res.innerHTML = '';
+    oExtra.forEach((lang, i) => {
+        const w = document.createElement('span'); w.className = 'x-lang';
+        w.innerHTML = '<span class="lang-label">+</span><select></select><button class="swap-btn" title="Remove this language">✕</button>';
+        const sel = w.querySelector('select'); sel.innerHTML = oLangOpts; sel.value = lang;
+        sel.onchange = () => { oExtra[i] = sel.value; oRenderExtra(); oSaveMulti(); oLastKey = ''; oLiveRun(); };
+        w.querySelector('button').onclick = () => { oExtra.splice(i, 1); oRenderExtra(); oSaveMulti(); oLastKey = ''; oLiveRun(); };
+        box.appendChild(w);
+        const ta = document.createElement('textarea'); ta.className = 'result-ta'; ta.readOnly = true;
+        ta.placeholder = lang + ' translation appears here...';
+        res.appendChild(ta);
+    });
+    document.getElementById('oAddLang').style.display = oExtra.length >= O_MAX_EXTRA ? 'none' : '';
+    document.querySelector('#oSub-translate .translate-area').classList.toggle('multi', oExtra.length > 0);
+}
+function oSaveMulti() {
+    const v = { langs: oExtra.slice() };
+    try { if (window.SharedSettings) window.SharedSettings.set(O_MULTI_KEY, v); } catch (e) {}
+    _phSet('ph_o_multi', JSON.stringify(v));
+}
+function oApplyMulti(v) {   // UI only, never publishes
+    const langs = (v && Array.isArray(v.langs)) ? v.langs : [];
+    oExtra = langs.filter(c => document.querySelector(`#oTo option[value="${c}"]`)).slice(0, O_MAX_EXTRA);
+    oRenderExtra(); oLastKey = '';
+}
+document.getElementById('oAddLang').onclick = () => {
+    if (oExtra.length >= O_MAX_EXTRA) return;
+    const used = [document.getElementById('oTo').value].concat(oExtra);
+    const next = Array.from(document.querySelectorAll('#oTo option')).map(o => o.value).find(c => !used.includes(c));
+    if (!next) return;
+    oExtra.push(next); oRenderExtra(); oSaveMulti(); oLastKey = ''; oLiveRun();
+};
+
 async function refreshOllamaModels() {
     const url = (document.getElementById('oUrl').value || 'http://127.0.0.1:11434').replace(/\/$/, '');
     const sel = document.getElementById('oModel');
@@ -301,6 +342,11 @@ function parseJsonLoose(raw) {
 }
 
 let oCtl = null, oLastKey = '';
+(function initOMulti() {
+    let saved = null; try { saved = JSON.parse(_phGet('ph_o_multi') || 'null'); } catch (e) {}
+    oApplyMulti(saved);
+    if (window.SharedSettings) window.SharedSettings.register(O_MULTI_KEY, v => { oApplyMulti(v); _phSet('ph_o_multi', JSON.stringify({ langs: oExtra })); });
+})();
 
 // live=true: called while typing (cancels the previous request, never touches the source box)
 async function runOllama(fixOnly, live) {
@@ -311,10 +357,11 @@ async function runOllama(fixOnly, live) {
     }
     const srcEl = document.getElementById('oSource');
     const resEl = document.getElementById('oResult');
+    const resEls = [resEl].concat(oExtraResults());
     const status = document.getElementById('oStatus');
     const text = srcEl.value.trim();
     if (!text) {
-        if (live) { if (oCtl) oCtl.abort(); oLastKey = ''; resEl.value = ''; }
+        if (live) { if (oCtl) oCtl.abort(); oLastKey = ''; resEls.forEach(r => r.value = ''); }
         else window.showAlert('Type something first.', 'warn');
         return;
     }
@@ -327,46 +374,60 @@ async function runOllama(fixOnly, live) {
     const base = (document.getElementById('oUrl').value || 'http://127.0.0.1:11434').replace(/\/$/, '');
     const from = document.getElementById('oFrom').value;
     const to = document.getElementById('oTo').value;
+    const targets = [to].concat(oExtra);
+    const same = tg => from !== 'auto' && from === tg;
+    const firstIdx = targets.findIndex(tg => !same(tg));
     const fromDesc = from === 'auto' ? 'an unknown language (detect it yourself)' : from;
     const wantFix = fixOnly || document.getElementById('oFix').checked;
-    const justFix = fixOnly || (from !== 'auto' && from === to);
-    const key = [text, model, from, to, wantFix, fixOnly].join('\u0001');
+    const justFix = fixOnly || firstIdx < 0;   // nothing to translate (source already is every target)
+    const key = [text, model, from, targets.join('|'), wantFix, fixOnly].join('\u0001');
     if (live && key === oLastKey) return;
 
     if (oCtl) oCtl.abort();
     oCtl = new AbortController();
     const signal = oCtl.signal;
-    const btns = ['oTranslateBtn', 'oTranslateTop', 'oFixBtn', 'oEnhBtn'].map(id => document.getElementById(id));
-    if (!live) { btns.forEach(b => b.disabled = true); resEl.value = ''; }
+    const btns = ['oTranslateBtn', 'oFixBtn', 'oEnhBtn'].map(id => document.getElementById(id));
+    if (!live) { btns.forEach(b => b.disabled = true); resEls.forEach(r => r.value = ''); }
     status.textContent = 'Generating with ' + model + '...';
+    const plainTranslate = (src, tg) => ollamaGenerate(base, { model, prompt: `Translate the following text from ${fromDesc} to ${tg}. Output ONLY the translation, nothing else.\n\n${src}`, stream: false, options: { temperature: 0.2 } }, signal);
 
     try {
         if (justFix) {
             const prompt = `You are a proofreader. The text below is written in ${fromDesc}. Fix spelling, typos, misused or wrong vocabulary and grammar. Keep the meaning, tone and the original language. Do NOT translate. Output ONLY the corrected text, nothing else.\n\n${text}`;
-            resEl.value = await ollamaGenerate(base, { model, prompt, stream: false, options: { temperature: 0.1 } }, signal);
+            const fixed = await ollamaGenerate(base, { model, prompt, stream: false, options: { temperature: 0.1 } }, signal);
+            resEls.forEach(r => r.value = fixed);
             status.textContent = 'Fixed in the original language. Done.';
-        } else if (wantFix) {
-            const prompt = `The text below is written in ${fromDesc} and may contain typos or wrong vocabulary.\n1) Correct it in its own language.\n2) Translate the corrected text into ${to}.\nReply ONLY with JSON in this exact shape: {"corrected":"<corrected text in the source language>","translation":"<${to} translation>"}\n\nText:\n${text}`;
-            const raw = await ollamaGenerate(base, { model, prompt, stream: false, format: 'json', options: { temperature: 0.1 } }, signal);
-            const obj = parseJsonLoose(raw);
-            if (obj && typeof obj.translation === 'string') {
-                resEl.value = obj.translation.trim();
-                const corrected = typeof obj.corrected === 'string' ? obj.corrected.trim() : '';
-                if (corrected && corrected !== text) {
-                    if (live) status.textContent = `Corrected: "${corrected}". Done.`;
-                    else { srcEl.value = corrected; status.textContent = 'Vocabulary fixed in source. Done.'; }
-                } else status.textContent = 'No corrections needed. Done.';
-            } else {
-                resEl.value = raw; // model ignored the JSON format: show whatever it returned
-                status.textContent = 'Model did not return JSON, showing raw output.';
-            }
         } else {
-            const prompt = `Translate the following text from ${fromDesc} to ${to}. Output ONLY the translation, nothing else.\n\n${text}`;
-            resEl.value = await ollamaGenerate(base, { model, prompt, stream: false, options: { temperature: 0.2 } }, signal);
-            status.textContent = 'Done.';
+            let working = text, msg = 'Done.';
+            if (wantFix) {
+                // one call corrects the text and translates it into the first real target
+                const tg = targets[firstIdx];
+                const prompt = `The text below is written in ${fromDesc} and may contain typos or wrong vocabulary.\n1) Correct it in its own language.\n2) Translate the corrected text into ${tg}.\nReply ONLY with JSON in this exact shape: {"corrected":"<corrected text in the source language>","translation":"<${tg} translation>"}\n\nText:\n${text}`;
+                const raw = await ollamaGenerate(base, { model, prompt, stream: false, format: 'json', options: { temperature: 0.1 } }, signal);
+                const obj = parseJsonLoose(raw);
+                if (obj && typeof obj.translation === 'string') {
+                    resEls[firstIdx].value = obj.translation.trim();
+                    const corrected = typeof obj.corrected === 'string' ? obj.corrected.trim() : '';
+                    if (corrected && corrected !== text) {
+                        working = corrected;
+                        if (live) msg = `Corrected: "${corrected}". Done.`;
+                        else { srcEl.value = corrected; msg = 'Vocabulary fixed in source. Done.'; }
+                    } else msg = 'No corrections needed. Done.';
+                } else {
+                    resEls[firstIdx].value = raw; // model ignored the JSON format: show whatever it returned
+                    msg = 'Model did not return JSON, showing raw output.';
+                }
+            }
+            for (let i = 0; i < targets.length; i++) {
+                if (wantFix && i === firstIdx) continue;
+                if (same(targets[i])) { resEls[i].value = working; continue; }
+                status.textContent = `Translating to ${targets[i]} (${i + 1}/${targets.length})...`;
+                resEls[i].value = await plainTranslate(working, targets[i]);
+            }
+            status.textContent = msg;
         }
         oLastKey = key;
-        // Optional Prompt Enhancer step: only after a manual Translate, never while live-typing
+        // Optional Prompt Enhancer step (applies to the first result only): manual Translate, never while live-typing
         if (!live && !justFix && window.PromptEnhancer && window.PromptEnhancer.auto()) {
             await window.PromptEnhancer.afterTranslate(signal);
         }
@@ -381,7 +442,6 @@ async function runOllama(fixOnly, live) {
 }
 
 document.getElementById('oTranslateBtn').onclick = () => runOllama(false);
-document.getElementById('oTranslateTop').onclick = () => runOllama(false);
 document.getElementById('oFixBtn').onclick = () => runOllama(true);
 document.getElementById('oSource').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runOllama(false); }
@@ -397,11 +457,14 @@ document.getElementById('oSwap').onclick = () => {
     const s = document.getElementById('oSource');
     const r = document.getElementById('oResult');
     const t = s.value; s.value = r.value; r.value = t;
+    oExtraResults().forEach(x => x.value = '');   // stale after the swap; live translate refills them
+    oLastKey = '';
 };
 
 document.getElementById('oClearBtn').onclick = () => {
     document.getElementById('oSource').value = '';
     document.getElementById('oResult').value = '';
+    oExtraResults().forEach(x => x.value = '');
     if (oCtl) oCtl.abort();
     oLastKey = '';
 };
@@ -591,7 +654,7 @@ document.getElementById('oUrl').addEventListener('change', () => {
             if (/type in|translate to/i.test(l.textContent)) dim(l);
         });
         $('oTranslateBtn').textContent = on ? 'Translate with Ollama' : '✨ Enhance with Ollama';
-        $('oTranslateTop').textContent = on ? 'Translate' : '✨ Enhance';
+        dim($('oAddLang')); dim($('oExtraLangs'));
         $('oSource').placeholder = on ? 'Type in the language selected above... (Ctrl+Enter to translate)'
                                       : 'Type your prompt... (Ctrl+Enter to enhance, in its own language)';
     }
