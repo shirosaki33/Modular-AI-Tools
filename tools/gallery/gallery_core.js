@@ -993,6 +993,18 @@ let detailSessionId = 0;
 async function openDetailView(url, fileName) {
     const currentSession = ++detailSessionId;
 
+    // Switching between versions of the SAME merge group while already in the
+    // detail view must not count as a new view (the group shares one counter).
+    let sameGroupSwitch = false;
+    try {
+        const dv = document.getElementById('detail-view');
+        if (dv && dv.style.display === 'flex' && typeof memberToPrimary !== 'undefined') {
+            const prevName = document.getElementById('file-name').value;
+            const pp = memberToPrimary.get(prevName);
+            sameGroupSwitch = !!pp && pp === memberToPrimary.get(fileName);
+        }
+    } catch (e) { sameGroupSwitch = false; }
+
     if (isEditing) toggleManualEdit();
     if (typeof isTagMode !== 'undefined' && isTagMode) cancelBatchTags();
     if (typeof isMergeMode !== 'undefined' && isMergeMode) cancelMergeMode();
@@ -1005,7 +1017,7 @@ async function openDetailView(url, fileName) {
     document.getElementById('file-name').value = fileName;
     if (typeof syncMergeActivePreview === 'function') syncMergeActivePreview(fileName);
     if (typeof renderMergeVersionStrip === 'function') renderMergeVersionStrip(fileName);
-    if (typeof registerImageView === 'function') registerImageView(fileName);
+    if (!sameGroupSwitch && typeof registerImageView === 'function') registerImageView(fileName);
     if (typeof resetImageZoom === 'function') resetImageZoom(); // start every image at 100%, no leftover pan
     showAlert(null);
     updateGridCounters(); // Hide the counter since we left the grid

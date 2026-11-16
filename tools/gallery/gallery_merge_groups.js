@@ -442,12 +442,6 @@ function paintMergeGroupUI(primaryName, img, badge, label) {
         label.textContent = nameOnly;
         label.title = nameOnly;
     }
-
-    // keep the view-count badge in sync with the version now shown
-    if (typeof paintMergeBadge === 'function' && typeof viewCountEnabled !== 'undefined' && viewCountEnabled) {
-        const wrapper = badge.closest('.grid-item-wrapper');
-        if (wrapper) paintMergeBadge(getOrCreateBadge(wrapper), primaryName);
-    }
 }
 
 /* Mantém a grade em sincronia com QUALQUER versão que acabou de ser aberta —
