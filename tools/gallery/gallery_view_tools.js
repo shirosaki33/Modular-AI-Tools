@@ -285,10 +285,7 @@ function updateViewCountBadge(fileName) {
     if (primary) {
         const wrapper = document.querySelector(`.grid-item-wrapper[data-primary="${CSS.escape(primary)}"]`);
         if (!wrapper) return;
-        if (typeof getMergeGroupViewCounts === 'function') {
-            const { week, month } = getMergeGroupViewCounts(primary);
-            paintBadgeWithCounts(getOrCreateBadge(wrapper), week, month);
-        }
+        paintMergeBadge(getOrCreateBadge(wrapper), primary);
         return;
     }
 
@@ -308,9 +305,27 @@ function getOrCreateBadge(wrapper) {
     return badge;
 }
 
-function paintBadgeWithCounts(badge, week, month) {
-    badge.innerHTML = `<span title="Opened ${week}x this week">\u{1F441}\uFE0F ${week}</span><span class="view-count-sep">\u00B7</span><span title="Opened ${month}x this month">\u{1F5D3}\uFE0F ${month}</span>`;
+function paintBadgeWithCounts(badge, week, month, groupNote) {
+    const note = groupNote ? ` (${groupNote})` : '';
+    badge.innerHTML = `<span title="Opened ${week}x this week${note}">\u{1F441}\uFE0F ${week}</span><span class="view-count-sep">\u00B7</span><span title="Opened ${month}x this month${note}">\u{1F5D3}\uFE0F ${month}</span>`;
     badge.style.display = (week > 0 || month > 0) ? 'flex' : 'none';
+}
+
+/* Merge-group card: the badge shows the counts of the version currently
+   displayed on the card (not the sum of every version). The group total
+   stays available in the tooltip. */
+function paintMergeBadge(badge, primary) {
+    const members = (typeof mergeGroups !== 'undefined') ? mergeGroups.get(primary) : null;
+    if (!members || !members.length) return;
+    const idx = (typeof groupActiveIndex !== 'undefined' ? groupActiveIndex.get(primary) : 0) || 0;
+    const active = members[idx] || members[0];
+    const { week, month } = getImageViewCounts(active);
+    let note = '';
+    if (typeof getMergeGroupViewCounts === 'function') {
+        const t = getMergeGroupViewCounts(primary);
+        note = `this version only \u00B7 group total: ${t.week} week / ${t.month} month`;
+    }
+    paintBadgeWithCounts(badge, week, month, note);
 }
 
 function paintBadge(badge, fileName) {
@@ -335,9 +350,8 @@ function renderAllViewCountBadges() {
         // Card de grupo mesclado: soma as visualizações de todos os membros,
         // não só da versão sendo pré-visualizada no momento (fname).
         const primary = wrapper.dataset.primary;
-        if (primary && typeof getMergeGroupViewCounts === 'function') {
-            const { week, month } = getMergeGroupViewCounts(primary);
-            paintBadgeWithCounts(getOrCreateBadge(wrapper), week, month);
+        if (primary) {
+            paintMergeBadge(getOrCreateBadge(wrapper), primary);
             return;
         }
 
