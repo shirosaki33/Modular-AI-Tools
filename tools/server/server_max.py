@@ -377,6 +377,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log('FAILED', 'Could not open the folder: {}'.format(e))
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
 
+    def _copy_file(self):
+        """Gallery Timeline: puts the image FILE on the system clipboard (like Ctrl+C in the file manager),
+        so pasting it in ComfyUI / Explorer / Discord brings the original file, metadata included."""
+        try:
+            _, target = _resolve_in_root(self._read_json(), True)
+            if os.name == 'nt':
+                ps = "Set-Clipboard -LiteralPath '{}'".format(target.replace("'", "''"))
+                r = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-STA', '-Command', ps],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+                                   creationflags=0x08000000)  # CREATE_NO_WINDOW
+                if r.returncode != 0:
+                    raise RuntimeError((r.stderr or b'').decode('utf-8', 'replace').strip() or 'Set-Clipboard failed')
+            elif sys.platform == 'darwin':
+                r = subprocess.run(['osascript', '-e', 'set the clipboard to (POSIX file "{}")'.format(target.replace('\\', '\\\\').replace('"', '\\"'))],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20)
+                if r.returncode != 0:
+                    raise RuntimeError((r.stderr or b'').decode('utf-8', 'replace').strip() or 'osascript failed')
+            else:
+                raise ValueError('copying a file to the clipboard is only supported on Windows and macOS')
+            log('OK', 'Copied to the clipboard: {}'.format(target))
+            self._reply(200, b'{"status": "success"}')
+        except Exception as e:
+            log('FAILED', 'Could not copy the file to the clipboard: {}'.format(e))
+            self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
+
     def _locate_folder(self):
         """Tag Manager 📂 Go to: finds the real path of a folder the browser opened.
 
@@ -455,6 +480,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._trash_file()
         if route == '/api/open_folder':
             return self._open_folder()
+        if route == '/api/copy_file':
+            return self._copy_file()
         if route == '/api/locate_folder':
             return self._locate_folder()
         if route != '/api/save_local_cache':

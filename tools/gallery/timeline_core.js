@@ -1762,6 +1762,42 @@ async function tlOpenCurrentFolder() {
     catch (e) { console.error(e); showAlert('❌ ' + e.message, 'error'); }
 }
 
+/* Copies the focused image so it can be pasted straight into ComfyUI (Ctrl+V on the canvas) or any other app.
+   - localhost: the server puts the ORIGINAL FILE on the clipboard (same as Ctrl+C in the file manager), so the
+     PNG metadata / workflow arrives untouched.
+   - otherwise (or if the server cannot do it): the browser copies the image itself (as PNG; metadata is lost). */
+let tlCopyBusy = false;
+async function tlCopyCurrentImage() {
+    const item = tlCurrent;
+    if (!item) { tlToast('Open an image first.', 'warn'); return; }
+    if (tlCopyBusy) return;
+    tlCopyBusy = true;
+    try {
+        if (tlIsLocal() && tlRootPath) {
+            try {
+                await tlLocalPost('/api/copy_file', item);
+                tlToast('📋 Image file copied - paste it with Ctrl+V.', 'success');
+                return;
+            } catch (e) { console.warn('Server copy failed, using the browser clipboard:', e); }
+        }
+        await tlEnsureFile(item);
+        let blob = item.file;
+        if (blob.type !== 'image/png') {                      // the browser clipboard only takes PNG: convert (jpg, webp...)
+            const bmp = await createImageBitmap(blob);
+            const cv = document.createElement('canvas');
+            cv.width = bmp.width; cv.height = bmp.height;
+            cv.getContext('2d').drawImage(bmp, 0, 0);
+            if (bmp.close) bmp.close();
+            blob = await new Promise((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('PNG conversion failed')), 'image/png'));
+        }
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        tlToast('📋 Image copied - paste it with Ctrl+V.' + (tlIsLocal() && !tlRootPath ? ' (set the real path in ⚙️ to also keep the metadata)' : ''), 'success', tlIsLocal() && !tlRootPath ? 5500 : 3500);
+    } catch (e) {
+        console.error(e);
+        tlToast('❌ Could not copy the image: ' + (e && e.message || e), 'warn', 5000);
+    } finally { tlCopyBusy = false; }
+}
+
 /* The two localhost buttons are dimmed elsewhere */
 function tlUpdateLocalButtons() {
     const ok = tlIsLocal();
