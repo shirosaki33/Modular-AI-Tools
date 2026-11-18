@@ -117,8 +117,7 @@
         <label class="row">Tags per round<input type="number" min="1" data-k="booru_autofill.batch_size"></label>
         <label class="row">Delay between requests, Danbooru (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.danbooru"></label>
         <label class="row">Delay between requests, e621 (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.e621"></label>
-        <label class="row">Save the cache every (s)<input type="number" min="5" data-k="booru_autofill.save_every_seconds"></label>
-        <label class="row">Save the wiki texts every (s)<input type="number" min="5" data-k="booru_autofill.wiki_save_every_seconds"></label>
+        <label class="row" title="Each site writes what it learns into a small temporary file at once. This is how often both temporary files are moved into the final files together (minimum 30).">Move to the final files every (s)<input type="number" min="30" data-k="booru_autofill.commit_every_seconds"></label>
         <div id="srvSaved"></div>
     </div>
     
@@ -157,7 +156,7 @@
                     <li><b>Resume after tag use (s):</b> how long to wait after the last time a tool used tags before the worker starts again.</li>
                     <li><b>Tags per round:</b> how many tags are handled at once. Smaller means gentler on the sites.</li>
                     <li><b>Delay between requests (ms), Danbooru / e621:</b> pause between requests to each site. Do not set it too low: when a site refuses a request (HTTP 429) the worker waits 1 to 2 minutes and asks the same tag again.</li>
-                    <li><b>Save the cache every (s) / Save the wiki texts every (s):</b> how often the worker writes its progress to disk. It always saves before stepping aside and when the server stops.</li>
+                    <li><b>Move to the final files every (s):</b> Danbooru and e621 are processed <i>at the same time</i>. Each one writes what it learns, tag by tag, into its own small temporary file (<code>local/autofill_temp/</code>). This is how often both temporary files are moved together into the final files (cache, wiki texts, unknown tags), each file written in one piece. It also happens before the worker steps aside for a tool, and when the server stops. If the server or the PC stops suddenly, the temporary files are read again on the next start, so nothing is lost. When one site has nothing left to do, it simply stops and the other one carries on alone.</li>
                 </ul>
                 <p class="tip">💡 A copy of each cache file is kept once a day in <code>local/backups/</code> before the worker's first change of the day. The worker never overwrites a file that someone else changed while it was working: it reloads it instead.</p>
             </div>

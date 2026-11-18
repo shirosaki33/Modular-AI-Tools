@@ -16,6 +16,13 @@ It is the server-side twin of the "Auto-fill when idle" option of Tag Manager / 
      local/autofill_state.json and mirrored to local/user_config.json ("idle-crawl"), so the page and this worker
      continue each other's work.
 
+Both sites work AT THE SAME TIME (one thread each, every site has its own rate limit); a site that has nothing left
+simply stops and the other one carries on alone. Everything a thread learns is appended at once to a small temporary
+file of its site (local/autofill_temp/<site>.jsonl) and kept in memory; every few minutes (and before stepping aside,
+on a refused request wait and on exit) both threads are paused for a moment and the temporary files are moved into
+the final files together, each one written atomically, and then emptied. If the server or the PC dies in between,
+the temporary files are read again on the next start, so nothing is lost.
+
 Files it writes (same format the pages use): local/danbooru_cache.json, local/e621_cache.json,
 local/wiki_full.json, local/unknown_tags.json, local/autofill_state.json (+ the cursor key in user_config.json).
 
@@ -34,6 +41,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -51,6 +59,7 @@ COOL = {'first': 60, 'step': 30, 'max': 120, 'retry_after_max': 300, 'hard_fail_
 DONE_RECHECK = 600                     # everything is up to date: look again in 10 minutes
 CACHE_FILES = {'danbooru': 'danbooru_cache.json', 'e621': 'e621_cache.json'}
 BACKUP_KEEP = 4
+TEMP_DIR = 'autofill_temp'
 
 DEFAULTS = {
     'enabled': True,
@@ -63,8 +72,7 @@ DEFAULTS = {
     'idle_grace_seconds': 20,          # after a page closes (or touches the files) the worker waits this long (read by the server)
     'batch_size': 20,
     'start_delay_seconds': 10,
-    'save_every_seconds': 120,
-    'wiki_save_every_seconds': 300,
+    'commit_every_seconds': 180,       # how often the temporary files are moved into the final files (both sites together)
     'request_delay_ms': {'danbooru': 400, 'e621': 700},
     'api_base': {'danbooru': '', 'e621': ''},      # empty = the real sites (only changed to test against a fake API)
 }
@@ -336,23 +344,25 @@ class Gate:
         self.last = 0.0
         self.active = False
         self.fails = 0
+        self.lock = threading.Lock()                          # both site threads and the main thread poll
 
     def poll(self, force=False):
         if os.path.exists(self.stop_file):
             raise Stop('stop requested')
-        now = time.time()
-        if force or now - self.last >= 2:
-            self.last = now
-            st, data, _ = http_json(self.url, timeout=5)
-            if st == 200 and isinstance(data, dict):
-                self.fails = 0
-                if self.server_pid and data.get('pid') and int(data['pid']) != int(self.server_pid):
-                    raise Stop('another server took over')
-                self.active = bool(data.get('active'))
-            else:
-                self.fails += 1
-                if self.fails >= 8:
-                    raise Stop('the server is not answering')
+        if force or time.time() - self.last >= 2:
+            with self.lock:
+                if force or time.time() - self.last >= 2:     # another thread may have just asked
+                    self.last = time.time()
+                    st, data, _ = http_json(self.url, timeout=5)
+                    if st == 200 and isinstance(data, dict):
+                        self.fails = 0
+                        if self.server_pid and data.get('pid') and int(data['pid']) != int(self.server_pid):
+                            raise Stop('another server took over')
+                        self.active = bool(data.get('active'))
+                    else:
+                        self.fails += 1
+                        if self.fails >= 8:
+                            raise Stop('the server is not answering')
         if self.active:
             raise Paused()
 
@@ -364,6 +374,68 @@ class Gate:
             if left <= 0:
                 return
             time.sleep(min(1.0, left))
+
+
+# ------------------------------------------------------------------ temporary files (one per site)
+class Journal:
+    """Append-only JSON lines. Changes are collected in memory and written together (flush); a half-written last
+    line (power cut) is ignored when the file is read again."""
+
+    def __init__(self, path):
+        self.path = path
+        self.buf = []
+        self.lock = threading.Lock()
+
+    def add(self, rec):
+        line = json.dumps(rec, ensure_ascii=False, separators=(',', ':'))
+        with self.lock:
+            self.buf.append(line)
+            big = len(self.buf) >= 400
+        if big:
+            self.flush()
+
+    def flush(self):
+        with self.lock:
+            if not self.buf:
+                return
+            try:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                with open(self.path, 'a', encoding='utf-8') as f:
+                    f.write('\n'.join(self.buf) + '\n')
+                self.buf = []
+            except Exception as e:
+                log('Could not write the temporary file {}: {}'.format(os.path.basename(self.path), e), 'FAILED')
+
+    def clear(self):
+        with self.lock:
+            self.buf = []
+            try:
+                os.remove(self.path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                log('Could not remove {}: {}'.format(os.path.basename(self.path), e), 'FAILED')
+
+    def read(self):
+        out = []
+        try:
+            with open(self.path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(r, dict) and r.get('o'):
+                        out.append(r)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log('Could not read {}: {}'.format(os.path.basename(self.path), e), 'ERROR')
+        return out
+
+
+def stamp_of(e):
+    return max(e.get('ts') or 0, e.get('wikiTs') or 0, e.get('aliasTs') or 0) if isinstance(e, dict) else 0
 
 
 # ------------------------------------------------------------------ data in memory
@@ -380,6 +452,73 @@ class Store:
         self.sig = {}
         self.saved_at = {}
         self.stats = {}
+        self.ulock = threading.RLock()                         # the unknown-tags list is shared by both sites
+        self.journals = {s: Journal(os.path.join(local, TEMP_DIR, s + '.jsonl')) for s in SITES}
+
+    def jadd(self, site, **rec):
+        self.journals[site].add(rec)
+
+    def flush_journals(self):
+        for j in self.journals.values():
+            j.flush()
+
+    def replay(self):
+        """Applies the temporary files left by a worker that stopped before moving them into the final files.
+        An entry is only taken when it is not older than what the final file already has."""
+        total = 0
+        for s in SITES:
+            recs = self.journals[s].read()
+            c, w = self.cache[s], self.wiki[s]
+            for r in recs:
+                o, k = r['o'], r.get('k')
+                if o == 'c' and k and isinstance(r.get('e'), dict):
+                    if k in c and stamp_of(c[k]) > stamp_of(r['e']):
+                        continue
+                    c[k] = r['e']
+                    self.dirty.add(s)
+                elif o == 'cx' and k:
+                    c.pop(k, None)
+                    self.dirty.add(s)
+                elif o == 'u' and k:
+                    self._unknown_apply(s, k, bool(r.get('v')))
+                elif o == 'w' and k and isinstance(r.get('e'), dict):
+                    cur = w.get(k)
+                    if cur and (cur.get('ts') or 0) > (r['e'].get('ts') or 0):
+                        continue
+                    if cur and cur.get('m') != 's' and r['e'].get('m') == 's':
+                        continue
+                    w[k] = r['e']
+                    self.dirty.add('wiki')
+                elif o == 'wx' and k:
+                    if w.pop(k, None) is not None:
+                        self.dirty.add('wiki')
+                elif o == 'cur':
+                    cur = self.state.setdefault('cursor', {})
+                    cur[s] = max(int(cur.get(s) or 1), int(r.get('v') or 1))
+                    self.dirty.add('state')
+                elif o == 'ls' and k:
+                    ls = self.state.setdefault('link_skip', {})
+                    if k not in ls.setdefault(s, []):
+                        ls[s].append(k)
+                    self.dirty.add('state')
+            total += len(recs)
+        return total
+
+    def _unknown_apply(self, site, key, flag):
+        with self.ulock:
+            if flag:
+                e = self.unknown.setdefault(key, {'ts': ms()})
+                e[site] = True
+                e['dbVerified' if site == 'danbooru' else 'e621Verified'] = True
+            else:
+                e = self.unknown.get(key)
+                if not e or not e.get(site):
+                    return
+                e.pop(site, None)
+                e.pop('dbVerified' if site == 'danbooru' else 'e621Verified', None)
+                if not (e.get('danbooru') or e.get('e621')):
+                    self.unknown.pop(key, None)
+            self.dirty.add('unknown')
 
     def load(self):
         for s in SITES:
@@ -448,27 +587,39 @@ class Store:
         self.dirty.discard(key)
         return n
 
-    def save(self, cfg, final=False):
-        now = time.time()
-        every = float(cfg.get('save_every_seconds', 120))
-        wiki_every = float(cfg.get('wiki_save_every_seconds', 300))
+    def commit(self):
+        """Moves everything into the final files (all of them in the same moment) and empties the temporary files.
+        Raises Reload - with the temporary files untouched - when a final file was changed by someone else."""
+        self.flush_journals()
+        todo = []
+        for s_ in SITES:
+            if s_ in self.dirty:
+                todo.append((s_, self.paths[s_], lambda s_=s_: pack(self.cache[s_])))
+        if 'wiki' in self.dirty:
+            todo.append(('wiki', self.p_wiki, lambda: self.wiki))
+        if 'unknown' in self.dirty:
+            with self.ulock:
+                todo.append(('unknown', self.p_unknown, lambda: self.unknown))
+        for key, path, _ in todo:                               # check them all first: either everything is written or nothing is
+            self._check(key, path)
         wrote = []
-        for s in SITES:
-            if s in self.dirty and (final or now - self.saved_at[s] >= every):
-                wrote.append('{} {}'.format(CACHE_FILES[s], human(self._write(s, self.paths[s], pack(self.cache[s])))))
-        if 'wiki' in self.dirty and (final or now - self.saved_at['wiki'] >= wiki_every):
-            wrote.append('wiki_full.json {}'.format(human(self._write('wiki', self.p_wiki, self.wiki))))
-        if 'unknown' in self.dirty and (final or now - self.saved_at['unknown'] >= every):
-            wrote.append('unknown_tags.json {}'.format(human(self._write('unknown', self.p_unknown, self.unknown))))
-        if wrote:
+        for key, path, getter in todo:
+            n = self._write(key, path, getter())
+            wrote.append('{} {}'.format(os.path.basename(path), human(n)))
+        if wrote or 'state' in self.dirty:
             self.state['updated'] = ms()
             self.state['stats'] = self.stats
             try:
                 write_atomic(self.p_state, self.state)
                 self._mirror_cursor()
+                self.dirty.discard('state')
             except Exception as e:
                 log('Could not save the state: {}'.format(e), 'FAILED')
-            log('Saved: ' + ', '.join(wrote), 'FILL')
+        for j in self.journals.values():
+            j.clear()
+        if wrote:
+            log('Moved the temporary files into the final ones: ' + ', '.join(wrote), 'SAVE')
+        return wrote
 
     def _mirror_cursor(self):
         """Keeps "idle-crawl" of user_config.json equal to this worker's cursor (the pages read it as their own)."""
@@ -501,10 +652,12 @@ class Store:
             e['m'] = 's'
         self.wiki[site][to_key(key)] = e
         self.dirty.add('wiki')
+        self.jadd(site, o='w', k=to_key(key), e=e)
 
     def wiki_remove(self, site, key):
         if self.wiki[site].pop(to_key(key), None) is not None:
             self.dirty.add('wiki')
+            self.jadd(site, o='wx', k=to_key(key))
 
 
 # ------------------------------------------------------------------ the filler
@@ -529,6 +682,48 @@ class Filler:
         self.app_read = 0.0
         self.logged = 0.0
         self.session = {s: {'filled': 0, 'added': 0} for s in SITES}
+        # --- one thread per site
+        self.halt = threading.Event()                  # set = every site thread must stop what it is doing
+        self.cv = threading.Condition()
+        self.active = 0                                # site threads that are inside a step (the temporary files cannot be moved then)
+        self.committing = False
+        self.tl = threading.local()
+        self.threads = {}
+        self.done = {s: False for s in SITES}          # a site with nothing left to do stops; the other one goes on alone
+        self.last_commit = time.time()
+
+    # --- waiting / stopping (all threads)
+    def poll(self):
+        self.gate.poll()
+        if self.halt.is_set():
+            raise Paused()
+
+    def sleep(self, seconds):
+        end = time.time() + seconds
+        while True:
+            self.poll()
+            left = end - time.time()
+            if left <= 0:
+                return
+            time.sleep(min(1.0, left))
+
+    def enter(self):
+        """A thread is inside a step: changes to memory are happening, so the temporary files must not be moved now."""
+        if getattr(self.tl, 'inside', False):
+            return
+        with self.cv:
+            while self.committing:
+                self.cv.wait(0.5)
+            self.active += 1
+        self.tl.inside = True
+
+    def leave(self):
+        if not getattr(self.tl, 'inside', False):
+            return
+        self.tl.inside = False
+        with self.cv:
+            self.active -= 1
+            self.cv.notify_all()
 
     # --- settings
     def cfg(self):
@@ -603,17 +798,16 @@ class Filler:
             wait = min(max(wait, hit['retry_after']), COOL['retry_after_max'])
         log('{} refused the request{} - standby for {}s, then the same tag is asked again'.format(
             sid, ' (HTTP {})'.format(hit['status']) if hit.get('status') else '', int(wait)), 'WAIT')
+        self.store.journals[sid].flush()                        # what this site learned is safe on disk before a long wait
+        self.leave()                                            # and the other site may move the temporary files meanwhile
         try:
-            self.store.save(self.cfg(), final=True)             # what we have is safe before a long wait
-        except Reload:
-            raise
-        except Exception as e:
-            log('Save before standby failed: {}'.format(e), 'FAILED')
-        self.gate.sleep(wait)
+            self.sleep(wait)
+        finally:
+            self.enter()
 
     def ask(self, sid, path):
         while True:
-            self.gate.poll()
+            self.poll()
             kind, data = self.request(sid, path)
             if kind != 'refused':
                 return kind, data
@@ -629,6 +823,7 @@ class Filler:
         e.update(patch)
         c[key] = e
         self.store.dirty.add(sid)
+        self.store.jadd(sid, o='c', k=key, e=e)
         return e
 
     def is_unknown(self, sid, key):
@@ -636,11 +831,11 @@ class Filler:
         return bool(e and e.get(sid))
 
     def mark_unknown(self, sid, key):
-        e = self.store.unknown.setdefault(key, {'ts': ms()})
-        e[sid] = True
-        e['dbVerified' if sid == 'danbooru' else 'e621Verified'] = True
+        self.store._unknown_apply(sid, key, True)
+        self.store.jadd(sid, o='u', k=key, v=1)
         self.cache(sid).pop(key, None)
-        self.store.dirty.update((sid, 'unknown'))
+        self.store.jadd(sid, o='cx', k=key)
+        self.store.dirty.add(sid)
 
     def needs(self, sid, key, c, now, store_on, full_on):
         if c.get('count') is None or now - (c.get('ts') or 0) > TTL_COUNT:
@@ -711,7 +906,7 @@ class Filler:
             if already and already.get('aliasChecked'):
                 continue
             r = self.fetch_alias(sid, tag)
-            self.gate.sleep(0 if sid == 'danbooru' else self.delay(sid))
+            self.sleep(0 if sid == 'danbooru' else self.delay(sid))
             if not r['ok']:
                 continue
             now = ms()
@@ -719,10 +914,10 @@ class Filler:
                 info = self.single_info(sid, r['alias_to'])
                 self.put(sid, key, {'count': (info or {}).get('count') or 0, 'category': (info or {}).get('category') or 0,
                                     'aliasTo': r['alias_to'], 'aliasChecked': True, 'aliasTs': now, 'isDeprecated': True, 'ts': now})
-                self.gate.sleep(self.delay(sid))
+                self.sleep(self.delay(sid))
             else:
                 exists = self.tag_exists(sid, tag)
-                self.gate.sleep(self.delay(sid))
+                self.sleep(self.delay(sid))
                 if exists is False:
                     self.mark_unknown(sid, key)
                 elif exists is True:
@@ -763,11 +958,11 @@ class Filler:
                             zero.append(t)
                         else:
                             self.put(sid, key, {'aliasTo': None, 'aliasChecked': True, 'aliasTs': now})
-                self.gate.sleep(self.delay(sid, 'batch'))
+                self.sleep(self.delay(sid, 'batch'))
         else:                                                   # e621: one tag per request
             for t in to_fetch:
                 info = self.single_info(sid, t)
-                self.gate.sleep(self.delay(sid))
+                self.sleep(self.delay(sid))
                 if info is None:
                     continue
                 if (info.get('count') or 0) == 0:
@@ -788,8 +983,10 @@ class Filler:
         return {'ok': True, 'has': False}
 
     def apply_wiki(self, sid, key, w, now):
+        cur = self.cache(sid).get(key)
+        if cur:
+            cur.pop('description', None)
         self.put(sid, key, {'wikiChecked': True, 'wikiTs': now, 'hasWikiInfo': w['has']})
-        self.cache(sid)[key].pop('description', None)
         mode = self.wiki_mode()
         if mode == 'off':
             return
@@ -819,18 +1016,14 @@ class Filler:
             w = self.fetch_wiki(sid, e.get('wikiName') or to_api(t))
             if w['ok']:
                 self.apply_wiki(sid, key, w, ms())
-            self.gate.sleep(self.delay(sid))
+            self.sleep(self.delay(sid))
 
     # --- step 2: follow the links of the saved wiki texts
     def unmark_unknown(self, sid, key):
-        e = self.store.unknown.get(key)
-        if not e or not e.get(sid):
+        if not self.is_unknown(sid, key):
             return
-        e.pop(sid, None)
-        e.pop('dbVerified' if sid == 'danbooru' else 'e621Verified', None)
-        if not (e.get('danbooru') or e.get('e621')):
-            self.store.unknown.pop(key, None)
-        self.store.dirty.add('unknown')
+        self.store._unknown_apply(sid, key, False)
+        self.store.jadd(sid, o='u', k=key, v=0)
 
     def wanted_link(self, sid, k):
         return bool(k) and not k.startswith('nl:') and k not in self.cache(sid) and k not in self.skip[sid] and not self.is_unknown(sid, k)
@@ -872,6 +1065,11 @@ class Filler:
             if self.is_unknown(sid, k):                          # a wiki page that is not a tag: remember it here, do not flag it as an unknown tag
                 self.unmark_unknown(sid, k)
                 self.skip[sid].add(k)
+                self.store.jadd(sid, o='ls', k=k)
+                self.store.state.setdefault('link_skip', {}).setdefault(sid, [])
+                if k not in self.store.state['link_skip'][sid]:
+                    self.store.state['link_skip'][sid].append(k)
+                self.store.dirty.add('state')
         self.wiki_batch(sid, [k for k in batch if k in self.cache(sid)])
         for k in batch:
             if k in self.cache(sid):
@@ -888,8 +1086,6 @@ class Filler:
                 if self.fails[sid][k] < MAX_FAILS:
                     fr.append(k)
                     self.in_frontier[sid].add(k)
-        self.store.state['link_skip'] = {x: sorted(self.skip[x]) for x in SITES if self.skip[x]}
-        self.store.dirty.add('unknown')                          # makes the state file be written together with the files
         return len(batch)
 
     def crawl_page(self, sid, page):
@@ -915,18 +1111,20 @@ class Filler:
             e = row_patch(row, now)
             e.update({'aliasTo': None, 'aliasChecked': True, 'aliasTs': now})
             c[key] = e
+            self.store.jadd(sid, o='c', k=key, e=e)
             added += 1
         if added:
             self.store.dirty.add(sid)
         return {'ok': True, 'n': len(rows), 'added': added, 'end': len(rows) < CRAWL_LIMIT}
 
-    # --- one round
+    # --- loading / moving the temporary files into the final ones
     def load(self):
         if self.store is not None:
             return True
         st = Store(self.local)
         if not st.load():
             return False
+        n = st.replay()                                         # left by a worker that stopped before moving them
         self.store = st
         tell_server(self.gate.port, 'working')
         saved = st.state.get('cursor') or {}
@@ -938,22 +1136,76 @@ class Filler:
             self.skip[s] = set((st.state.get('link_skip') or {}).get(s) or [])
             self.ended[s] = self.ended[s] and self.cursor[s] > MAX_PAGE[s]
         st.state['cursor'] = dict(self.cursor)
-        n = {s: len(st.cache[s]) for s in SITES}
+        c = {s: len(st.cache[s]) for s in SITES}
         log('Loaded: Danbooru {:,} tags, e621 {:,} tags, wiki texts {:,}/{:,}, wiki mode "{}"'.format(
-            n['danbooru'], n['e621'], len(st.wiki['danbooru']), len(st.wiki['e621']), self.wiki_mode()))
+            c['danbooru'], c['e621'], len(st.wiki['danbooru']), len(st.wiki['e621']), self.wiki_mode()))
+        if n:
+            log('Recovered {:,} changes from the temporary files of the last run'.format(n), 'SAVE')
+            self.commit()
+        self.last_commit = time.time()
         return True
 
-    def release(self, why=''):
-        """Saves what is in memory and drops it (the pages must be able to own the files)."""
+    def commit(self):
+        """Pauses both site threads between two steps, moves the temporary files into the final files, resumes them."""
+        if self.store is None:
+            return
+        with self.cv:
+            self.committing = True
+            deadline = time.time() + 180
+            while self.active > 0 and time.time() < deadline:
+                self.cv.wait(0.5)
+        try:
+            self.store.stats = {s: dict(self.session[s]) for s in SITES}
+            self.store.state['cursor'] = dict(self.cursor)
+            self.store.commit()
+            self.last_commit = time.time()
+        finally:
+            with self.cv:
+                self.committing = False
+                self.cv.notify_all()
+
+    def maybe_commit(self):
+        every = max(30.0, float(self.cfg().get('commit_every_seconds', 180)))
+        if self.store is not None and time.time() - self.last_commit >= every:
+            if self.store.dirty or any(j.buf for j in self.store.journals.values()):
+                self.commit()
+            else:
+                self.last_commit = time.time()
+
+    def stop_threads(self):
+        self.halt.set()
+        for sid, t in list(self.threads.items()):
+            t.join(timeout=60)
+        self.threads = {}
+        with self.cv:
+            self.active = 0
+            self.committing = False
+
+    def drop_store(self):
+        """Forgets the memory copy WITHOUT writing final files (the temporary files keep every change for the next load)."""
+        self.stop_threads()
         st, self.store = self.store, None
+        if st is not None:
+            st.flush_journals()
+        for s in SITES:
+            self.queue[s] = None
+            self.frontier[s] = None
+        tell_server(self.gate.port, 'idle')
+
+    def release(self, why=''):
+        """Stops the sites, moves the temporary files into the final files and drops the data (the pages must be able to own the files)."""
+        self.stop_threads()
+        st = self.store
         if st is None:
             return
         try:
-            st.save(self.cfg(), final=True)
+            self.commit()
         except Reload:
-            log('A file changed on disk while it was being used here - memory copy dropped, nothing overwritten', 'WARN')
+            log('A file changed on disk while it was being used here - memory copy dropped, nothing overwritten (the temporary files are kept)', 'WARN')
         except Exception as e:
-            log('Could not save: {}'.format(e), 'FAILED')
+            log('Could not save: {} (the temporary files are kept)'.format(e), 'FAILED')
+        self.store = None
+        st.flush_journals()
         if why:
             log(why)
         for s in SITES:
@@ -961,64 +1213,124 @@ class Filler:
             self.frontier[s] = None
         tell_server(self.gate.port, 'idle')
 
-    def step(self):
-        """One round. Returns the number of things done (0 = nothing to do right now)."""
+    # --- one site
+    def step_site(self, sid):
+        """One round for ONE site. Returns the number of things done (0 = nothing left to do for this site right now)."""
         cfg = self.cfg()
+        if not self.site_on(sid):
+            return 0
         bs = max(1, int(cfg.get('batch_size', 20)))
         did = 0
-        left = 0
-        for sid in SITES:
-            if not self.site_on(sid):
-                continue
-            self.gate.poll()
-            if self.queue[sid] is None:
-                self.queue[sid] = [k for k in self.missing(sid) if self.fails[sid].get(k, 0) < MAX_FAILS]
-            q = self.queue[sid]
-            left += len(q)
-            if q:
-                batch, self.queue[sid] = q[:bs], q[bs:]
-                batch = [k for k in batch if k in self.cache(sid)]
-                self.counts_batch(sid, batch)
-                self.wiki_batch(sid, batch)
-                still = set(self.missing(sid, batch))
-                for k in batch:
-                    if k in still:
-                        self.fails[sid][k] = self.fails[sid].get(k, 0) + 1
-                    else:
-                        self.session[sid]['filled'] += 1
-                did += len(batch)
-            elif cfg.get('follow_wiki_links', True) and self.wiki_mode() == 'full' and (self.frontier[sid] is None or self.frontier[sid]) \
-                    and self.link_step(sid, bs):
-                did += 1
-                left += len(self.frontier[sid] or [])
-                if self.queue[sid] is None or not self.queue[sid]:
-                    self.queue[sid] = None                      # the new tags may need more (alias, wiki): look again
-            elif cfg.get('crawl_catalog', True) and not self.ended[sid]:
-                page = self.cursor[sid]
-                if page > MAX_PAGE[sid]:
+        self.poll()
+        if self.queue[sid] is None:
+            self.queue[sid] = [k for k in self.missing(sid) if self.fails[sid].get(k, 0) < MAX_FAILS]
+        q = self.queue[sid]
+        if q:
+            batch, self.queue[sid] = q[:bs], q[bs:]
+            batch = [k for k in batch if k in self.cache(sid)]
+            self.counts_batch(sid, batch)
+            self.wiki_batch(sid, batch)
+            still = set(self.missing(sid, batch))
+            for k in batch:
+                if k in still:
+                    self.fails[sid][k] = self.fails[sid].get(k, 0) + 1
+                else:
+                    self.session[sid]['filled'] += 1
+            did += len(batch)
+        elif cfg.get('follow_wiki_links', True) and self.wiki_mode() == 'full' and (self.frontier[sid] is None or self.frontier[sid]) \
+                and self.link_step(sid, bs):
+            did += 1
+            if self.queue[sid] is None or not self.queue[sid]:
+                self.queue[sid] = None                          # the new tags may need more (alias, wiki): look again
+        elif cfg.get('crawl_catalog', True) and not self.ended[sid]:
+            page = self.cursor[sid]
+            if page > MAX_PAGE[sid]:
+                self.ended[sid] = True
+                return 0
+            r = self.crawl_page(sid, page)
+            did += 1
+            if r['ok']:
+                self.session[sid]['added'] += r['added']
+                self.cursor[sid] = page + 1
+                self.store.state['cursor'] = dict(self.cursor)
+                self.store.dirty.add('state')
+                self.store.jadd(sid, o='cur', v=self.cursor[sid])
+                if r['added']:
+                    self.queue[sid] = None                      # the new tags still need their wiki: rebuild the list
+                if r['end']:
                     self.ended[sid] = True
-                    continue
-                r = self.crawl_page(sid, page)
-                did += 1
-                if r['ok']:
-                    self.session[sid]['added'] += r['added']
-                    self.cursor[sid] = page + 1
-                    self.store.state['cursor'] = dict(self.cursor)
-                    if r['added']:
-                        self.queue[sid] = None                  # the new tags still need their wiki: rebuild the list
-                    if r['end']:
-                        self.ended[sid] = True
-                self.gate.sleep(self.delay(sid))
-        self.store.stats = {s: dict(self.session[s]) for s in SITES}
-        self.store.save(cfg)
-        now = time.time()
-        if now - self.logged > 60:
-            self.logged = now
-            log('D: {} to fill, {} linked left, +{} new / {} filled - e621: {} to fill, {} linked left, +{} new / {} filled - catalog page D{} / e{}'.format(
-                len(self.queue['danbooru'] or []), len(self.frontier['danbooru'] or []), self.session['danbooru']['added'], self.session['danbooru']['filled'],
-                len(self.queue['e621'] or []), len(self.frontier['e621'] or []), self.session['e621']['added'], self.session['e621']['filled'],
-                self.cursor['danbooru'], self.cursor['e621']))
+            self.sleep(self.delay(sid))
         return did
+
+    def run_step(self, sid):
+        self.enter()
+        try:
+            return self.step_site(sid)
+        finally:
+            self.leave()
+            if self.store is not None:
+                self.store.journals[sid].flush()
+
+    def site_loop(self, sid):
+        name = 'Danbooru' if sid == 'danbooru' else 'e621'
+        try:
+            while not self.halt.is_set():
+                try:
+                    did = self.run_step(sid)
+                except (Paused, Stop):
+                    return
+                except Exception as e:                          # never let one unexpected error end a site
+                    import traceback
+                    log('{}: unexpected error: {} - trying again in 30 s'.format(name, e), 'ERROR')
+                    traceback.print_exc()
+                    try:
+                        self.sleep(30)
+                    except (Paused, Stop):
+                        return
+                    continue
+                if did == 0:
+                    self.done[sid] = True
+                    log('{}: nothing left to do - the other site carries on'.format(name) if not self.done[[x for x in SITES if x != sid][0]]
+                        else '{}: nothing left to do'.format(name))
+                    return
+        finally:
+            self.leave()
+
+    # --- one cycle: both sites at once until both have nothing left
+    def run_cycle(self):
+        """True = both sites finished. Raises Paused / Stop / Reload (main thread) like the old single loop."""
+        self.halt.clear()
+        self.done = {s: not self.site_on(s) for s in SITES}
+        self.threads = {}
+        for sid in SITES:
+            if not self.done[sid]:
+                t = threading.Thread(target=self.site_loop, args=(sid,), name='autofill-' + sid, daemon=True)
+                self.threads[sid] = t
+                t.start()
+        try:
+            while any(t.is_alive() for t in self.threads.values()):
+                self.gate.poll()
+                if not self.master_on():
+                    raise Off()
+                self.maybe_commit()
+                now = time.time()
+                if now - self.logged > 60:
+                    self.logged = now
+                    log('D: {} to fill, {} linked left, +{} new / {} filled{} - e621: {} to fill, {} linked left, +{} new / {} filled{} - catalog page D{} / e{}'.format(
+                        len(self.queue['danbooru'] or []), len(self.frontier['danbooru'] or []), self.session['danbooru']['added'], self.session['danbooru']['filled'],
+                        ' (done)' if self.done['danbooru'] else '',
+                        len(self.queue['e621'] or []), len(self.frontier['e621'] or []), self.session['e621']['added'], self.session['e621']['filled'],
+                        ' (done)' if self.done['e621'] else '', self.cursor['danbooru'], self.cursor['e621']))
+                time.sleep(1)
+        except BaseException:
+            self.halt.set()
+            raise
+        self.stop_threads()
+        return all(self.done.values())
+
+
+class Off(Exception):
+    """The master switch was turned off while working."""
 
 
 def main():
@@ -1072,7 +1384,7 @@ def main():
                     log('Some cache file could not be read - trying again in 1 minute', 'WARN')
                     gate.sleep(60)
                     continue
-                if filler.step() == 0:
+                if filler.run_cycle():
                     filler.release('Everything is up to date - checking again in {} minutes'.format(DONE_RECHECK // 60))
                     for s in SITES:
                         filler.ended[s] = filler.ended[s] and filler.cursor[s] > MAX_PAGE[s]
@@ -1086,11 +1398,12 @@ def main():
                     except Paused:
                         time.sleep(2)
                 log('No page is using the files any more - auto-fill resumes')
+            except Off:
+                filler.release('Auto-fill was switched off')
+                gate.sleep(10)
             except Reload as e:
-                log('{} was changed by someone else - reloading it'.format(e), 'WARN')
-                filler.store = None
-                for s in SITES:
-                    filler.queue[s] = None
+                log('{} was changed by someone else - reloading it (nothing is lost: the temporary files are read again)'.format(e), 'WARN')
+                filler.drop_store()
                 time.sleep(2)
             except (Stop, KeyboardInterrupt):
                 raise
@@ -1101,7 +1414,7 @@ def main():
                 try:
                     filler.release()
                 except Exception:
-                    filler.store = None
+                    filler.drop_store()
                 gate.sleep(30)
     except Stop as e:
         log('Stopping ({})'.format(e))
