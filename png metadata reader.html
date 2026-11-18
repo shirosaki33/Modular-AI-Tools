@@ -581,8 +581,9 @@ function applyMetadataToUI(meta) {
         boxAnchor = ibox;
     }
 
-    // --- 2c. Collapsed boxes of extra prompts (e.g. a prompt enhancer's system prompts) ---
+    // --- 2c. Collapsed boxes of extra prompts (e.g. a prompt enhancer's system prompts), shown under the prompts ---
     if (meta._extras && Array.isArray(meta._extras.sections)) {
+        let secAnchor = document.getElementById('negativeBlock');   // right below the Positive / Negative prompts
         meta._extras.sections.forEach((sec, si) => {
             if (!sec || !Array.isArray(sec.items) || !sec.items.length) return;
             const sid = `extraSection_${si}`;
@@ -599,8 +600,8 @@ function applyMetadataToUI(meta) {
                     <textarea class="promptArea" readonly>${escHTML(it.value)}</textarea>`).join('')}
                 </div>
             `;
-            boxAnchor.insertAdjacentElement('afterend', sbox);
-            boxAnchor = sbox;
+            secAnchor.insertAdjacentElement('afterend', sbox);
+            secAnchor = sbox;
         });
     }
 
