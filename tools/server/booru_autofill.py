@@ -55,6 +55,7 @@ MAX_PAGE = {'danbooru': 1000, 'e621': 750}
 SITES = ('danbooru', 'e621')
 UA = 'ModularAITools/1.0 (local Tag Manager auto-fill; github.com/shirosaki33/Modular-AI-Tools)'
 LIMIT_STATUS = {429, 403, 502, 503, 504} | set(range(520, 531))
+SERVER_ERRORS = {500, 502, 503, 504} | set(range(520, 531))
 COOL = {'first': 60, 'step': 30, 'max': 120, 'retry_after_max': 300, 'hard_fail_limit': 5}
 DONE_RECHECK = 600                     # everything is up to date: look again in 10 minutes
 CACHE_FILES = {'danbooru': 'danbooru_cache.json', 'e621': 'e621_cache.json'}
@@ -151,6 +152,20 @@ def wiki_links(body):
     for m in re.finditer(r'/wiki_pages/([^\s)\]"\'<>?#]+)', text):
         add(m.group(1))
     return list(out)
+
+
+def describe(path):
+    """Short name of a request for the log."""
+    m = re.search(r'page=(\d+)', path)
+    if 'search[name_comma]' in path:
+        return 'a batch of tag names'
+    if 'search[order]=count' in path:
+        return 'catalog page ' + (m.group(1) if m else '?')
+    if path.startswith('/wiki_pages/'):
+        return 'a wiki page'
+    if path.startswith('/tag_aliases'):
+        return 'an alias check'
+    return 'a tag lookup'
 
 
 def qs(s):
@@ -673,6 +688,8 @@ class Filler:
         self.frontier = {s: None for s in SITES}      # tags linked by saved wiki texts that are not saved themselves yet
         self.skip = {s: set() for s in SITES}         # linked names that are wiki pages but not tags (never asked again)
         self.in_frontier = {s: set() for s in SITES}
+        self.chunk = {s: 50 for s in SITES}            # Danbooru batch size: shrinks when the site answers 5xx to a big query
+        self.streak = {s: 0 for s in SITES}
         self.cool = {s: 0 for s in SITES}
         self.hard = {s: 0 for s in SITES}
         self.refused = {s: None for s in SITES}
@@ -774,6 +791,8 @@ class Filler:
     def request(self, sid, path):
         """('ok', data) | ('notfound', None) | ('error', None) | ('refused', None)"""
         st, data, ra = http_json(self.base(sid) + path)
+        self.last_path = getattr(self, 'last_path', {})
+        self.last_path[sid] = path
         if st == 200 and data is not None:
             self.cool[sid] = self.hard[sid] = 0
             return 'ok', data
@@ -796,8 +815,9 @@ class Filler:
         wait = min(COOL['first'] + COOL['step'] * (self.cool[sid] - 1), COOL['max'])
         if hit.get('retry_after'):
             wait = min(max(wait, hit['retry_after']), COOL['retry_after_max'])
-        log('{} refused the request{} - standby for {}s, then the same tag is asked again'.format(
-            sid, ' (HTTP {})'.format(hit['status']) if hit.get('status') else '', int(wait)), 'WAIT')
+        what = describe((getattr(self, 'last_path', {}) or {}).get(sid, ''))
+        log('{} refused the request{} for {} - standby for {}s, then the same one is asked again'.format(
+            sid, ' (HTTP {})'.format(hit['status']) if hit.get('status') else '', what, int(wait)), 'WAIT')
         self.store.journals[sid].flush()                        # what this site learned is safe on disk before a long wait
         self.leave()                                            # and the other site may move the temporary files meanwhile
         try:
@@ -805,12 +825,15 @@ class Filler:
         finally:
             self.enter()
 
-    def ask(self, sid, path):
+    def ask(self, sid, path, shrink=None):
         while True:
             self.poll()
             kind, data = self.request(sid, path)
             if kind != 'refused':
                 return kind, data
+            st = (self.refused[sid] or {}).get('status')
+            if shrink and st in SERVER_ERRORS and shrink():      # 5xx = the site choked on a big query: ask for less instead of waiting
+                return 'shrunk', None
             self.standby(sid)
 
     # --- cache helpers
@@ -938,12 +961,20 @@ class Filler:
         if not to_fetch:
             return
         zero = []
-        if sid == 'danbooru':                                   # 50 names per request
-            for i in range(0, len(to_fetch), 50):
-                chunk = to_fetch[i:i + 50]
+        if sid == 'danbooru':                                   # up to 50 names per request (fewer when the site chokes)
+            i = 0
+            while i < len(to_fetch):
+                chunk = to_fetch[i:i + self.chunk[sid]]
                 q = ','.join(qs(to_api(t)) for t in chunk)
-                kind, data = self.ask(sid, '/tags.json?search[name_comma]={}&limit={}'.format(q, len(chunk)))
+                kind, data = self.ask(sid, '/tags.json?search[name_comma]={}&limit={}'.format(q, len(chunk)), shrink=lambda: self.shrink(sid))
+                if kind == 'shrunk':
+                    continue                                    # same tags again, in smaller batches
+                i += len(chunk)
                 if kind == 'ok':
+                    self.streak[sid] += 1
+                    if self.streak[sid] >= 10 and self.chunk[sid] < 50:
+                        self.chunk[sid] = min(50, self.chunk[sid] * 2)
+                        self.streak[sid] = 0
                     found = {}
                     for row in tags_array(data):
                         key = to_key(row.get('name'))
@@ -970,6 +1001,14 @@ class Filler:
                 else:
                     self.put(sid, t.lower(), {'aliasTo': None, 'aliasChecked': True, 'aliasTs': ms()})
         self.resolve_zero(sid, zero)
+
+    def shrink(self, sid):
+        if self.chunk[sid] <= 5:
+            return False
+        self.chunk[sid] = max(5, self.chunk[sid] // 2)
+        self.streak[sid] = 0
+        log('{}: the site could not answer a batch of names - trying batches of {}'.format(sid, self.chunk[sid]), 'WAIT')
+        return True
 
     def fetch_wiki(self, sid, wiki_name):
         kind, data = self.ask(sid, '/wiki_pages/{}.json'.format(qs(wiki_name)))
