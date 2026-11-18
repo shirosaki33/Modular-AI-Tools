@@ -359,6 +359,8 @@
        would also pick system prompts and unused manual prompts.
        ================================================================ */
 
+    let TRACE_NOTE = null;   // side channel filled while tracing one prompt
+
     function pyRegexToJs(src) {
         return String(src).replace(/\\A/g, '^').replace(/\\Z/g, '$');
     }
@@ -401,7 +403,10 @@
             try {
                 const flags = (inp.count === 0 ? 'g' : '') + (inp.case_insensitive ? 'i' : '') + (inp.multiline ? 'm' : '') + (inp.dotall ? 's' : '');
                 const rep = String(next(inp.replace) ?? '').replace(/\$/g, '$$$$').replace(/\\(\d)/g, '$$$1');
-                return str.replace(new RegExp(pyRegexToJs(next(inp.regex_pattern)), flags), rep);
+                const out = str.replace(new RegExp(pyRegexToJs(next(inp.regex_pattern)), flags), rep);
+                // blank input turned into a default text by the workflow itself: not something the user wrote
+                if (TRACE_NOTE && !str.trim() && out.trim()) TRACE_NOTE.fallback = out;
+                return out;
             } catch { return undefined; }
         }
 
@@ -454,13 +459,35 @@
                 posRef = gi.positive ?? gi.conditioning;
                 negRef = gi.negative;
             }
+            TRACE_NOTE = {};
             const pos = traceConditioningText(json, posRef);
             if (typeof pos === 'string' && pos.trim()) {
+                TRACE_NOTE = {};
                 const neg = traceConditioningText(json, negRef);
-                return { pos: cleanPrompt(pos), neg: typeof neg === 'string' ? cleanPrompt(neg) : '' };
+                const note = TRACE_NOTE; TRACE_NOTE = null;
+                // an automatic default negative is not the user's: it goes to the enhancer section instead
+                const auto = note.fallback && neg === note.fallback;
+                return { pos: cleanPrompt(pos), neg: typeof neg === 'string' && !auto ? cleanPrompt(neg) : '', autoNeg: auto ? note.fallback : '' };
             }
+            TRACE_NOTE = null;
         }
         return null;
+    }
+
+    // Prompt-enhancer material (system prompts + automatic negative), kept apart from the user's prompts.
+    function collectEnhancerSection(json, autoNeg) {
+        const items = [];
+        for (const id in json) {
+            const node = json[id];
+            if (!node || typeof node !== 'object') continue;
+            const title = String(nodeTitle(node) || '');
+            if (!/\bsystem\b/i.test(title)) continue;
+            const inp = node.inputs || {};
+            const v = inp.value ?? inp.text ?? inp.string;
+            if (typeof v === 'string' && v.trim()) items.push({ name: title.replace(/\s*[·|]\s*/g, ' · '), value: v.trim() });
+        }
+        if (autoNeg) items.push({ name: 'Automatic negative (used when the negative field is empty)', value: autoNeg });
+        return items.length ? [{ title: 'Prompt Enhancer', items }] : [];
     }
 
     /* ================================================================
@@ -468,11 +495,11 @@
        ================================================================ */
 
     function collectAllPromptNodes(json) {
-        if (!json || typeof json !== 'object') return { positive: '', negative: '' };
+        if (!json || typeof json !== 'object') return { positive: '', negative: '', autoNeg: '' };
 
         // 1) the text really wired into the sampler (handles prompt switches / enhancers)
         const traced = tracePromptsFromSampler(json);
-        if (traced) return { positive: traced.pos, negative: traced.neg };
+        if (traced) return { positive: traced.pos, negative: traced.neg, autoNeg: traced.autoNeg || '' };
 
         // 2) fallback: score every text node
 
@@ -526,7 +553,8 @@
         const neg = negCandidates.map(score).sort((a, b) => b.score - a.score)[0];
         return {
             positive: cleanPrompt(pos ? pos.text : ''),
-            negative: cleanPrompt(neg ? neg.text : '')
+            negative: cleanPrompt(neg ? neg.text : ''),
+            autoNeg: ''
         };
     }
 
@@ -755,6 +783,7 @@
                 vae:       models.vaes.join(' | ')       || null,
                 clipText:  [...models.clips, ...models.text_encoders].join(' | ') || null,
                 extraSamplers: orderedIds.slice(1).map(id => kSamplerParams(json, id)).filter(Boolean),
+                sections:  collectEnhancerSection(json, prompts.autoNeg),
             }
         };
     }

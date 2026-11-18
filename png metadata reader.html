@@ -375,7 +375,11 @@ function openTab(id, btn) {
 
 function toggleSectionCollapse(sectionId) {
     const box = document.getElementById(sectionId);
-    if (box) box.classList.toggle("collapsed");
+    if (box) {
+        box.classList.toggle("collapsed");
+        // textareas measured while hidden have no height: measure them again once visible
+        if (!box.classList.contains("collapsed")) box.querySelectorAll('textarea').forEach(autoResize);
+    }
 }
 
 function copyPrompt(id, btn) {
@@ -575,6 +579,29 @@ function applyMetadataToUI(meta) {
         });
         paramBox.insertAdjacentElement('afterend', ibox);
         boxAnchor = ibox;
+    }
+
+    // --- 2c. Collapsed boxes of extra prompts (e.g. a prompt enhancer's system prompts) ---
+    if (meta._extras && Array.isArray(meta._extras.sections)) {
+        meta._extras.sections.forEach((sec, si) => {
+            if (!sec || !Array.isArray(sec.items) || !sec.items.length) return;
+            const sid = `extraSection_${si}`;
+            const sbox = document.createElement('div');
+            sbox.className = 'png-section collapsible-section collapsed extra-box';
+            sbox.id = sid;
+            sbox.style.display = 'block';
+            sbox.innerHTML = `
+                <div class="section-title" onclick="toggleSectionCollapse('${sid}')">
+                    <b>${escHTML(sec.title || 'Extra prompts')}</b><span class="collapse-arrow">▾</span>
+                </div>
+                <div class="section-content">${sec.items.map(it => `
+                    <div class="promptTitle" style="margin-top:8px"><span>${escHTML(it.name)}</span><button class="copy-btn" onclick="copyFromTextarea(this.parentElement.nextElementSibling, this)">⧉</button></div>
+                    <textarea class="promptArea" readonly>${escHTML(it.value)}</textarea>`).join('')}
+                </div>
+            `;
+            boxAnchor.insertAdjacentElement('afterend', sbox);
+            boxAnchor = sbox;
+        });
     }
 
     // --- 3. Caixas extras para KSamplers (Collapse e Start/End Steps) ---

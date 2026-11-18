@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>PNG Metadata Reader (modern test)</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+
+<style>
+body { margin:0; background:#111; color:#eee; font-family:Arial,Helvetica,sans-serif; }
+.container { max-width:1280px; margin: 20px auto; padding: 0 20px; }
+
+/* --- TOPBAR --- */
+#topbar {
+    background: #1f1f1f;
+    border-bottom: 1px solid #3a3a3a;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    padding: 12px 20px;
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center;
+    z-index: 20;
+}
+.topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+.topbar-section.left { justify-content: flex-start; }
+.topbar-section.center { justify-content: center; text-align: center; }
+.topbar-section.right { justify-content: flex-end; position: relative; }
+#app-title { font-size: 1.2rem; font-weight: bold; color: #eee; letter-spacing: 1px; white-space: nowrap; }
+
+/* --- TOOLS BAR --- */
+#tools-bar-wrap { max-width: 1280px; margin: 16px auto 0; padding: 0 20px 24px; box-sizing: border-box; width: 100%; }
+#tools-bar { border-radius: 10px; }
+#tools-bar-header { display: flex; align-items: center; justify-content: center; padding: 13px 20px; cursor: pointer; user-select: none; background: #141421; border-radius: 10px; border: 1px solid #33335a; transition: background 0.15s; position: relative; }
+#tools-bar-header:hover { background: #1a1a2e; }
+#tools-bar-label { font-size: 13px; font-weight: bold; color: #c084fc; display: flex; align-items: center; gap: 10px; letter-spacing: 0.3px; }
+#tools-bar-arrow { position: absolute; right: 18px; top: 50%; transform: translateY(-50%) rotate(0deg); font-size: 13px; color: #7c8db0; transition: transform 0.18s; }
+#tools-bar.open #tools-bar-arrow { transform: translateY(-50%) rotate(180deg); }
+#tools-bar-body { display: none; margin-top: 6px; background: #10101a; border: 1px solid #33335a; border-radius: 8px; padding: 12px; box-sizing: border-box; width: 100%; overflow: hidden; }
+#tools-bar.open #tools-bar-body { display: block; }
+.tool-module { border-radius: 6px; overflow: hidden; border: 1px solid #1e2d40; margin-bottom: 4px; background: #111827; box-sizing: border-box; width: 100%; }
+.tool-module:last-child { margin-bottom: 0; }
+.tool-module-header { display: flex; align-items: center; justify-content: space-between; padding: 11px 15px; cursor: pointer; user-select: none; background: #111827; transition: background 0.15s; font-size: 13px; font-weight: bold; }
+.tool-module-header:hover { background: #161f30; }
+.tool-module-arrow { font-size: 11px; color: #3a5070; transition: transform 0.18s; transform: rotate(-90deg); }
+.tool-module.open .tool-module-arrow { transform: rotate(0deg); }
+.tool-module-body { display: none; border-top: 1px solid #1e2d40; background: #0d1118; padding: 16px; box-sizing: border-box; width: 100%; }
+.tool-module.open .tool-module-body { display: block; }
+
+/* --- Dropzone --- */
+.dropzone {
+    border: 2px dashed #555; background: #1b1b1b; border-radius: 12px;
+    padding: 35px; text-align: center; cursor: pointer; transition: .2s; margin-bottom: 20px;
+    font-weight: bold; color: #888;
+}
+.dropzone:hover { background: #222; color: #aaa; border-color: #888;}
+.dropzone.drag { border-color: #00ff99; background: #1a2a22; color: #00ff99; }
+input[type="file"] { display: none; }
+
+/* --- Layout Grid --- */
+.grid { display: grid; grid-template-columns: 350px 1fr; gap: 20px; align-items: stretch; }
+.panel { background: #1b1b1b; border-radius: 12px; padding: 15px; display: flex; flex-direction: column; }
+.left-column { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 20px; align-self: start; }
+.panel-left { background: #1b1b1b; border-radius: 12px; padding: 15px; align-self: stretch; }
+
+/* ISOLANDO O CSS PARA NÃO QUEBRAR O METADATA_EDITOR.JS */
+.panel-left img { width: 100%; border-radius: 10px; }
+.panel-left video { width: 100%; border-radius: 10px; background: #000; }
+.small-text { font-size: 13px; color: #aaa; margin-top: 10px; word-break: break-word; text-align: center;}
+
+/* --- Info Bar --- */
+.topbar-info { background: #0d0d0d; border-radius: 8px; padding: 12px; margin-top: 12px; line-height: 1.9; font-size: 13px; color: #ccc; }
+.topbar-row, .topbar-source-row { padding: 6px 0; border-bottom: 1px solid #222; font-size: 13px; color: #eee; }
+.topbar-row:last-child { border-bottom: none; }
+.topbar-label { color: #888; font-weight: bold; margin-right: 5px; }
+
+/* --- Sections --- */
+#organized .png-section { display: none; background: #0d0d0d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.collapsible-section { padding-top: 8px; }
+.section-title { display: flex; align-items: center; gap: 7px; padding: 2px 0 8px; user-select: none; cursor: pointer; }
+.section-title b { flex: 1; color: #ccc; }
+.collapse-arrow { color: #888; font-size: 18px; line-height: 1; margin-left: auto; transition: transform .15s; }
+.section-title:hover .collapse-arrow { color: #00ff99; }
+.collapsible-section.collapsed .collapse-arrow { transform: rotate(-90deg); }
+.collapsible-section.collapsed .section-content { display: none; }
+/* Grid layout lives in a class (not inline) so a collapsed section can actually hide it. */
+.param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+#loraList .lora-item { padding: 8px 0; border-bottom: 1px dashed #222; font-size: 13px; display: flex; align-items: center; justify-content: space-between; }
+#loraList .lora-item:last-child { border-bottom: none; }
+
+/* --- Tabs --- */
+.tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+.tabbtn { background: #333; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.15s; }
+.tabbtn:hover { background: #444; }
+.tabbtn.active { background: #00aa66; color: #000; }
+.tabbtn-raw-export { background: #142414; color: #00ff99; border: 1px solid #1a6a46; padding: 10px 14px; border-radius: 8px; cursor: pointer; margin-left: auto; font-weight: bold; display: none; transition: 0.15s; }
+.tabbtn-raw-export:hover { background: #17381f; border-color: #00aa66; }
+
+.tabcontent { display: none; }
+.tabcontent.active { flex: 1; display: flex; flex-direction: column; }
+
+/* --- Text Areas & Prompts (Isolados do Global) --- */
+.tabcontent textarea { width: 100%; border: none; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; box-sizing: border-box; background: #0d0d0d; color: #00ff99; outline: none; font-family: inherit; }
+.tabcontent textarea:focus { border: 1px solid #00aa66; }
+
+.promptBlock { background: #0d0d0d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.promptTitle { color: #aaa; margin-bottom: 6px; font-size: 14px; display: flex; align-items: center; justify-content: space-between; font-weight: bold;}
+.copy-btn { background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #555; font-size: 14px; transition: .15s; font-weight: bold;}
+.copy-btn:hover { color: #00ff99; background: #1a2a22; }
+.copy-btn.copied { color: #00ff99; }
+.promptArea { min-height: 42px; overflow: hidden; }
+
+#fullText { flex: 1; min-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+
+/* --- Alerts & Footer --- */
+#alertBar { display: none; background: #001b2a; border: 1px solid #1677b8; border-radius: 8px; padding: 10px 16px; margin-bottom: 20px; font-size: 14px; color: #4db8ff; text-align: center; font-weight: bold;}
+#alertBar.red { background: #2a0000; border-color: #aa0000; color: #ff6060; }
+#alertBar.green { background: #0d2a18; border-color: #00aa66; color: #00ff99; }
+
+.footerbar { margin-top: 30px; text-align: center; font-size: 13px; }
+.footerbar a { color: #4db8ff; text-decoration: none; font-weight: bold; }
+.footerbar a:hover { text-decoration: underline; color: #9ecfff; }
+.footer-copy { margin-top: 8px; text-align: center; font-size: 11px; color: #555; }
+</style>
+<style id="modern-theme">
+/* ===== MODERN THEME (test) — overrides only; markup, IDs and JS untouched ===== */
+:root{--m-bg:#0b0e0d;--m-s1:#0f1312;--m-s2:#111513;--m-br:#1f2623;--m-br2:#1b211f;--m-tx:#e6ebe8;--m-mu:#8a968f;--m-dim:#6d7872;--m-ac:#2be39a;--m-acbg:#16231d;--m-acbr:#1f4a38}
+body{background:var(--m-bg)!important;color:var(--m-tx);font-family:'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#topbar{background:var(--m-s1)!important;border-bottom:1px solid var(--m-br)!important;box-shadow:none!important;min-height:52px}
+#app-title{font-size:15px!important;font-weight:500!important;letter-spacing:.2px!important;color:var(--m-tx)!important}
+#app-title .mt-badge{margin-left:10px;font-size:11px;font-weight:500;color:var(--m-ac);background:var(--m-acbg);border:1px solid var(--m-acbr);padding:2px 8px;border-radius:999px;letter-spacing:.04em;vertical-align:2px}
+.dropzone{border:1px dashed #2a3531!important;background:var(--m-s1)!important;border-radius:12px!important;color:var(--m-mu)!important;font-weight:500!important;transition:border-color .15s,background .15s,color .15s}
+.dropzone:hover,.dropzone.drag,.dropzone.dragover{border-color:var(--m-ac)!important;background:#0f1a15!important;color:var(--m-ac)!important}
+.copy-btn{color:var(--m-dim)!important;border-radius:6px!important}
+.copy-btn:hover,.copy-btn.copied{color:var(--m-ac)!important;background:var(--m-acbg)!important}
+.footerbar a,.footer-wrap a.toolLink{color:var(--m-ac)!important;text-shadow:none!important}
+.footer-copy,.footer-wrap .copyright{color:#4a554f!important}
+/* tools bar */
+#tools-bar-header{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+#tools-bar-header:hover{background:var(--m-s2)!important;border-color:#2a3531!important}
+#tools-bar-label{color:#b79cf7!important;font-weight:500!important}
+#tools-bar-body{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+.tool-module{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:10px!important}
+.tool-module-header{background:var(--m-s2)!important;font-weight:500!important}
+.tool-module-header:hover{background:#161c19!important}
+.tool-module-body{background:var(--m-bg)!important;border-top:1px solid var(--m-br)!important}
+.container{max-width:1180px!important;margin:18px auto!important}
+.dropzone{padding:18px 20px!important;margin-bottom:16px!important;font-size:13.5px}
+.grid{grid-template-columns:300px minmax(0,1fr)!important;gap:16px!important}
+.panel,.panel-left{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:14px!important;padding:14px!important}
+.panel-left img,.panel-left video{border-radius:10px!important;border:1px solid var(--m-br)}
+.small-text{color:var(--m-mu)!important;font-size:12px!important}
+.topbar-info{background:var(--m-s1)!important;border:1px solid var(--m-br2);border-radius:10px!important;padding:6px 12px!important;line-height:1.5!important}
+.topbar-row,.topbar-source-row{border-bottom:1px solid var(--m-br2)!important;padding:8px 0!important}
+.topbar-label{color:var(--m-dim)!important;font-weight:500!important;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.tabs{display:inline-flex!important;width:fit-content;background:var(--m-s1);border:1px solid var(--m-br);border-radius:10px;padding:3px;gap:2px!important;margin-bottom:14px!important}
+.tabbtn{background:transparent!important;color:var(--m-mu)!important;border-radius:7px!important;padding:6px 16px!important;font-weight:500!important;font-size:12.5px}
+.tabbtn:hover{color:var(--m-tx)!important}
+.tabbtn.active{background:var(--m-acbg)!important;color:var(--m-ac)!important}
+.tabbtn-raw-export{background:transparent!important;color:var(--m-ac)!important;border:1px solid var(--m-acbr)!important;border-radius:8px!important;padding:6px 12px!important;font-size:12.5px;font-weight:500!important}
+.tabbtn-raw-export:hover{background:var(--m-acbg)!important}
+#organized .png-section,.png-section{background:var(--m-s1)!important;border:1px solid var(--m-br);border-radius:12px!important;padding:6px 12px!important;margin-bottom:12px!important}
+.section-title b{color:#c3ccc7!important;font-weight:500}
+.section-title:hover .collapse-arrow{color:var(--m-ac)!important}
+.param-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;padding-bottom:8px}
+.param-grid>div{background:var(--m-bg)!important;border:1px solid var(--m-br2)!important;border-radius:9px!important;padding:7px 10px!important;display:flex;flex-direction:column;gap:1px}
+.param-grid>div>span:not(.topbar-label){color:#00ff99!important;font-size:13px}
+#loraList .lora-item{border-bottom:1px solid var(--m-br2)!important;padding:9px 0!important}
+.promptBlock{background:var(--m-s1)!important;border:1px solid var(--m-br);border-radius:12px!important;padding:10px 12px!important}
+.promptTitle{color:#c3ccc7!important;font-weight:500!important}
+.tabcontent textarea,.promptArea{background:var(--m-bg)!important;color:#00ff99!important;border:1px solid var(--m-br2)!important;border-radius:8px!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace!important;font-size:12.5px!important;line-height:1.6}
+.tabcontent textarea:focus{border-color:var(--m-acbr)!important}
+#alertBar{border-radius:10px!important;font-weight:500!important}
+@media(max-width:900px){.grid{grid-template-columns:1fr!important}.param-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+
+/* LoRAs section like the mockup */
+#loraBox{padding:0!important;overflow:hidden}
+#loraBox .section-title{padding:11px 12px!important;margin:0}
+#loraBox .section-title b{display:flex;align-items:baseline;gap:6px}
+.lora-count{color:var(--m-dim);font-weight:400;font-size:13px}
+#loraBox .section-content{padding:0}
+#loraList .lora-item{padding:9px 12px!important;border-top:1px solid var(--m-br2)!important;border-bottom:none!important;gap:12px}
+#loraList .lora-item>span:first-child{min-width:0;word-break:break-word}
+.lora-w{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--m-ac);background:#0d2a1f;border:1px solid #17432f;padding:2px 9px;border-radius:6px}
+.collapse-arrow{font-size:16px!important}
+
+/* civitai_lora.js forces block layout inline; restore row layout (name left, weight chip right) */
+#loraList{gap:0!important}
+#loraList .lora-item{display:flex!important;align-items:center!important;justify-content:space-between!important}
+#loraList .lora-item>span:not(.lora-w){display:block!important;width:auto!important;flex:1 1 auto;min-width:0}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+    <div class="topbar-section left" id="topbar-left"></div>
+    <div class="topbar-section center"><span id="app-title">🕵️‍ PNG Metadata Reader 🕵️‍</span></div>
+    <div class="topbar-section right" id="topbar-right"></div>
+</div>
+
+<div class="container">
+    <div class="dropzone" id="dropzone">Choose a file or drag it here (.png, .jpg, .webp, .webm, .mp4, .txt, .json)</div>
+    <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.webm,.mp4,.txt,.json">
+
+    <div id="alertBar"></div>
+
+    <div class="grid">
+        <div class="left-column">
+            <div class="panel-left">
+                <img id="preview" style="display:none;">
+                <video id="previewVideo" controls muted loop playsinline style="display:none;"></video>
+                <div class="small-text" id="imginfo">No file loaded</div>
+                <div class="topbar-info" id="topbarInfo">
+                    <div class="topbar-source-row"><span class="topbar-label">Source:</span> <span id="val-source">—</span></div>
+                    <div class="topbar-row"><span class="topbar-label">Checkpoint:</span> <span id="val-ckpt">—</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="tabs">
+                <button class="tabbtn active" onclick="openTab('organized',this)">Main</button>
+                <button class="tabbtn" onclick="openTab('full',this)">Raw Text</button>
+                <button class="tabbtn-raw-export" id="rawExportBtn" onclick="exportRawText()" title="Download raw metadata text">Export Raw ⭳</button>
+            </div>
+
+            <div id="organized" class="tabcontent active">
+                
+                <div class="png-section" id="paramBox">
+                    <b style="color: #ccc;">Parameters</b>
+                    <div id="paramList" style="margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"></div>
+                </div>
+
+                <div class="png-section collapsible-section" id="loraBox">
+                    <div class="section-title" onclick="toggleSectionCollapse('loraBox')"><b>LoRAs</b><span class="collapse-arrow">▾</span></div>
+                    <div id="loraList" class="section-content"></div>
+                </div>
+
+                <div class="promptBlock" id="positivePromptBlock">
+                    <div class="promptTitle"><span>Positive Prompt</span><button class="copy-btn" title="Copy" onclick="copyPrompt('positiveText',this)">⧉</button></div>
+                    <textarea class="promptArea" id="positiveText" readonly></textarea>
+                </div>
+
+                <div class="promptBlock" id="negativeBlock" style="display:none;">
+                    <div class="promptTitle"><span>Negative Prompt</span><button class="copy-btn" title="Copy" onclick="copyPrompt('negativeText',this)">⧉</button></div>
+                    <textarea class="promptArea" id="negativeText" readonly></textarea>
+                </div>
+
+                <div id="charBlocksContainer"></div>
+            </div>
+
+            <div id="full" class="tabcontent">
+                <textarea id="fullText" readonly></textarea>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="tools-bar-wrap">
+    <div id="tools-bar">
+        <div id="tools-bar-header" onclick="toggleToolsBar()">
+            <span id="tools-bar-label">🧰 Tools 🧰</span>
+            <span id="tools-bar-arrow">▲</span>
+        </div>
+        <div id="tools-bar-body">
+            <div id="modulesPlaceholder">
+                <div style="font-size:12px;color:#555;text-align:center;padding:12px;">
+                    No tools loaded.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="footerbar" style="margin-top:-10px;">
+    <a href="https://github.com/shirosaki33/PNG-Metadata-Reader" target="_blank">GitHub Repository</a>
+</div>
+<div class="footer-copy" style="margin-bottom:20px;">© 2026 shirosaki33</div>
+
+<script src="parsers/png-chunks.js"></script>
+<script src="parsers/stable-diffusion.js"></script>
+<script src="parsers/novelai.js"></script>
+<script src="parsers/comfy.js"></script>
+<script src="parsers/comfyui_novelai.js"></script>
+<script src="parsers/comfyui_video.js"></script>
+<script src="parsers/swarmui.js"></script>
+<script src="parsers/invokeai.js"></script>
+<script src="parsers/fooocus.js"></script>
+
+<script src="tools/quick_links.js"></script>
+<script src="tools/shared/danbooru.js"></script>
+<script src="tools/png_reader/hash_founder.js"></script>
+<script src="tools/png_reader/metadata_editor.js"></script>
+<script src="tools/png_reader/civitai_lora.js"></script>
+
+<script>
+/* --- Variáveis Globais Vitais para os Módulos Funcionarem --- */
+window.currentFile = null;
+window.currentChunks = null;
+window.currentRawText = "";
+window.currentMeta = null;
+
+/* --- Gerenciador Global de Módulos --- */
+window.registerToolModule = function(title, accentColor, contentEl) {
+    const placeholder = document.getElementById('modulesPlaceholder');
+    if (!placeholder) return;
+    
+    if (placeholder.dataset.hasModules !== 'true') {
+        placeholder.innerHTML = '';
+        placeholder.dataset.hasModules = 'true';
+    }
+    
+    const color = accentColor || '#00cc88';
+    const mod = document.createElement('div');
+    mod.className = 'tool-module';
+    
+    const header = document.createElement('div');
+    header.className = 'tool-module-header';
+    header.innerHTML = `<span style="color:${color};">${title}</span><span class="tool-module-arrow" style="color:${color};">▾</span>`;
+    
+    const body = document.createElement('div');
+    body.className = 'tool-module-body';
+    body.appendChild(contentEl);
+
+    header.onclick = () => {
+        const wasOpen = mod.classList.contains('open');
+        mod.classList.toggle('open');
+        if (!wasOpen && typeof contentEl._onExpand === 'function') {
+            contentEl._onExpand();
+        }
+    };
+    
+    mod.appendChild(header);
+    mod.appendChild(body);
+    placeholder.appendChild(mod);
+};
+
+function toggleToolsBar() { document.getElementById('tools-bar').classList.toggle('open'); }
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const preview = document.getElementById("preview");
+const previewVideo = document.getElementById("previewVideo");
+const imginfo = document.getElementById("imginfo");
+const valSource = document.getElementById("val-source");
+const valCkpt = document.getElementById("val-ckpt");
+const loraList = document.getElementById("loraList");
+const loraBox = document.getElementById("loraBox");
+const paramList = document.getElementById("paramList");
+const paramBox = document.getElementById("paramBox");
+const positiveText = document.getElementById("positiveText");
+const negativeText = document.getElementById("negativeText");
+const negativeBlock = document.getElementById("negativeBlock");
+const fullText = document.getElementById("fullText");
+const charContainer = document.getElementById("charBlocksContainer");
+
+dropzone.onclick = () => fileInput.click();
+fileInput.onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); fileInput.value = ""; };
+dropzone.ondragover = e => { e.preventDefault(); dropzone.classList.add("drag"); };
+dropzone.ondragleave = () => dropzone.classList.remove("drag");
+dropzone.ondrop = e => { e.preventDefault(); dropzone.classList.remove("drag"); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+
+function openTab(id, btn) {
+    document.querySelectorAll(".tabcontent").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tabbtn").forEach(x => x.classList.remove("active"));
+    document.getElementById(id).classList.add("active");
+    btn.classList.add("active");
+    const isRaw = id === "full";
+    document.getElementById('rawExportBtn').style.display = isRaw ? "inline-block" : "none";
+    ["loraBox", "paramBox"].forEach(sid => {
+        const el = document.getElementById(sid);
+        if (el) el.style.display = (isRaw || el.dataset.empty === "true") ? "none" : "block";
+    });
+}
+
+function toggleSectionCollapse(sectionId) {
+    const box = document.getElementById(sectionId);
+    if (box) {
+        box.classList.toggle("collapsed");
+        // textareas measured while hidden have no height: measure them again once visible
+        if (!box.classList.contains("collapsed")) box.querySelectorAll('textarea').forEach(autoResize);
+    }
+}
+
+function copyPrompt(id, btn) {
+    const el = document.getElementById(id);
+    if (!el || !el.value) return;
+    navigator.clipboard.writeText(el.value).then(() => {
+        btn.classList.add("copied"); btn.innerText = "✓";
+        setTimeout(() => { btn.classList.remove("copied"); btn.innerText = "⧉"; }, 1500);
+    });
+}
+
+function copyFromTextarea(ta, btn) {
+    if (!ta || !ta.value) return;
+    navigator.clipboard.writeText(ta.value).then(() => {
+        btn.classList.add("copied"); btn.innerText = "✓";
+        setTimeout(() => { btn.classList.remove("copied"); btn.innerText = "⧉"; }, 1500);
+    });
+}
+
+let _alertTimer = null;
+function showAlert(msg, type) {
+    const bar = document.getElementById('alertBar');
+    bar.className = type || 'blue'; bar.innerText = msg; bar.style.display = 'block';
+    clearTimeout(_alertTimer); // um alerta novo não some antes da hora por causa do timer do anterior
+    _alertTimer = setTimeout(() => { bar.style.display = 'none'; }, 5000);
+}
+
+// Texto vindo dos metadados (prompts, nomes de modelo) entra no HTML escapado.
+const escHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function autoResize(el) { setTimeout(() => { el.style.height = 'auto'; el.style.height = (el.scrollHeight) + 'px'; }, 10); }
+
+function exportRawText() {
+    if (!window.currentRawText) return showAlert("No raw metadata available to export.", "red");
+    const blob = new Blob([window.currentRawText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "raw_metadata.txt";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+function cleanLoraName(x) { return String(x || "").replace(/["']/g, "").replace(/\\/g, "/").split("/").pop().replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, "").trim(); }
+
+function extractHashesFromRaw(rawText) {
+    const map = new Map();
+    if (!rawText) return map;
+    
+    // 1. O TRATOR: Vasculha o texto inteiro ignorando regras de linha.
+    // Procura qualquer coisa no formato "nome_do_arquivo: hash" direto ao ponto.
+    const reBruteForce = /([^"',\s:]+)\s*:\s*([a-fA-F0-9]{8,64})\b/g;
+    let m;
+    while ((m = reBruteForce.exec(rawText)) !== null) {
+        const name = cleanLoraName(m[1]).toLowerCase();
+        const hash = m[2].toLowerCase();
+        
+        // Evita que palavras comuns do sistema (como "Model hash") sejam tratadas como LoRA
+        if (!['hash', 'model', 'seed', 'steps', 'sampler', 'version', 'ti'].includes(name)) {
+            map.set(name, hash);
+        }
+    }
+    
+    // 2. Mantém a leitura de JSONs (ComfyUI, Fooocus, etc) intacta
+    const reJson = /"(?:lora_name|name|model_name)"\s*:\s*"([^"]+)"[\s\S]{0,240}?"(?:hash|sha256|autov2|sshs_model_hash)"\s*:\s*"?([a-fA-F0-9]{8,64})"?/gi;
+    while ((m = reJson.exec(rawText)) !== null) { 
+        map.set(cleanLoraName(m[1]).toLowerCase(), m[2].toLowerCase()); 
+    }
+    
+    return map;
+}
+
+function renderLorasWithCivitai(lorasArray, loraListEl, rawText, checkpointContext) {
+    loraListEl.innerHTML = '';
+    const hashMap = extractHashesFromRaw(rawText);
+    lorasArray.forEach(loraStr => {
+        const div = document.createElement('div'); div.className = 'lora-item';
+        let baseName = loraStr, weightStr = "";
+        if (loraStr.includes("| Weight:")) { const parts = loraStr.split("| Weight:"); baseName = parts[0].trim(); weightStr = " | Weight: " + parts[1].trim(); }
+        else if (loraStr.includes(":")) { const parts = loraStr.split(":"); baseName = parts[0].trim(); weightStr = " : " + parts[1].trim(); }
+
+        const cleanBaseName = cleanLoraName(baseName);
+        const hash = hashMap.get(cleanBaseName.toLowerCase());
+
+        // Guarda dados no div para o civitai_lora.js processar
+        div.dataset.loraName    = baseName;
+        div.dataset.loraWeight  = weightStr;
+        div.dataset.loraHash    = hash || '';
+        div.dataset.loraQuery   = cleanBaseName;
+        div.dataset.loraCkptCtx = checkpointContext || '';
+        div.dataset.loraFull    = loraStr;
+
+        const textSpan = document.createElement('span');
+        textSpan.style.color = '#eee';
+        textSpan.textContent = loraStr;
+        div.appendChild(textSpan);
+
+        loraListEl.appendChild(div);
+    });
+}
+
+function resetUI() {
+    valSource.innerText = "—"; valCkpt.innerText = "—";
+    loraList.innerHTML = ''; loraBox.style.display = 'none'; loraBox.dataset.empty = "true";
+    paramList.innerHTML = ''; paramBox.style.display = 'none'; paramBox.dataset.empty = "true";
+    positiveText.value = ''; autoResize(positiveText);
+    negativeText.value = ''; autoResize(negativeText); negativeBlock.style.display = 'none';
+    charContainer.innerHTML = ''; fullText.value = '';
+}
+
+function applyMetadataToUI(meta) {
+    valSource.innerText = meta.source || "Unknown"; 
+    valCkpt.innerText = meta.ckpt || "—";
+    
+    // --- 1. Limpeza dos elementos extras ---
+    document.querySelectorAll('.extra-topbar-row, .extra-ksampler-box, .extra-box').forEach(el => el.remove());
+    const topbarInfo = document.getElementById("topbarInfo");
+    
+    if (meta._extras && topbarInfo) {
+        const addExtraRow = (label, value) => {
+            if (!value) return;
+            const div = document.createElement('div');
+            div.className = 'topbar-row extra-topbar-row';
+            div.innerHTML = `<span class="topbar-label">${escHTML(label)}:</span> <span style="color: #ccc; word-break: break-word;">${escHTML(value)}</span>`;
+            topbarInfo.appendChild(div);
+        };
+
+        addExtraRow('VAE', meta._extras.vae);
+        addExtraRow('Text Encoders', meta._extras.clipText);
+        addExtraRow('Clip Skip', meta._extras.clip_skip);
+        addExtraRow('Upscale Size', meta._extras.upscaleRes);
+        addExtraRow('Hires Steps', meta._extras.hiresSteps);
+        addExtraRow('Hires Denoising', meta._extras.hiresDenoising);
+        addExtraRow('Refiner', meta._extras.refiner);
+        if (Array.isArray(meta._extras.upscalers) && meta._extras.upscalers.length) addExtraRow('Upscaler', meta._extras.upscalers.join(', '));
+        // Free-form rows from parsers that have more to say (video settings, prompt format...).
+        if (Array.isArray(meta._extras.rows)) meta._extras.rows.forEach(r => { if (Array.isArray(r) && r.length > 1) addExtraRow(r[0], r[1]); });
+    }
+
+    // --- 2. Caixa de Parâmetros Principal (Agora com Collapse/Expand Dinâmico) ---
+    const paramBox = document.getElementById("paramBox");
+    paramBox.className = 'png-section collapsible-section'; // Adiciona as classes necessárias
+    
+    // Reescrevemos o HTML interno para usar a estrutura de Collapse idêntica à dos LoRAs
+    paramBox.innerHTML = `
+        <div class="section-title" onclick="toggleSectionCollapse('paramBox')">
+            <b>Parameters</b><span class="collapse-arrow">▾</span>
+        </div>
+        <div id="paramList" class="section-content param-grid"></div>
+    `;
+    const paramList = document.getElementById("paramList");
+
+    const paramsMap = [ 
+        ['Steps', meta.steps], 
+        ['CFG Scale', meta.cfg], 
+        ['Seed', meta.seed], 
+        ['Sampler', meta.sampler], 
+        ['Scheduler', meta.scheduler], 
+        ['Denoise', (meta._extras && meta._extras.denoise && !/^1(\.0+)?$/.test(String(meta._extras.denoise))) ? meta._extras.denoise : ''],
+        ['Size', meta.size] 
+    ];
+
+    let hasParams = false;
+    paramsMap.forEach(([lbl, val]) => {
+        if (val) {
+            hasParams = true; 
+            const div = document.createElement('div');
+            div.style.cssText = "font-size: 13px; background: #111; padding: 6px 10px; border-radius: 6px; border: 1px solid #222;";
+            div.innerHTML = `<span class="topbar-label">${escHTML(lbl)}:</span> <span style="color:#00ff99;">${escHTML(val)}</span>`;
+            paramList.appendChild(div);
+        }
+    });
+    
+    if (hasParams) { 
+        paramBox.dataset.empty = "false"; 
+        if (document.getElementById('organized').classList.contains('active')) paramBox.style.display = 'block'; 
+    }
+    
+    // --- 2b. Parser-specific box (e.g. "MiniMax H3"): rows from _extras.boxRows, expanded ---
+    let boxAnchor = paramBox;
+    if (meta._extras && Array.isArray(meta._extras.boxRows) && meta._extras.boxRows.length) {
+        const bid = 'extraInfoBox';
+        const ibox = document.createElement('div');
+        ibox.className = 'png-section collapsible-section extra-box';
+        ibox.id = bid;
+        ibox.style.display = 'block';
+        ibox.innerHTML = `
+            <div class="section-title" onclick="toggleSectionCollapse('${bid}')">
+                <b>${escHTML(meta._extras.boxTitle || 'Details')}</b><span class="collapse-arrow">▾</span>
+            </div>
+            <div class="section-content param-grid"></div>
+        `;
+        const igrid = ibox.querySelector('.section-content');
+        meta._extras.boxRows.forEach(r => {
+            if (!Array.isArray(r) || r.length < 2 || !r[1]) return;
+            const div = document.createElement('div');
+            div.style.cssText = "font-size: 13px; background: #111; padding: 6px 10px; border-radius: 6px; border: 1px solid #222; word-break: break-word;";
+            div.innerHTML = `<span class="topbar-label">${escHTML(r[0])}:</span> <span style="color:#00ff99;">${escHTML(r[1])}</span>`;
+            igrid.appendChild(div);
+        });
+        paramBox.insertAdjacentElement('afterend', ibox);
+        boxAnchor = ibox;
+    }
+
+    // --- 2c. Collapsed boxes of extra prompts (e.g. a prompt enhancer's system prompts) ---
+    if (meta._extras && Array.isArray(meta._extras.sections)) {
+        meta._extras.sections.forEach((sec, si) => {
+            if (!sec || !Array.isArray(sec.items) || !sec.items.length) return;
+            const sid = `extraSection_${si}`;
+            const sbox = document.createElement('div');
+            sbox.className = 'png-section collapsible-section collapsed extra-box';
+            sbox.id = sid;
+            sbox.style.display = 'block';
+            sbox.innerHTML = `
+                <div class="section-title" onclick="toggleSectionCollapse('${sid}')">
+                    <b>${escHTML(sec.title || 'Extra prompts')}</b><span class="collapse-arrow">▾</span>
+                </div>
+                <div class="section-content">${sec.items.map(it => `
+                    <div class="promptTitle" style="margin-top:8px"><span>${escHTML(it.name)}</span><button class="copy-btn" onclick="copyFromTextarea(this.parentElement.nextElementSibling, this)">⧉</button></div>
+                    <textarea class="promptArea" readonly>${escHTML(it.value)}</textarea>`).join('')}
+                </div>
+            `;
+            boxAnchor.insertAdjacentElement('afterend', sbox);
+            boxAnchor = sbox;
+        });
+    }
+
+    // --- 3. Caixas extras para KSamplers (Collapse e Start/End Steps) ---
+    if (meta._extras && meta._extras.extraSamplers && meta._extras.extraSamplers.length > 0) {
+        let referenceNode = boxAnchor; 
+        
+        meta._extras.extraSamplers.forEach((samp, index) => {
+            const extraId = `extraParamBox_${index}`; // ID único para o Collapse funcionar
+            const box = document.createElement('div');
+            // Same classes as the main box, but only the first sampler (main Parameters box)
+            // starts expanded: every extra KSampler starts collapsed.
+            box.className = 'png-section collapsible-section collapsed extra-ksampler-box'; 
+            box.id = extraId;
+            box.style.display = 'block';
+            
+            box.innerHTML = `
+                <div class="section-title" onclick="toggleSectionCollapse('${extraId}')">
+                    <b>Parameters (KSampler ${index + 2})</b><span class="collapse-arrow">▾</span>
+                </div>
+                <div class="section-content param-grid"></div>
+            `;
+            
+            const grid = box.querySelector('.section-content');
+            
+            // Aqui adicionamos o start_step e end_step que não existiam no painel principal
+            const extraParams = [
+                ['Steps', samp.steps],
+                ['CFG Scale', samp.cfg],
+                ['Seed', samp.seed],
+                ['Sampler', samp.sampler],
+                ['Scheduler', samp.scheduler],
+                ['Denoise', samp.denoise],
+                ['Start Step', samp.start_step],
+                ['End Step', samp.end_step],
+                ['Size', samp.size]
+            ];
+            
+            extraParams.forEach(([lbl, val]) => {
+                if (val) {
+                    const div = document.createElement('div');
+                    div.style.cssText = "font-size: 13px; background: #111; padding: 6px 10px; border-radius: 6px; border: 1px solid #222;";
+                    div.innerHTML = `<span class="topbar-label">${escHTML(lbl)}:</span> <span style="color:#00ff99;">${escHTML(val)}</span>`;
+                    grid.appendChild(div);
+                }
+            });
+            
+            referenceNode.insertAdjacentElement('afterend', box);
+            referenceNode = box; 
+        });
+    }
+
+    // --- 4. Restante original (LoRAs, Prompts e Notes) ---
+    loraList.innerHTML = ''; 
+    let hasLoras = false;
+    if (meta.loras) {
+        const arr = meta.loras.split(',').map(s => s.trim()).filter(s => s);
+        if (arr.length > 0) { hasLoras = true; renderLorasWithCivitai(arr, loraList, window.currentRawText, meta.ckpt); }
+    }
+    if (hasLoras) { 
+        loraBox.dataset.empty = "false"; 
+        if (document.getElementById('organized').classList.contains('active')) loraBox.style.display = 'block'; 
+    }
+    
+    positiveText.value = meta.pos || ''; autoResize(positiveText);
+    negativeText.value = meta.neg || ''; 
+    if (meta.neg) { negativeBlock.style.display = 'block'; autoResize(negativeText); }
+    
+    if (meta.notes && Array.isArray(meta.notes) && meta.notes.length > 0) {
+        meta.notes.forEach((note, i) => {
+            let pos = '', neg = ''; const val = String(note.value || '');
+            if (val.includes('Positive:')) { 
+                const parts = val.split('Negative:'); 
+                pos = parts[0].replace('Positive:', '').trim(); 
+                if (parts.length > 1) neg = parts[1].trim(); 
+            } else { 
+                pos = val; 
+            }
+            if (pos || neg) buildCharBlock(i + 1, pos, neg, note.name);
+        });
+    }
+}
+
+function buildCharBlock(index, pos, neg, name = "") {
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "border:1px solid #222;border-radius:8px;padding:12px;margin-bottom:12px;background:#141414";
+    const displayName = name ? name : (`Note / Character ${index}`);
+    wrapper.innerHTML = `
+        <div style="color:#00ff99;font-size:13px;font-weight:bold;margin-bottom:8px;text-transform:uppercase;">${escHTML(displayName)}</div>
+        ${pos ? `<div class="promptTitle"><span>Positive</span><button class="copy-btn" onclick="copyFromTextarea(this.nextElementSibling, this)">⧉</button></div><textarea class="promptArea" readonly>${escHTML(pos)}</textarea>` : ''}
+        ${neg ? `<div class="promptTitle" style="margin-top:8px"><span>Negative</span><button class="copy-btn" onclick="copyFromTextarea(this.nextElementSibling, this)">⧉</button></div><textarea class="promptArea" readonly>${escHTML(neg)}</textarea>` : ''}
+    `;
+    charContainer.appendChild(wrapper); wrapper.querySelectorAll('textarea').forEach(ta => autoResize(ta));
+}
+
+/* Reads the EXIF "UserComment" (tag 0x9286) from a JPEG or WEBP. A1111/Forge store
+   their parameters there, usually as UTF-16 ("UNICODE\0" prefix), so non-ASCII
+   prompts (Japanese, emoji...) only survive if it is decoded properly. */
+function extractExifUserComment(buf) {
+    const u8 = new Uint8Array(buf);
+    const ascii = (a, o, n) => String.fromCharCode(...a.subarray(o, o + n));
+    let tiff = null;
+    if (u8[0] === 0xFF && u8[1] === 0xD8) {                       // JPEG: find the APP1 "Exif" segment
+        let p = 2;
+        while (p + 4 <= u8.length) {
+            if (u8[p] !== 0xFF) { p++; continue; }
+            const marker = u8[p + 1];
+            if (marker === 0xFF) { p++; continue; }               // fill byte
+            if (marker === 0xDA || marker === 0xD9) break;        // start of scan / end of image
+            if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD8)) { p += 2; continue; }
+            const len = (u8[p + 2] << 8) | u8[p + 3];
+            if (marker === 0xE1 && len >= 8 && ascii(u8, p + 4, 4) === 'Exif' && u8[p + 8] === 0 && u8[p + 9] === 0) {
+                tiff = u8.subarray(p + 10, p + 2 + len); break;
+            }
+            p += 2 + len;
+        }
+    } else if (ascii(u8, 0, 4) === 'RIFF' && ascii(u8, 8, 4) === 'WEBP') {   // WEBP: "EXIF" chunk
+        let p = 12;
+        while (p + 8 <= u8.length) {
+            const type = ascii(u8, p, 4);
+            const size = (u8[p + 4] | (u8[p + 5] << 8) | (u8[p + 6] << 16) | (u8[p + 7] << 24)) >>> 0;
+            if (type === 'EXIF') {
+                let d = u8.subarray(p + 8, p + 8 + size);
+                if (ascii(d, 0, 4) === 'Exif') d = d.subarray(6);
+                tiff = d; break;
+            }
+            p += 8 + size + (size & 1);
+        }
+    }
+    if (!tiff || tiff.length < 8) return '';
+    const le = tiff[0] === 0x49 && tiff[1] === 0x49;
+    if (!le && !(tiff[0] === 0x4D && tiff[1] === 0x4D)) return '';
+    const dv = new DataView(tiff.buffer, tiff.byteOffset, tiff.byteLength);
+    const u16 = o => dv.getUint16(o, le), u32 = o => dv.getUint32(o, le);
+    if (u16(2) !== 42) return '';
+    const TYPE_SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
+    const readIfd = off => {
+        const tags = new Map();
+        if (off + 2 > tiff.length) return tags;
+        const n = u16(off);
+        for (let i = 0; i < n; i++) {
+            const e = off + 2 + i * 12;
+            if (e + 12 > tiff.length) break;
+            const size = (TYPE_SIZE[u16(e + 2)] || 1) * u32(e + 4);
+            tags.set(u16(e), { size, off: size <= 4 ? e + 8 : u32(e + 8), value: u32(e + 8) });
+        }
+        return tags;
+    };
+    const ifd0 = readIfd(u32(4));
+    let entry = ifd0.get(0x9286);
+    if (!entry && ifd0.has(0x8769)) entry = readIfd(ifd0.get(0x8769).value).get(0x9286);
+    if (!entry || entry.size < 8 || entry.off + entry.size > tiff.length) return '';
+
+    const bytes = tiff.subarray(entry.off, entry.off + entry.size);
+    const prefix = ascii(bytes, 0, 8);
+    const body = bytes.subarray(8);
+    let text;
+    if (prefix === 'UNICODE\0') {
+        let be = true, b = body;
+        if (b[0] === 0xFE && b[1] === 0xFF) b = b.subarray(2);
+        else if (b[0] === 0xFF && b[1] === 0xFE) { be = false; b = b.subarray(2); }
+        else if (b.length > 1 && b[0] !== 0 && b[1] === 0) be = false;  // ASCII char with the zero byte second = little-endian
+        text = new TextDecoder(be ? 'utf-16be' : 'utf-16le').decode(b);
+    } else if (prefix === 'ASCII\0\0\0') {
+        text = new TextDecoder('latin1').decode(body);
+    } else if (/^\0{8}$/.test(prefix)) {
+        text = new TextDecoder('utf-8').decode(body);
+    } else if (prefix.startsWith('JIS')) {
+        return '';
+    } else {
+        text = new TextDecoder('utf-8').decode(bytes);                  // writers that skip the charset prefix
+    }
+    return text.replace(/\0+$/g, '').trim();
+}
+
+function extrairTextoDeBytes(buf) {
+    // latin1 = 1 byte -> 1 caractere (igual ao loop antigo, bem mais rápido em arquivos grandes)
+    const raw = new TextDecoder('latin1').decode(new Uint8Array(buf));
+    const candidates = []; const jsonRe = /\{[\s\S]{10,}/g; let m;
+    while ((m = jsonRe.exec(raw)) !== null) {
+        const start = m.index; let depth = 0, inStr = false, esc = false;
+        for (let i = start; i < raw.length && i < start + 2000000; i++) {
+            const c = raw[i];
+            if (esc) { esc = false; continue; }
+            if (c === '\\') { esc = true; continue; }
+            if (c === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (c === '{') depth++; else if (c === '}') { depth--; if (depth === 0) { const candidate = raw.slice(start, i + 1); if (candidate.includes('class_type') || candidate.includes('sui_image_params') || candidate.includes('v4_prompt') || candidate.includes('invokeai_metadata') || candidate.includes('base_model')) { candidates.push(candidate); } break; } }
+        }
+        if (candidates.length) break;
+    }
+    const sdIdx = raw.indexOf('Steps:');
+    if (sdIdx !== -1) { const win = raw.slice(Math.max(0, sdIdx - 5000), sdIdx + 2000).replace(/\0/g, ''); candidates.push(win); }
+    return candidates;
+}
+
+async function loadFile(file) {
+    const isImage = file.name.match(/\.(png|jpg|jpeg|webp)$/i);
+    const isVideo = !!file.name.match(/\.(webm|mp4)$/i);
+    if (!isImage && !isVideo && !file.name.match(/\.(txt|json)$/i)) return showAlert("Unsupported file. Please use PNG, JPG, WEBP, WEBM, MP4, TXT or JSON.", "red");
+
+    // Libera a URL da imagem anterior (antes cada arquivo aberto ficava na memória).
+    if (preview.src && preview.src.startsWith('blob:')) URL.revokeObjectURL(preview.src);
+    if (isImage) { preview.src = URL.createObjectURL(file); preview.style.display = "block"; } else { preview.removeAttribute('src'); preview.style.display = "none"; }
+    if (previewVideo.src && previewVideo.src.startsWith('blob:')) { previewVideo.pause(); URL.revokeObjectURL(previewVideo.src); }
+    if (isVideo) { previewVideo.src = URL.createObjectURL(file); previewVideo.style.display = "block"; }
+    else { previewVideo.removeAttribute('src'); previewVideo.style.display = "none"; }
+    imginfo.innerText = `${file.name}  (${Math.round(file.size / 1024)} KB)`;
+    resetUI();
+
+    window.currentFile = file;
+    window.currentChunks = null;
+    window.currentRawText = '';
+    window.currentMeta = null;
+
+    if (file.name.match(/\.png$/i)) {
+        if(window.lerChunksPNG) {
+            window.currentChunks = await window.lerChunksPNG(file);
+            if (window.currentChunks.has('prompt')) { window.currentRawText = window.currentChunks.get('prompt'); } 
+            else {
+                let textChunk = window.currentChunks.get('parameters') ?? '';
+                if (!textChunk) {
+                    for (const [k, v] of window.currentChunks.entries()) {
+                        if (k === 'prompt' || k === 'workflow') continue;
+                        if (v.includes('Steps:') || v.includes('"v4_prompt"') || v.includes('invokeai_metadata') || v.includes('base_model') || v.includes('sui_image_params') || (k === 'Comment' && v.includes('"uc"'))) { textChunk = v; break; }
+                    }
+                }
+                if (!textChunk) {
+                    for (const [k, v] of window.currentChunks.entries()) {
+                        if (k === 'prompt' || k === 'workflow') continue;
+                        try { const j = JSON.parse(v); if (j && typeof j === 'object' && Object.values(j).some(n => n?.class_type)) { textChunk = v; break; } } catch {}
+                    }
+                }
+                window.currentRawText = textChunk;
+            }
+        }
+    } else if (file.name.match(/\.(jpg|jpeg|webp)$/i)) {
+        try {
+            const buf = await file.arrayBuffer();
+            let exifText = '';
+            try { exifText = extractExifUserComment(buf); } catch (e) { console.warn("EXIF read failed:", e); }
+            // A properly decoded EXIF comment wins (keeps non-ASCII text); the raw byte scan stays as fallback.
+            if (exifText && /Steps:\s*\d/.test(exifText)) { window.currentRawText = exifText; }
+            else {
+                const candidates = extrairTextoDeBytes(buf);
+                if (candidates.length > 0) window.currentRawText = candidates[0];
+                else if (exifText) window.currentRawText = exifText;
+            }
+        } catch (e) { console.warn("Error reading binary:", e); }
+    } else if (isVideo) {
+        try { const r = window.readVideoMetadata ? await window.readVideoMetadata(file) : null; window.currentRawText = (r && r.raw) || ''; }
+        catch (e) { console.warn("Error reading video:", e); }
+    } else {
+        window.currentRawText = await file.text();
+    }
+
+    fullText.value = window.currentRawText;
+    if (!window.currentRawText || window.currentRawText.trim() === '') return showAlert("No metadata text could be extracted from this file.", "red");
+
+    let jsonObj = null;
+    try { jsonObj = JSON.parse(window.currentRawText); } catch(e) {}
+    // NovelAI keeps the real model name in a separate "Source" chunk (the Comment JSON has none)
+    if (jsonObj && typeof jsonObj === 'object' && !jsonObj.Source && window.currentChunks && window.currentChunks.get && window.currentChunks.get('Source') &&
+        (jsonObj.v4_prompt || jsonObj.uc !== undefined)) jsonObj.Source = String(window.currentChunks.get('Source'));
+    const cleanJsonString = jsonObj ? JSON.stringify(jsonObj) : window.currentRawText;
+
+    if (/Civitai\s+(resources|metadata)\s*:/i.test(window.currentRawText) || (jsonObj && jsonObj.ecosystem)) {
+        let metaJson = jsonObj && jsonObj.ecosystem ? jsonObj : null;
+        if (!metaJson) { const match = window.currentRawText.match(/Civitai metadata\s*:\s*(\{.*\})/i); if (match) { try { metaJson = JSON.parse(match[1]); } catch(e){} } }
+        if (metaJson) {
+            window.currentMeta = {
+                source: "Civitai", pos: metaJson.prompt || "", neg: metaJson.negativePrompt || metaJson.negative_prompt || "",
+                steps: metaJson.steps, cfg: metaJson.cfgScale || metaJson.cfg, seed: metaJson.seed, sampler: metaJson.sampler, scheduler: metaJson.scheduler || metaJson.scheduleType,
+                size: (metaJson.width && metaJson.height) ? `${metaJson.width} x ${metaJson.height}` : ""
+            };
+            const resources = Array.isArray(metaJson.resources) ? metaJson.resources : [];
+            const ckpt = resources.find(r => /checkpoint/i.test(String(r.type))); if (ckpt) window.currentMeta.ckpt = ckpt.modelName || ckpt.name || "";
+            window.currentMeta.loras = resources.filter(r => /lora/i.test(String(r.type))).map(r => `${r.modelName || r.name || ''} : ${r.weight || r.strength || 1}`).join(", ");
+        }
+    }
+
+    if (!window.currentMeta) {
+        const parsers = [
+            () => window.parseSwarmUI?.(window.currentRawText, jsonObj),
+            () => window.parseInvokeAI?.(window.currentRawText, jsonObj),
+            () => window.parseFooocus?.(window.currentRawText, jsonObj),
+            // ComfyUI video graphs (WebM/MP4 files, or a frame saved from a video workflow).
+            // Returns null for ordinary image graphs, so they still reach parseComfyJSON.
+            () => window.parseComfyVideo?.(window.currentRawText, jsonObj, { force: isVideo }),
+            // ComfyUI workflows built with the NovelAI custom nodes must be tried
+            // before the generic parseNovelAI: both "detect" this text (it contains
+            // the word "NovelAI"), but only this one understands the node graph.
+            () => window.parseComfyNovelAI?.(cleanJsonString),
+            () => window.parseNovelAI?.(window.currentRawText, jsonObj),
+            () => window.parseComfyJSON?.(cleanJsonString),
+            () => window.parseStableDiffusion?.(window.currentRawText)
+        ];
+        for (let fn of parsers) { try { window.currentMeta = fn(); if (window.currentMeta) break; } catch (e) { console.warn("Parser error skipped:", e); } }
+    }
+
+    if (!window.currentMeta) return showAlert("Metadata found but couldn't be parsed by known formats.", "red");
+
+    try { window.annotateH3Prompt?.(window.currentMeta); } catch (e) { console.warn("H3 prompt detection skipped:", e); }
+    applyMetadataToUI(window.currentMeta);
+    showAlert("Metadata loaded successfully!", "green");
+    
+    // Notifica os scripts de ferramentas que o carregamento terminou
+    if (window.onMetadataLoaded) window.onMetadataLoaded();
+}
+</script>
+
+<script id="modern-lora-chips">
+(function(){
+  const list=document.getElementById('loraList'); if(!list) return;
+  const esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  function strip(node,ws){
+    const re=new RegExp('\\s*'+esc(ws)+'\\s*$');
+    Array.from(node.childNodes).forEach(n=>{
+      if(n.nodeType===3){ const t=n.nodeValue.replace(/\u00A0/g,' '); if(re.test(t)) n.nodeValue=t.replace(re,''); }
+      else if(n.nodeType===1 && !n.classList.contains('lora-w')){
+        if(n.textContent.replace(/\u00A0/g,' ').trim()===ws) n.remove(); else strip(n,ws);
+      }
+    });
+  }
+  function chipify(item){
+    const ws=(item.dataset.loraWeight||'').trim(); if(!ws) return;
+    const m=ws.match(/-?\d*\.?\d+/); if(!m) return;
+    const span=item.querySelector(':scope>span:not(.lora-w)'); if(!span) return;
+    strip(span,ws);
+    if(!item.querySelector('.lora-w')){ const c=document.createElement('span'); c.className='lora-w'; c.textContent=m[0]; item.appendChild(c); }
+  }
+  function sync(){
+    const items=list.querySelectorAll('.lora-item'); items.forEach(chipify);
+    const b=document.querySelector('#loraBox .section-title b'); if(!b) return;
+    const want=items.length?items.length:0;
+    if(b.dataset.n!==String(want)){ b.dataset.n=String(want); b.innerHTML='LoRAs'+(want?' <span class="lora-count">\u00B7 '+want+'</span>':''); }
+  }
+  new MutationObserver(sync).observe(list,{childList:true,subtree:true,characterData:true});
+})();
+</script>
+</body>
+</html>
