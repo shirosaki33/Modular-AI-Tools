@@ -577,6 +577,38 @@
         }
     }
 
+    // Shiro Video Director: the director node assembles the final ("compiled") prompt, which is shown by a
+    // text-preview node and is the ONLY text the reader should present as the positive prompt.
+    const SHIRO_DIRECTOR = /ShiroVideoDirector|Shiro\s*Video\s*Director/i;
+    function collectShiroPrompt(graph, facts) {
+        const dir = findNodes(graph, SHIRO_DIRECTOR)[0] || null;
+        if (!dir) return;
+        facts.shiro = true;
+        const compiled = v => typeof v === 'string' && v.trim() && (H3_TEXT_A.test(v) || H3_TEXT_B.test(v));
+        let found = '';
+        // 1) a node fed by the director that holds the compiled text
+        forEachNode(graph, node => {
+            if (found) return;
+            const inp = node.inputs || {};
+            if (!Object.keys(inp).some(k => Array.isArray(inp[k]) && String(inp[k][0]) === dir.id)) return;
+            for (const k in inp) if (compiled(inp[k])) { found = inp[k].trim(); return; }
+        });
+        // 2) the director's own preview widget
+        if (!found) {
+            const pv = (dir.node.inputs || {}).minimax_prompt_preview;
+            if (compiled(pv)) found = pv.trim();
+        }
+        // 3) any node that carries a compiled prompt
+        if (!found) {
+            forEachNode(graph, node => {
+                if (found) return;
+                const inp = node.inputs || {};
+                for (const k in inp) if (compiled(inp[k]) && H3_TEXT_A.test(inp[k]) && H3_TEXT_B.test(inp[k])) { found = inp[k].trim(); return; }
+            });
+        }
+        if (found) { facts.h3Prompt = found; facts.h3Title = ''; }
+    }
+
     // SamplerCustomAdvanced-style graphs: noise / sampler / scheduler / guider are separate nodes.
     // Fills only what is still empty, so the Wan / LTXV helpers keep priority.
     function collectCustomSampler(graph, facts) {
@@ -626,6 +658,8 @@
         if (facts.engines.some(x => /WanVideo/i.test(x))) collectWan(graph, facts);
         if (facts.engines.some(x => /LTXV/i.test(x))) collectLTXV(graph, facts);
         if (facts.engines.some(x => /MiniMax H3/i.test(x))) collectMiniMaxH3(graph, facts);
+        if (!facts.h3Prompt) collectShiroPrompt(graph, facts);
+        else if (findNodes(graph, SHIRO_DIRECTOR).length) facts.shiro = true;
         if (facts.isVideo) collectCustomSampler(graph, facts);
         return facts;
     }
@@ -684,7 +718,9 @@
         } else if (facts.brief && (!meta.pos || /\\n/.test(meta.pos))) {
             meta.pos = facts.brief;
         }
-        if (facts.brief && facts.h3Prompt && facts.brief !== facts.h3Prompt) {
+        // Shiro Video Director: show only the compiled prompt, no breakdown notes (annotateH3Prompt skips _h3)
+        if (facts.shiro && facts.h3Prompt) meta._h3 = true;
+        if (facts.brief && facts.h3Prompt && !facts.shiro && facts.brief !== facts.h3Prompt) {
             meta.notes = (Array.isArray(meta.notes) ? meta.notes : []).concat([{ name: 'H3 · Brief (local_prompts)', value: facts.brief }]);
         }
         if (!meta.pos && !meta.neg) meta.pos = '[Prompt not available]';

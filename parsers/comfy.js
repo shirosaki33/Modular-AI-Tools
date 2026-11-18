@@ -354,11 +354,127 @@
     }
 
     /* ================================================================
+       PROMPT TRACE  (follows the links from the sampler to the text that was really used)
+       Needed for workflows with prompt switches / enhancers: scanning every text node
+       would also pick system prompts and unused manual prompts.
+       ================================================================ */
+
+    function pyRegexToJs(src) {
+        return String(src).replace(/\\A/g, '^').replace(/\\Z/g, '$');
+    }
+
+    // Value of a node output; undefined whenever it cannot be known from the stored graph.
+    function traceValue(json, val, depth) {
+        depth = depth || 0;
+        if (depth > 24) return undefined;
+        if (!Array.isArray(val)) return val;
+        const id   = String(val[0] ?? '');
+        const idx  = Number(val[1]) || 0;
+        const node = json && json[id];
+        if (!node || typeof node !== 'object') return undefined;
+        const inp  = node.inputs || {};
+        const type = String(node.class_type || '');
+        const next = v => traceValue(json, v, depth + 1);
+
+        if (/^Primitive/i.test(type)) return next(inp.value);
+
+        if (/^ComfySwitchNode$/i.test(type)) {
+            const c = next(inp.switch);
+            if (c === undefined || c === null || c === '') return undefined;
+            const on = c === true || c === 'true' || (typeof c === 'number' && c !== 0);
+            return next(on ? inp.on_true : inp.on_false);
+        }
+
+        // only the simple "a == 3" style comparisons used by the prompt-mode switches
+        if (/^ComfyMathExpression$/i.test(type)) {
+            const m = String(inp.expression || '').trim().match(/^a\s*(==|!=|>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)$/);
+            if (!m || idx !== 2) return undefined;
+            const a = Number(next(inp['values.a']));
+            if (!Number.isFinite(a)) return undefined;
+            const b = Number(m[2]);
+            return m[1] === '==' ? a === b : m[1] === '!=' ? a !== b : m[1] === '>=' ? a >= b : m[1] === '<=' ? a <= b : m[1] === '>' ? a > b : a < b;
+        }
+
+        if (/^RegexReplace$/i.test(type)) {
+            const str = next(inp.string);
+            if (typeof str !== 'string') return undefined;
+            try {
+                const flags = (inp.count === 0 ? 'g' : '') + (inp.case_insensitive ? 'i' : '') + (inp.multiline ? 'm' : '') + (inp.dotall ? 's' : '');
+                const rep = String(next(inp.replace) ?? '').replace(/\$/g, '$$$$').replace(/\\(\d)/g, '$$$1');
+                return str.replace(new RegExp(pyRegexToJs(next(inp.regex_pattern)), flags), rep);
+            } catch { return undefined; }
+        }
+
+        return undefined;
+    }
+
+    // Text behind a CONDITIONING output (positive or negative); undefined when unknown.
+    function traceConditioningText(json, ref, depth) {
+        depth = depth || 0;
+        if (depth > 24 || !Array.isArray(ref)) return undefined;
+        const id   = String(ref[0] ?? '');
+        const idx  = Number(ref[1]) || 0;
+        const node = json && json[id];
+        if (!node || typeof node !== 'object') return undefined;
+        const inp  = node.inputs || {};
+        const type = String(node.class_type || '');
+
+        if (/CLIPTextEncode/i.test(type)) {
+            const t = traceValue(json, inp.text ?? inp.t5xxl ?? inp.text_g ?? inp.clip_l ?? inp.text_l ?? inp.prompt);
+            return typeof t === 'string' ? t : undefined;
+        }
+
+        // Efficient-style loaders keep both prompts as plain strings
+        const direct = idx === 1 ? inp.negative : inp.positive;
+        if (typeof direct === 'string' && direct.trim()) return direct;
+
+        // pass-through conditioning nodes (guidance, combine, controlnet, masks...)
+        const keys = idx === 1
+            ? ['negative', 'conditioning_negative', 'conditioning', 'conditioning_1']
+            : ['positive', 'conditioning', 'conditioning_1', 'conditioning_to'];
+        for (const k of keys) {
+            if (Array.isArray(inp[k])) {
+                const got = traceConditioningText(json, inp[k], depth + 1);
+                if (got !== undefined) return got;
+            }
+        }
+        return undefined;
+    }
+
+    // { pos, neg } actually wired into the main sampler, or null when it cannot be traced.
+    function tracePromptsFromSampler(json) {
+        const ids = kSamplerOrderedIds(json);
+        Object.keys(json).forEach(id => { if (/SamplerCustom/i.test(String(json[id] && json[id].class_type)) && !ids.includes(id)) ids.push(id); });
+        for (const id of ids) {
+            const inp = (json[id] && json[id].inputs) || {};
+            let posRef = inp.positive, negRef = inp.negative;
+            if (!Array.isArray(posRef) && Array.isArray(inp.guider)) {
+                const g = json[String(inp.guider[0])];
+                const gi = (g && g.inputs) || {};
+                posRef = gi.positive ?? gi.conditioning;
+                negRef = gi.negative;
+            }
+            const pos = traceConditioningText(json, posRef);
+            if (typeof pos === 'string' && pos.trim()) {
+                const neg = traceConditioningText(json, negRef);
+                return { pos: cleanPrompt(pos), neg: typeof neg === 'string' ? cleanPrompt(neg) : '' };
+            }
+        }
+        return null;
+    }
+
+    /* ================================================================
        PROMPT COLLECTION
        ================================================================ */
 
     function collectAllPromptNodes(json) {
         if (!json || typeof json !== 'object') return { positive: '', negative: '' };
+
+        // 1) the text really wired into the sampler (handles prompt switches / enhancers)
+        const traced = tracePromptsFromSampler(json);
+        if (traced) return { positive: traced.pos, negative: traced.neg };
+
+        // 2) fallback: score every text node
 
         const candidates    = [];
         const negCandidates = [];
@@ -367,6 +483,7 @@
             if (typeof v !== 'string' || !v.trim()) return;
             const title = String(nodeTitle(node) || '');
             const type  = String(node.class_type || '');
+            if (/\bsystem\b/i.test(title)) return;   // instructions for a prompt-writing LLM, not an image prompt
             arr.push({ text: v, title, type, score: 0 });
         };
 
