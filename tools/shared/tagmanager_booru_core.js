@@ -39,6 +39,51 @@
     }
     window._booruIsLocalHost = isLocalHost;
 
+    /* BOORU SYNC (replaces the old "page is open" presence): the server's background auto-fill (booru_autofill.py) keeps
+       working while a page is merely OPEN. A page only steps in when it really USES tags — a lookup, a fill, a change
+       that has to be saved — by calling BooruSync.touch(): the worker then saves, lets go of the files and stays away
+       while the page keeps using them (until ~20 s after the last use). Because the worker may have saved new tags
+       since this page loaded its copy, before the page writes a file it MERGES what is on disk into memory
+       (newer entry wins; nothing is ever removed), so a long-open page never wipes the worker's progress.
+       Does nothing outside localhost. */
+    (function sync() {
+        if (!isLocalHost() || window.BooruSync) return;
+        const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const loadedAt = Date.now(), parts = new Map();   // file -> { pull: async fn, seen: server mtime of the copy in memory }
+        let lastRun = 0, chain = Promise.resolve();
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        const state = async () => { try { const r = await fetch('/api/booru_presence', { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (e) { return null; } };
+        async function run() {
+            lastRun = Date.now();
+            try { await fetch('/api/booru_presence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, state: 'use' }) }); } catch (e) { return; }
+            let st = await state();
+            for (let i = 0; st && st.worker === 'working' && i < 24; i++) { await sleep(500); st = await state(); }   // the worker saves and lets go within ~2 s
+            if (!st || !st.mtimes) return;
+            for (const [file, part] of parts) {
+                const m = st.mtimes[file];
+                if (!m) continue;
+                if (part.seen === m) continue;
+                if (part.seen != null || m > loadedAt) { try { await part.pull(); } catch (e) { console.warn('[Booru] Could not merge', file, e); continue; } }
+                part.seen = m;
+            }
+        }
+        window.BooruSync = {
+            register(file, pull) { if (!parts.has(file)) parts.set(file, { pull, seen: null }); },
+            touch() { if (Date.now() - lastRun < 5000) return chain; chain = chain.then(run, run); return chain; },
+            ensure() { if (Date.now() - lastRun < 1500) return chain; chain = chain.then(run, run); return chain; },
+            async wrote(file) { const part = parts.get(file), st = await state(); if (part && st && st.mtimes && st.mtimes[file]) part.seen = st.mtimes[file]; }
+        };
+        // the unknown-tags list is shared by both sites: only keys that are missing here are taken from disk
+        window.BooruSync.register('local/unknown_tags.json', async () => {
+            const res = await fetch('/local/unknown_tags.json?t=' + Date.now(), { cache: 'no-store' });
+            if (!res.ok) return;
+            const json = await res.json(), mem = window.unknownTagsCache = window.unknownTagsCache || {};
+            Object.keys(json).forEach(k => { if (!mem[k]) mem[k] = json[k]; });
+        });
+        if (window.WikiFull && typeof window.WikiFull.pullFromDisk === 'function') window.BooruSync.register('local/wiki_full.json', () => window.WikiFull.pullFromDisk());
+    })();
+    const syncTouch = () => { if (window.BooruSync) window.BooruSync.touch(); };
+
     function queueLocalWrite(fn) {
         if (typeof window._queueLocalCacheWrite === 'function') return window._queueLocalCacheWrite(fn);
         return Promise.resolve().then(fn).catch(() => {});
@@ -64,8 +109,10 @@
         const waiters = _wWaiters.get(file) || []; _wWaiters.set(file, []);
         queueLocalWrite(async () => {
             try {
+                if (window.BooruSync) await window.BooruSync.ensure();   // the worker lets go of the files + newer data on disk is merged first
                 const body = JSON.stringify({ file, data: typeof src === 'function' ? src() : src });
                 await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+                if (window.BooruSync) window.BooruSync.wrote(file);
             } catch (e) { console.warn('[Booru] Could not save', file, e); }
         }).finally(() => { _wBusy.delete(file); waiters.forEach(r => r()); pumpLocalCache(file); });
     }
@@ -159,6 +206,7 @@
     // Vários markUnknown seguidos num lote viram 1 gravação só.
     function scheduleUnknownSave() {
         clearTimeout(_unknownSaveTimer);
+        syncTouch();
         _unknownSaveTimer = setTimeout(() => { _unknownSaveTimer = null; window.saveUnknownTags(); }, 800);
     }
     const flushUnknown = (unload) => {
@@ -263,6 +311,7 @@
         let queue = Promise.resolve();
         let queued = 0;     // batches waiting or running (the idle auto-fill only works when this is 0)
         function queueBatch(fn) {
+            syncTouch();
             queued++;
             const run = () => fn().catch(e => { console.warn(`[${cfg.label} API]`, e); }).finally(() => { queued--; });
             queue = queue.then(run, run);
@@ -345,6 +394,7 @@
             }
         }
         function schedulePersist() {
+            syncTouch();
             clearTimeout(persistTimer);
             persistTimer = setTimeout(() => { persistTimer = null; persist(); }, 800);
         }
@@ -936,6 +986,19 @@
                 window[cfg.localModeVar] = true;
                 let json = {};
                 let needsSync = false;
+                if (window.BooruSync) window.BooruSync.register(cfg.localFile, async () => {   // worker saved newer tags while this page was open
+                    const r = await fetch('/' + cfg.localFile + '?t=' + Date.now(), { cache: 'no-store' });
+                    if (!r.ok) return;
+                    const disk = await r.json();
+                    unpack(disk);
+                    const mem = cache(), stamp = e => Math.max(e.ts || 0, e.wikiTs || 0, e.aliasTs || 0);
+                    let n = 0;
+                    Object.keys(disk).forEach(k => {
+                        const d = disk[k], m = mem[k];
+                        if (d && typeof d === 'object' && (!m || stamp(d) > stamp(m))) { mem[k] = d; n++; }
+                    });
+                    if (n) bump();
+                });
                 await window.loadUnknownTags();
                 try {
                     const res = await fetch('/' + cfg.localFile + '?t=' + Date.now(), { cache: 'no-store' });

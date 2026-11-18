@@ -112,6 +112,7 @@
     const SETTING = 'idle-fill', CURSOR = 'idle-crawl';
 
     const S = {
+        server: false,                 // true = the server's background worker (booru_autofill.py) does the filling; this page only shows / flips its switch
         on: false, running: false, nextAt: 0, backoff: 0, status: '',
         cursor: { danbooru: 1, e621: 1 }, ended: { danbooru: false, e621: false },
         fails: { danbooru: new Map(), e621: new Map() }, listeners: []
@@ -128,6 +129,7 @@
         enabled: () => S.on,
         onStatus(fn) { S.listeners.push(fn); fn(S.status); },
         setEnabled(v, opts) {
+            if (S.server) { serverSwitch(!!v); return; }
             S.on = !!v; S.backoff = 0; S.nextAt = 0;
             S.fails.danbooru.clear(); S.fails.e621.clear(); S.ended.danbooru = S.ended.e621 = false;
             setStatus(S.on ? 'on — starts as soon as the app is idle' : '');
@@ -162,7 +164,7 @@
     }
 
     async function tick() {
-        if (!S.on || S.running) return;
+        if (S.server || !S.on || S.running) return;     // with the server worker this page never fills by itself
         if (window.danbooruInfoEnabled === false) return;
         if (Date.now() < S.nextAt) return;
         if (navigator.onLine === false) return;
@@ -237,7 +239,61 @@
         }
     }
 
+    /* SERVER MODE (localhost): the 🤖 switch IS the "enabled" setting of local/server_config.json (also in the gear of
+       index.html), and the filling is done by the server's background worker, which keeps going with every page closed
+       and steps aside while a page uses tags. Without the server (online version, or it does not answer) everything below
+       stays as before: this page fills by itself while it is idle. */
+    const isLocal = () => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(window.location.hostname) && window.location.protocol !== 'file:';
+    let pollTimer = null;
+    async function serverGet(path) {
+        const r = await fetch(path, { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }
+    async function serverStatus() {
+        try {
+            const s = await serverGet('/api/server_status');
+            const a = s.autofill || {}, cur = ((a.state || {}).cursor) || {}, f = s.presence || {};
+            S.on = !!((s.config || {}).booru_autofill || {}).enabled;
+            if (!S.on) setStatus('');
+            else if (!a.running) setStatus('on — the server worker is not running (restart the server)');
+            else if (f.worker === 'working') setStatus('on — the server is filling in the background · catalog page D' + (cur.danbooru || 1) + (window.showE621 !== false ? ' / e6 ' + (cur.e621 || 1) : ''));
+            else if (f.active) setStatus('on — paused while a tool uses the tag databases');
+            else setStatus('on — the server has nothing to do right now (checks again every 10 min)');
+        } catch (e) { /* the server is busy or restarting: keep the last status */ }
+    }
+    function startPolling() {
+        if (pollTimer) return;
+        pollTimer = setInterval(() => { if (document.visibilityState !== 'hidden') serverStatus(); }, 6000);
+    }
+    async function serverSwitch(v) {
+        S.on = v;
+        setStatus(v ? 'on — the server starts filling as soon as no tool uses the tag databases' : '');
+        try {
+            await fetch('/api/server_config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ booru_autofill: { enabled: v } }) });
+        } catch (e) { setStatus('could not reach the server'); return; }
+        serverStatus();
+    }
+    async function bootServer() {
+        if (!isLocal()) return false;
+        try {
+            const d = await serverGet('/api/server_config');
+            if (!d || !d.config || !d.config.booru_autofill || typeof d.config.booru_autofill.enabled !== 'boolean') return false;   // an older server: use the page's own filler
+            S.server = true;
+            S.on = d.config.booru_autofill.enabled;
+            startPolling();
+            serverStatus();
+            return true;
+        } catch (e) { return false; }
+    }
+
     async function boot() {
+        if (await bootServer()) {
+            api.ready = true;
+            S.listeners.forEach(fn => { try { fn(S.status); } catch (e) {} });
+            document.dispatchEvent(new CustomEvent('idlefill:ready'));
+            return;
+        }
         if (typeof window.getSetting === 'function') {
             try {
                 const cur = await window.getSetting(CURSOR, null);

@@ -79,8 +79,10 @@
         inFlight = true;
         const send = async () => {
             try {
+                if (window.BooruSync) await window.BooruSync.ensure();   // the server's auto-fill lets go of the file + newer texts on disk are merged first
                 const body = serialize();
                 if (body) await fetch('/api/save_local_cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+                if (body && window.BooruSync) window.BooruSync.wrote(FILE);
             } catch (e) { console.warn('[WikiFull] Could not save', FILE, e); }
         };
         const done = () => { inFlight = false; if (again) { again = false; write(false); } };
@@ -94,6 +96,7 @@
     const MAX_WAIT = 120000;
     let dirtySince = 0;
     function schedule() {
+        if (window.BooruSync) window.BooruSync.touch();
         dirty = true;
         if (!dirtySince) dirtySince = Date.now();
         clearTimeout(saveTimer);
@@ -114,8 +117,25 @@
         return e && e.m === 's' && /(^|[\s(])\](?=[\s.,;:!?)]|$)|\[\s*\]/.test(String(e.t || ''));
     }
 
+    /* The server's auto-fill may have saved new texts since this page loaded the file: take what is missing here (or newer),
+       never replace a full text by a short one, never remove anything. */
+    async function pullFromDisk() {
+        const res = await fetch('/' + FILE + '?t=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        SITES.forEach(s => {
+            const disk = (json && json[s]) || {}, mem = data[s];
+            Object.keys(disk).forEach(k => {
+                const d = disk[k], m = mem[k];
+                if (!d || typeof d !== 'object') return;
+                if (!m || ((d.ts || 0) > (m.ts || 0) && !(m.m !== 's' && d.m === 's'))) mem[k] = d;
+            });
+        });
+    }
+
     window.WikiFull = {
         load,
+        pullFromDisk,
         flushNow() { flush(false); },
         ready() { return loadOk; },
         /* Wiki save mode (window.danbooruWikiMode): 'off' | 'short' (800 chars, default) | 'full' */

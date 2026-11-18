@@ -1,8 +1,16 @@
 """Modular AI Tools - local server (port 8100).
 Usage: python tools/server/server_max.py [chrome] [page.html]  (default: index.html)
+
+What it does by itself (settings: local/server_config.json, created on the first run):
+  - warm-up: PyTorch / transformers / onnxruntime are imported and checked in the background right at start, so the
+    pages do not wait for it (first "status" call used to take several seconds); the pip update check is done once;
+  - big cache files (Danbooru / e621 caches, wiki_full.json...) are saved in a background thread: the page gets its answer
+    at once and the server does not re-encode the data (it used to freeze every other request for seconds);
+  - Danbooru / e621 auto-fill: tools/server/booru_autofill.py runs as a separate process and keeps filling the caches
+    (missing counts / wiki texts, then new tags of each site's catalog) while no page that uses those files is open.
 """
-import http.server, json, os, re, shutil, stat, subprocess, sys, threading, time, webbrowser
-from urllib.parse import quote, urlparse, parse_qs
+import atexit, http.server, json, os, re, shutil, stat, subprocess, sys, threading, time, webbrowser
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 PORT = 8100
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # project root (this file lives in tools/server/)
@@ -14,6 +22,92 @@ MODELS_DIR = os.path.join(ROOT, 'models')  # model files (Prompt Helper / Floren
 MODEL_ID_RE = re.compile(r'^[\w.\-]+/[\w.\-]+$')  # "org/name"
 LOCAL_HOSTS = ('localhost', '127.0.0.1', '::1')
 os.chdir(ROOT)
+
+CONFIG_FILE = os.path.join(LOCAL_DIR, 'server_config.json')
+STOP_FILE = os.path.join(LOCAL_DIR, '.autofill_stop')   # the auto-fill worker saves and exits when this file appears
+WATCHED_FILES = ('danbooru_cache.json', 'e621_cache.json', 'wiki_full.json', 'unknown_tags.json')   # files the pages and the worker share
+PRESENCE_TTL = 150      # a page that sent no ping for this long (seconds) is considered closed (background tabs ping slowly)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from booru_autofill import DEFAULTS as _AUTOFILL_DEFAULTS
+except Exception:
+    _AUTOFILL_DEFAULTS = {'enabled': False}
+DEFAULT_CONFIG = {
+    '_about': 'Settings of tools/server/server_max.py. Edit this file and restart the server; missing keys use the defaults.',
+    'warmup': {'pytorch': True, 'onnxruntime': True, 'pip_check': True},
+    'cache_saves': {'background': True, 'background_min_kb': 256},
+    'booru_autofill': _AUTOFILL_DEFAULTS,
+}
+
+
+def _merge(base, extra):
+    out = dict(base)
+    for k, v in (extra or {}).items():
+        out[k] = _merge(base[k], v) if isinstance(base.get(k), dict) and isinstance(v, dict) else v
+    return out
+
+
+def load_config():
+    """local/server_config.json merged over the defaults. Created with the defaults when it does not exist."""
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            user = json.load(f)
+        return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
+    except FileNotFoundError:
+        try:
+            os.makedirs(LOCAL_DIR, exist_ok=True)
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+    except Exception as e:
+        print('[WARN  ] server_config.json could not be read ({}): using the defaults'.format(e), flush=True)
+    return _merge(DEFAULT_CONFIG, {})
+
+
+CONFIG = load_config()
+
+_EDITABLE_TEXT = {'wiki_mode': ('auto', 'off', 'short', 'full')}
+_NOT_EDITABLE = {'_about', 'api_base'}          # api_base only exists to test the worker against a fake API
+
+
+def _sanitize(default, value, name=''):
+    """Takes from `value` only the keys that exist in `default`, with the same type (bool / whole number / known text)."""
+    if isinstance(default, dict):
+        out = {}
+        for k, dv in default.items():
+            if k in _NOT_EDITABLE or not isinstance(value, dict) or k not in value:
+                continue
+            got = _sanitize(dv, value[k], k)
+            if got is not None:
+                out[k] = got
+        return out
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else None
+    if isinstance(default, int):
+        try:
+            n = int(float(value))
+        except (TypeError, ValueError):
+            return None
+        return max(0, min(n, 10 ** 7))
+    if isinstance(default, str):
+        return value if value in _EDITABLE_TEXT.get(name, ()) else None
+    return None
+
+
+def save_config_changes(changes):
+    """Applies the settings sent by the index page: written to local/server_config.json (the worker re-reads it every few
+    seconds) and to the running server (cache_saves). The warm-up options are used the next time the server starts."""
+    clean = _sanitize({k: v for k, v in DEFAULT_CONFIG.items() if k not in _NOT_EDITABLE}, changes)
+    new = _merge(CONFIG, clean)
+    tmp = CONFIG_FILE + '.tmp'
+    os.makedirs(LOCAL_DIR, exist_ok=True)
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(new, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CONFIG_FILE)
+    CONFIG.clear()
+    CONFIG.update(new)
+    return CONFIG
 
 args = [a for a in sys.argv[1:] if a]
 CHROME = any(a.lower() == 'chrome' for a in args)
@@ -77,6 +171,140 @@ def daily_backup(target):
 
 def human_size(n):
     return '{} B'.format(n) if n < 1024 else '{:.1f} KB'.format(n / 1024) if n < 1024 * 1024 else '{:.2f} MB'.format(n / 1024 / 1024)
+
+
+# ---------------------------------------------------------------- saving local/*.json
+_SAVE_HEAD = re.compile(rb'\{\s*"file"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*"data"\s*:\s*')
+
+
+def split_save_body(raw):
+    """(relative path, bytes of the JSON to write) from a POST /api/save_local_cache body.
+
+    The pages always send {"file": ..., "data": <json>}. Then the <json> part is written AS IS: the server neither parses
+    nor re-encodes tens of MB (that used to hold the whole server for seconds and freeze the other pages). Any other
+    shape of body goes the slow way (parse + encode), as before."""
+    m = _SAVE_HEAD.match(raw)
+    if m:
+        body = raw[m.end():].rstrip()
+        if body.endswith(b'}'):
+            payload = body[:-1].rstrip()
+            if payload[:1] in (b'{', b'[') and payload[-1:] in (b'}', b']'):
+                return str(json.loads(m.group(1).decode('utf-8'))) or '?', payload
+    data = json.loads(raw.decode('utf-8'))
+    return str(data.get('file', '')) or '?', json.dumps(data.get('data'), ensure_ascii=False).encode('utf-8')
+
+
+def write_cache_file(target, rel, payload, existed):
+    """tmp file -> daily copy of the old one -> atomic replace. Never raises (logs instead)."""
+    tmp = target + '.tmp'
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(tmp, 'wb') as f:
+            f.write(payload)
+        if existed:
+            daily_backup(target)
+        os.replace(tmp, target)
+        log('OK', '{} {} successfully ({})'.format(rel.replace('\\', '/'), 'modified' if existed else 'created', human_size(len(payload))))
+        return True
+    except Exception as e:
+        log('FAILED', 'Could not save {}: {}'.format(rel.replace('\\', '/'), e))
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return False
+
+
+class CacheWriter:
+    """Writes the big cache files in a background thread. One pending write per file: a newer save of the same file
+    replaces an older one that did not start yet (newest wins, same rule the pages use). A page that asks for a file
+    waits for its pending write first (wait()), so it never reads something older than what it just saved."""
+
+    def __init__(self):
+        self._cv = threading.Condition()
+        self._pending = {}
+        self._writing = set()
+        self._thread = None
+
+    def submit(self, target, rel, payload, existed):
+        with self._cv:
+            self._pending[target] = (rel, payload, existed)
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name='cache-writer', daemon=True)
+                self._thread.start()
+            self._cv.notify_all()
+
+    def _run(self):
+        while True:
+            with self._cv:
+                while not self._pending:
+                    if not self._cv.wait(timeout=5) and not self._pending:
+                        self._thread = None          # idle: the thread ends, the next submit() starts a new one
+                        return
+                target = next(iter(self._pending))
+                rel, payload, existed = self._pending.pop(target)
+                self._writing.add(target)
+            try:
+                write_cache_file(target, rel, payload, existed)
+            finally:
+                with self._cv:
+                    self._writing.discard(target)
+                    self._cv.notify_all()
+
+    def wait(self, target=None, timeout=30):
+        """Blocks until the pending write of `target` (or of everything) is on disk."""
+        end = time.time() + timeout
+        with self._cv:
+            while (target in self._pending or target in self._writing) if target else (self._pending or self._writing):
+                left = end - time.time()
+                if left <= 0:
+                    return False
+                self._cv.wait(left)
+        return True
+
+
+WRITER = CacheWriter()
+atexit.register(lambda: WRITER.wait(timeout=30))
+
+
+# ---------------------------------------------------------------- pages that use the shared cache files
+_presence_lock = threading.Lock()
+_pages = {}            # page id -> time of its last ping
+_presence_last = 0.0   # last time a page USED the shared files (a lookup / a save: tools/shared/tagmanager_booru_core.js)
+_worker_state = 'idle'   # 'working' while the auto-fill worker holds the files in memory
+
+
+def presence_touch(page_id=None, closing=False):
+    global _presence_last
+    now = time.time()
+    with _presence_lock:
+        if page_id:
+            if closing:
+                _pages.pop(page_id, None)
+            else:
+                _pages[page_id] = now
+        _presence_last = now
+
+
+def presence_state():
+    """Active while a page pinged recently or the files were touched in the last few seconds (a page that is closing
+    still writes its caches): the auto-fill worker stays away from the files then."""
+    now = time.time()
+    grace = float((CONFIG.get('booru_autofill') or {}).get('idle_grace_seconds', 20))
+    with _presence_lock:
+        for k, t in list(_pages.items()):
+            if now - t > PRESENCE_TTL:
+                del _pages[k]
+        mt = {}
+        for name in WATCHED_FILES:                                # lets a page notice that the worker saved newer data
+            try:
+                mt['local/' + name] = int(os.path.getmtime(os.path.join(LOCAL_DIR, name)) * 1000)
+            except OSError:
+                pass
+        return {'active': bool(_pages) or (now - _presence_last) < grace, 'pages': len(_pages),
+                'idle_for': round(now - _presence_last, 1) if _presence_last else None, 'pid': os.getpid(),
+                'worker': (_worker_state if (AUTOFILL.get('proc') is not None and AUTOFILL['proc'].poll() is None) else 'idle'), 'mtimes': mt}
 
 
 def dir_size(path):
@@ -228,6 +456,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if route == '/api/installed_tools':
             names = sorted(f for f in os.listdir(ROOT) if f.lower().endswith('.html'))
             return self._reply(200, json.dumps(names).encode('utf-8'))
+        if route == '/api/booru_presence':
+            return self._reply(200, json.dumps(presence_state()).encode('utf-8'))
+        if route == '/api/server_config':
+            body = {'config': CONFIG, 'defaults': {k: v for k, v in DEFAULT_CONFIG.items() if k not in _NOT_EDITABLE}}
+            return self._reply(200, json.dumps(body, ensure_ascii=False).encode('utf-8'))
+        if route == '/api/server_status':
+            return self._reply(200, json.dumps(server_status(), ensure_ascii=False).encode('utf-8'))
         if route == '/api/models_info':
             return self._reply(200, json.dumps({'dir': 'models', 'exists': os.path.isdir(MODELS_DIR)}).encode('utf-8'))
         if route == '/api/models_list':
@@ -238,6 +473,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
         if not self._host_ok():
             return self._forbidden(route)
+        if route.startswith('/local/') and route.lower().endswith('.json'):
+            target = os.path.abspath(os.path.join(ROOT, unquote(route).lstrip('/')))
+            WRITER.wait(target)                                       # never serve a file older than the last save of it
         super().do_GET()
 
     def _save_model_file(self):
@@ -431,6 +669,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log('FAILED', 'Could not locate the folder: {}'.format(e))
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
 
+    def _presence_post(self):
+        """Pages that use the Danbooru / e621 files tell they are open (tools/shared/tagmanager_booru_core.js)."""
+        try:
+            n = int(self.headers.get('Content-Length', 0))
+            data = json.loads(self.rfile.read(min(n, 4096)).decode('utf-8')) if n else {}
+            global _worker_state
+            if data.get('worker') in ('working', 'idle'):          # the auto-fill worker tells whether it holds the files
+                _worker_state = data['worker']
+            else:                                                  # a page: 'use' = it is looking tags up / saving them right now
+                presence_touch()                                   # only "used a moment ago" counts: an open page that does not touch tags does not block the worker
+            self._reply(200, b'{"status": "success"}')
+        except Exception:
+            self._reply(400, b'{"status": "error"}')
+
     def _client_log(self):
         """Errors of the open pages (tools/tagmanager/client_error_log.js) printed in the cmd."""
         try:
@@ -484,39 +736,46 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._copy_file()
         if route == '/api/locate_folder':
             return self._locate_folder()
+        if route == '/api/booru_presence':
+            return self._presence_post()
+        if route == '/api/server_config':
+            try:
+                n = int(self.headers.get('Content-Length', 0))
+                data = json.loads(self.rfile.read(min(n, 65536)).decode('utf-8')) if n else {}
+                cfg = save_config_changes(data if isinstance(data, dict) else {})
+                return self._reply(200, json.dumps({'status': 'success', 'config': cfg}, ensure_ascii=False).encode('utf-8'))
+            except Exception as e:
+                log('FAILED', 'Could not save the settings: {}'.format(e))
+                return self._reply(400, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
         if route != '/api/save_local_cache':
             log('FAILED', 'Unknown POST endpoint: {}'.format(self.path))
             return self._reply(404, b'{"status": "error", "message": "unknown endpoint"}')
 
         rel = '?'
-        tmp = None
         try:
             n = int(self.headers.get('Content-Length', 0))
-            data = json.loads(self.rfile.read(n).decode('utf-8'))
-            rel = str(data.get('file', '')) or '?'
+            raw = self.rfile.read(n) if n else b''
+            if len(raw) != n:
+                raise IOError('connection closed before the file was complete')   # never write a cut-off body
+            rel, payload = split_save_body(raw)
+            del raw
             target = os.path.abspath(os.path.join(ROOT, rel))
             if os.path.commonpath([target, LOCAL_DIR]) != LOCAL_DIR:
                 raise ValueError('path is outside the local/ folder')
             if not target.lower().endswith('.json'):
                 raise ValueError('only .json files can be saved to local/')
+            if os.path.basename(target) in WATCHED_FILES:
+                presence_touch()                                  # a page is writing the shared files: the auto-fill worker stays away
             existed = os.path.exists(target)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            tmp = target + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(data.get('data'), f, ensure_ascii=False)
-            if existed:
-                daily_backup(target)
-            os.replace(tmp, target)
-            log('OK', '{} {} successfully ({})'.format(
-                rel.replace('\\', '/'), 'modified' if existed else 'created', human_size(os.path.getsize(target))))
+            bg = CONFIG.get('cache_saves') or {}
+            if bg.get('background', True) and len(payload) >= int(bg.get('background_min_kb', 256)) * 1024:
+                WRITER.submit(target, rel, payload, existed)      # big file: answer now, write in the background
+                return self._reply(200, b'{"status": "success"}')
+            if not write_cache_file(target, rel, payload, existed):
+                raise IOError('could not write the file (see the message above)')
             self._reply(200, b'{"status": "success"}')
         except Exception as e:
             log('FAILED', 'Could not save {}: {}'.format(rel.replace('\\', '/'), e))
-            if tmp and os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
             self._reply(500, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
 
 
@@ -596,6 +855,8 @@ def _find_marked_folder(name, marker, max_depth=6, time_limit=10.0):
             if key in seen:
                 continue
             seen.add(key)
+            if len(seen) % 100 == 0:
+                time.sleep(0.005)                      # a long disk search must not starve the other requests
             if os.path.basename(folder.rstrip('\\/')).lower() == want and os.path.isfile(os.path.join(folder, marker)):
                 return os.path.abspath(folder)
             if depth >= max_depth:
@@ -761,13 +1022,121 @@ def bind_server():
         log('ERROR', 'The port is still busy (the process may need administrator rights to close). Run this as administrator, or choose P.')
 
 
+WARMUP = {'state': 'off', 'detail': {}}
+AUTOFILL = {'proc': None}
+
+
+def _warmup():
+    """Imports and checks the heavy Python packages in the background, so the first call from a page is instant."""
+    cfg = CONFIG.get('warmup') or {}
+    if not (cfg.get('pytorch') or cfg.get('onnxruntime') or cfg.get('pip_check')):
+        return
+    WARMUP['state'] = 'running'
+    t0 = time.time()
+    try:
+        import florence_backend as fb
+    except Exception as e:
+        WARMUP.update(state='failed', error=str(e))
+        log('FAILED', 'Warm-up: florence_backend could not be imported: {}'.format(e))
+        return
+    if cfg.get('pytorch', True):
+        try:
+            st = fb.status()                       # imports torch + transformers and probes CUDA (later calls are instant)
+            WARMUP['detail']['pytorch'] = {k: st.get(k) for k in ('available', 'torch', 'transformers', 'cuda', 'gpu', 'deps_error')}
+            if st.get('available'):
+                log('INFO', 'PyTorch ready: torch {} / transformers {} / {}'.format(
+                    st.get('torch'), st.get('transformers'), ('GPU: ' + str(st.get('gpu'))) if st.get('cuda') else 'no CUDA GPU (CPU mode)'))
+            else:
+                log('WARN', 'PyTorch is not usable: {}'.format(st.get('deps_error')))
+        except Exception as e:
+            WARMUP['detail']['pytorch'] = {'error': str(e)}
+            log('WARN', 'PyTorch check failed: {}'.format(e))
+    if cfg.get('onnxruntime', True):
+        try:
+            ort = fb._ort()
+            WARMUP['detail']['onnxruntime'] = {'version': ort.__version__, 'providers': list(ort.get_available_providers())}
+            log('INFO', 'onnxruntime ready: {} ({})'.format(ort.__version__, ', '.join(ort.get_available_providers())))
+        except Exception as e:
+            WARMUP['detail']['onnxruntime'] = {'error': str(e)}
+    if cfg.get('pip_check', True):
+        try:
+            orig, box = fb.deps_check, {'t': 0.0, 'v': None, 'lock': threading.Lock()}
+
+            def cached():                          # the PyPI check is asked once and kept for 5 minutes
+                with box['lock']:
+                    if box['v'] is None or time.time() - box['t'] > 300:
+                        box['v'] = orig()
+                        box['t'] = time.time()
+                    return box['v']
+            fb.deps_check = cached
+            r = cached()
+            WARMUP['detail']['pip'] = {'needs_update': r.get('needs_update')}
+            if r.get('needs_update'):
+                log('INFO', 'Packages with an update or missing: {}'.format(', '.join(r['needs_update'])))
+        except Exception as e:
+            WARMUP['detail']['pip'] = {'error': str(e)}
+    WARMUP['state'] = 'done'
+    WARMUP['seconds'] = round(time.time() - t0, 1)
+
+
+def start_autofill():
+    cfg = CONFIG.get('booru_autofill') or {}
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'booru_autofill.py')
+    if not cfg.get('enabled', False) or not os.path.isfile(script):
+        return
+    try:
+        if os.path.exists(STOP_FILE):
+            os.remove(STOP_FILE)
+        AUTOFILL['proc'] = subprocess.Popen([sys.executable, '-u', script, '--root', ROOT, '--port', str(PORT), '--server-pid', str(os.getpid())], cwd=ROOT)
+        log('INFO', 'Danbooru / e621 auto-fill started in the background (PID {}). Settings: local/server_config.json'.format(AUTOFILL['proc'].pid))
+    except Exception as e:
+        log('FAILED', 'Could not start the auto-fill worker: {}'.format(e))
+
+
+def stop_autofill():
+    p = AUTOFILL.get('proc')
+    if not p or p.poll() is not None:
+        return
+    try:
+        open(STOP_FILE, 'w').close()               # the worker saves what it has and exits
+        p.wait(timeout=30)
+    except Exception:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    try:
+        os.remove(STOP_FILE)
+    except OSError:
+        pass
+
+
+def server_status():
+    state = {}
+    try:
+        with open(os.path.join(LOCAL_DIR, 'autofill_state.json'), 'r', encoding='utf-8') as f:
+            state = json.load(f)
+    except Exception:
+        pass
+    p = AUTOFILL.get('proc')
+    return {'pid': os.getpid(), 'warmup': WARMUP, 'presence': presence_state(),
+            'autofill': {'running': bool(p and p.poll() is None), 'state': state},
+            'config': {k: v for k, v in CONFIG.items() if not k.startswith('_')}}
+
+
 httpd = bind_server()
 
 log('INFO', 'Server running at http://localhost:{}  (press Ctrl+C to stop)'.format(PORT))
 log('INFO', 'Serving folder: {}'.format(ROOT))
 log('INFO', 'Cache files are saved to: {}'.format(LOCAL_DIR))
+threading.Thread(target=_warmup, name='warmup', daemon=True).start()
+start_autofill()
+atexit.register(stop_autofill)
 threading.Timer(0.5, open_browser).start()
 try:
     httpd.serve_forever()
 except KeyboardInterrupt:
+    log('INFO', 'Stopping (saving pending files)...')
+    stop_autofill()
+    WRITER.wait(timeout=30)
     log('INFO', 'Server stopped.')

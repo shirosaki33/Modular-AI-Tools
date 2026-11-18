@@ -10,7 +10,7 @@
         
         body { margin: 0; padding: 0; background-color: #111; color: #eee; font-family: 'Inter', Arial, sans-serif; line-height: 1.5; }
         
-        #topbar { background: #1b1b1b; padding: 16px 20px; text-align: center; border-bottom: 1px solid #222; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #topbar { position: relative; background: #1b1b1b; padding: 16px 20px; text-align: center; border-bottom: 1px solid #222; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         #topbar h1 { margin: 0; font-size: 20px; color: #fff; letter-spacing: 0.5px; }
         
         .container { max-width: 960px; margin: 40px auto; padding: 0 20px; }
@@ -46,6 +46,38 @@
         .btn.disabled { background: #111; color: #555; border: 1px solid #222; cursor: not-allowed; text-decoration: line-through; }
         .btn.disabled:hover { background: #111; color: #555; border-color: #222; }
         
+        /* Settings (same look as the gear of the other pages) */
+        #btn-settings { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer; line-height: 1.2; }
+        #btn-settings:hover, #btn-settings.open { color: #00ff99; border-color: #00ff99; }
+        #btn-help { position: absolute; right: 84px; top: 50%; transform: translateY(-50%); background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer; line-height: 1.2; }
+        #btn-help:hover { color: #00ff99; border-color: #00ff99; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2000; justify-content: center; align-items: center; backdrop-filter: blur(5px); overflow: hidden; }
+        .modal-overlay.active { display: flex; }
+        .tool-modal { background: #1b1b1b; padding: 20px; border-radius: 10px; border: 1px solid #333; display: flex; flex-direction: column; gap: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.9); }
+        .tool-modal h3 { margin: 0; font-size: 16px; color: #eee; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .modal-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+        .btn-cancel { background: transparent; border: 1px solid #555; color: #aaa; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn-cancel:hover { background: #333; color: #fff; }
+        .help-body { font-size: 13px; color: #ccc; line-height: 1.6; max-height: 68vh; overflow-y: auto; padding-right: 6px; }
+        .help-body h4 { color: #00ff99; margin: 14px 0 5px; }
+        .help-body h4:first-child { margin-top: 0; }
+        .help-body p { margin: 0 0 10px; }
+        .help-body ul { padding-left: 20px; margin: 0 0 10px; }
+        .help-body li { margin-bottom: 7px; }
+        .help-body code { background: #0d1117; border: 1px solid #263b5a; border-radius: 4px; padding: 0 4px; font-size: 12px; color: #9ecfff; }
+        .help-body .tip { background: #0d1f13; border: 1px solid #1a5c3a; padding: 8px 10px; border-radius: 6px; }
+        .settings-dropdown { display: none; position: absolute; top: 58px; right: 20px; background: #111827; border: 1px solid #263b5a; border-radius: 8px; padding: 14px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.6); width: 340px; max-width: calc(100vw - 40px); max-height: calc(100vh - 90px); overflow-y: auto; flex-direction: column; gap: 9px; text-align: left; }
+        .settings-dropdown.open { display: flex; }
+        .settings-dropdown label { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
+        .settings-dropdown label.row { align-items: center; justify-content: space-between; }
+        .settings-dropdown input[type="checkbox"] { width: auto; margin: 2px 0 0; accent-color: #00ff99; flex-shrink: 0; }
+        .settings-dropdown input[type="number"], .settings-dropdown select { background: #1a1a1a; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 3px 5px; font-size: 12px; width: 78px; flex: none; }
+        .settings-dropdown select { width: auto; }
+        .settings-group-label { font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; margin-top: 4px; margin-bottom: -2px; }
+        .settings-dropdown hr { border: 0; border-top: 1px solid #333; margin: 3px 0; }
+        .settings-dropdown .note { display: block; color: #777; font-weight: normal; font-size: 10px; line-height: 1.4; margin-top: 2px; }
+        #srvStatus { font-size: 11px; color: #9aa; line-height: 1.5; }
+        #srvSaved { font-size: 11px; color: #00cc88; min-height: 14px; }
         .footerbar { margin-top: 60px; text-align: center; font-size: 13px; padding-bottom: 30px;}
         .footerbar a { color: #00ff99; text-decoration: none; font-weight: 600; transition: all 0.2s ease; }
         .footerbar a:hover { color: #fff; text-shadow: 0 0 8px rgba(0, 255, 153, 0.6); }
@@ -55,8 +87,84 @@
 <body>
     <div id="topbar">
         <h1>🧰 Modular AI Tools</h1>
+        <button id="btn-help" title="Help" style="display:none;">❓</button>
+        <button id="btn-settings" title="Server settings" style="display:none;">⚙️</button>
+    </div>
+
+    <div id="settings-dropdown" class="settings-dropdown">
+        <div id="srvStatus">Loading…</div>
+        <hr>
+        <div class="settings-group-label">🚀 Startup <span style="text-transform:none;font-weight:normal;">(used the next time the server starts)</span></div>
+        <label title="Checks PyTorch / CUDA as soon as the server starts, so the tools do not wait for it."><input type="checkbox" data-k="warmup.pytorch"> Check PyTorch at startup</label>
+        <label><input type="checkbox" data-k="warmup.onnxruntime"> Check onnxruntime at startup</label>
+        <label title="Looks for newer versions of the Python packages (cached for 5 minutes)."><input type="checkbox" data-k="warmup.pip_check"> Check package updates at startup</label>
+
+        <div class="settings-group-label">💾 Cache saves</div>
+        <label title="Big cache files are written by a background thread, so the page does not wait for the disk."><input type="checkbox" data-k="cache_saves.background"> Save big cache files in the background</label>
+        <label class="row">Background from (KB)<input type="number" min="0" data-k="cache_saves.background_min_kb"></label>
+
+        <hr>
+        <div class="settings-group-label">🤖 Danbooru / e621 auto-fill <span style="text-transform:none;font-weight:normal;">(applies within seconds)</span></div>
+        <label title="Works in the background while the server runs, and steps aside when a page uses tags. This is the same switch as the 🤖 Auto-fill when idle option of Tag Manager and Prompt Helper."><input type="checkbox" data-k="booru_autofill.enabled"> 🤖 Auto-fill while no tool uses the tag databases</label>
+        <label><input type="checkbox" data-k="booru_autofill.danbooru"> Danbooru</label>
+        <label><input type="checkbox" data-k="booru_autofill.e621"> e621</label>
+        <label title="Downloads the tags that the saved wiki texts link to ([[long hair]]) and follows their links in turn. Needs wiki text = full."><input type="checkbox" data-k="booru_autofill.follow_wiki_links"><span>Follow links of the saved wiki texts<span class="note">Same job as “Fill wiki (recursive)”, but it never loses its place.</span></span></label>
+        <label class="row" title="0 = no limit">Max. new tags from links (per site)<input type="number" min="0" data-k="booru_autofill.link_max_new"></label>
+        <label title="When nothing is left to fill, walks each site's tag list from the most used tag down and adds the tags that are not saved yet."><input type="checkbox" data-k="booru_autofill.crawl_catalog"> Add new tags from the site catalog</label>
+        <label class="row" title="auto = same as the “Wiki text” option of the Tag Interrogator">Wiki text
+            <select data-k="booru_autofill.wiki_mode"><option value="auto">Same as the app</option><option value="off">Off</option><option value="short">Short</option><option value="full">Full</option></select></label>
+        <label class="row" title="How long after the last tag use before the worker starts again.">Resume after tag use (s)<input type="number" min="0" data-k="booru_autofill.idle_grace_seconds"></label>
+        <label class="row">Tags per round<input type="number" min="1" data-k="booru_autofill.batch_size"></label>
+        <label class="row">Delay between requests, Danbooru (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.danbooru"></label>
+        <label class="row">Delay between requests, e621 (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.e621"></label>
+        <label class="row">Save the cache every (s)<input type="number" min="5" data-k="booru_autofill.save_every_seconds"></label>
+        <label class="row">Save the wiki texts every (s)<input type="number" min="5" data-k="booru_autofill.wiki_save_every_seconds"></label>
+        <div id="srvSaved"></div>
     </div>
     
+
+    <div id="modal-help" class="modal-overlay">
+        <div class="tool-modal" style="width: 660px; max-width: 94vw;">
+            <h3>❓ Help — Server settings (⚙️)</h3>
+            <div class="help-body">
+                <p>These options belong to the local server (<code>server_max.py</code>). They are saved in <code>local/server_config.json</code> and are only available when this page is opened through the local server (localhost). Every change is saved automatically.</p>
+
+                <h4>Status</h4>
+                <p>The lines at the top of the panel show whether the server is online, whether PyTorch (and CUDA) and onnxruntime were found, and what the background auto-fill is doing right now: <i>working</i>, <i>paused</i> (a tool is using the tag databases) or <i>off</i>.</p>
+
+                <h4>🚀 Startup <span style="color:#777;font-weight:normal;">(used the next time the server starts)</span></h4>
+                <ul>
+                    <li><b>Check PyTorch at startup:</b> the server looks for PyTorch / transformers and the GPU as soon as it starts, in the background, so tools like Florence-2 do not wait for that check when you open them. It does not load any model.</li>
+                    <li><b>Check onnxruntime at startup:</b> same idea for onnxruntime (used by the ONNX taggers).</li>
+                    <li><b>Check package updates at startup:</b> looks for newer versions of the Python packages. The answer is kept for 5 minutes. Turn it off if you are offline or want a faster start.</li>
+                </ul>
+
+                <h4>💾 Cache saves</h4>
+                <ul>
+                    <li><b>Save big cache files in the background:</b> large files (the Danbooru / e621 caches and the wiki texts can be tens of MB) are written by a background thread, so the page does not wait for the disk. Newer saves of the same file replace older pending ones, and a file is never read while its save is still pending.</li>
+                    <li><b>Background from (KB):</b> only saves bigger than this go to the background. Smaller ones are written right away.</li>
+                </ul>
+
+                <h4>🤖 Danbooru / e621 auto-fill <span style="color:#777;font-weight:normal;">(applies within seconds)</span></h4>
+                <p>A background worker keeps the local Danbooru / e621 databases up to date, even with every page closed. It steps aside as soon as a tool really uses tags (a lookup, a fill, a save) and starts again a little after you stop. A page that is merely open does not block it. This switch is the same as <b>🤖 Auto-fill when idle</b> in Tag Manager and Prompt Helper.</p>
+                <ul>
+                    <li><b>🤖 Auto-fill while no tool uses the tag databases:</b> master switch of the worker.</li>
+                    <li><b>Danbooru / e621:</b> choose which sites are filled.</li>
+                    <li><b>Follow links of the saved wiki texts:</b> wiki texts link to other tags (<code>[[long hair]]</code>). The worker downloads the linked tags that are not saved yet (count, category, wiki and text) and follows their links in turn. It is the same job as <i>Fill wiki (recursive)</i>, but it never loses its place: the list of pending links is rebuilt from the saved texts each time. It needs <b>Wiki text</b> to be <i>Full</i>. Wiki pages that are not tags are remembered and not asked again.</li>
+                    <li><b>Max. new tags from links (per site):</b> stops following links after this many new tags. <code>0</code> means no limit.</li>
+                    <li><b>Add new tags from the site catalog:</b> when nothing else is left, walks each site's tag list from the most used tag down and adds the tags that are not saved yet.</li>
+                    <li><b>Wiki text:</b> how much of each wiki is saved. <i>Same as the app</i> follows the option in Tag Interrogator, <i>Off</i> saves none, <i>Short</i> saves a summary, <i>Full</i> saves the complete text (needed for following links; makes <code>wiki_full.json</code> grow).</li>
+                    <li><b>Resume after tag use (s):</b> how long to wait after the last time a tool used tags before the worker starts again.</li>
+                    <li><b>Tags per round:</b> how many tags are handled at once. Smaller means gentler on the sites.</li>
+                    <li><b>Delay between requests (ms), Danbooru / e621:</b> pause between requests to each site. Do not set it too low: when a site refuses a request (HTTP 429) the worker waits 1 to 2 minutes and asks the same tag again.</li>
+                    <li><b>Save the cache every (s) / Save the wiki texts every (s):</b> how often the worker writes its progress to disk. It always saves before stepping aside and when the server stops.</li>
+                </ul>
+                <p class="tip">💡 A copy of each cache file is kept once a day in <code>local/backups/</code> before the worker's first change of the day. The worker never overwrites a file that someone else changed while it was working: it reloads it instead.</p>
+            </div>
+            <div class="modal-buttons"><button class="btn-cancel" id="helpClose">Close</button></div>
+        </div>
+    </div>
+
     <div class="container">
         <div class="description">
             A unified workspace to manage, read, and organize your AI generation workflows.<br>All tools process your files directly in your browser. Nothing is uploaded.
@@ -152,6 +260,62 @@
     </div>
 
     <script>
+        // Server settings (local/server_config.json) - only when the page is served by the local server
+        (function () {
+            const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname) && window.location.protocol !== 'file:';
+            const btn = document.getElementById('btn-settings'), box = document.getElementById('settings-dropdown');
+            if (!isLocal) return;                                   // the online version has no server: no gear
+            btn.style.display = '';
+            const helpBtn = document.getElementById('btn-help'), help = document.getElementById('modal-help');
+            helpBtn.style.display = '';
+            helpBtn.addEventListener('click', () => help.classList.add('active'));
+            help.addEventListener('click', e => { if (e.target === help) help.classList.remove('active'); });
+            document.getElementById('helpClose').addEventListener('click', () => help.classList.remove('active'));
+            document.addEventListener('keydown', e => { if (e.key === 'Escape') help.classList.remove('active'); });
+            const inputs = [...box.querySelectorAll('[data-k]')];
+            const get = (o, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
+            const put = (o, path, v) => { const ks = path.split('.'); ks.slice(0, -1).forEach(k => { o = o[k] = o[k] || {}; }); o[ks[ks.length - 1]] = v; };
+            let timer = null, loaded = false;
+            async function load() {
+                try {
+                    const d = await (await fetch('/api/server_config', { cache: 'no-store' })).json();
+                    inputs.forEach(el => { const v = get(d.config, el.dataset.k); if (v === undefined) return; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; });
+                    loaded = true;
+                } catch (e) { document.getElementById('srvStatus').textContent = 'The local server did not answer.'; }
+            }
+            async function status() {
+                try {
+                    const s = await (await fetch('/api/server_status', { cache: 'no-store' })).json();
+                    const w = s.warmup || {}, d = w.detail || {}, py = d.pytorch || {}, on = d.onnxruntime || {};
+                    const f = s.presence || {};
+                    const lines = ['Server: online (PID ' + s.pid + ')'];
+                    lines.push('PyTorch: ' + (w.state === 'running' ? 'checking…' : py.available ? ('ready ' + (py.torch || '') + (py.cuda ? ' · CUDA ' + (py.gpu || '') : ' · CPU only')) : (py.deps_error ? 'not available' : '—')));
+                    lines.push('onnxruntime: ' + (on.version ? 'ready ' + on.version : '—'));
+                    lines.push('Auto-fill: ' + (!s.autofill || !s.autofill.running ? 'off' : (f.worker === 'working' ? 'working in the background' : 'paused (a tool is using the tag databases or nothing is left to do)')));
+                    document.getElementById('srvStatus').innerHTML = lines.join('<br>');
+                } catch (e) { document.getElementById('srvStatus').textContent = 'The local server did not answer.'; }
+            }
+            let poll = null;
+            btn.addEventListener('click', e => {
+                e.stopPropagation();
+                const open = box.classList.toggle('open'); btn.classList.toggle('open', open);
+                clearInterval(poll);
+                if (open) { if (!loaded) load(); status(); poll = setInterval(status, 4000); }
+            });
+            document.addEventListener('click', e => { if (box.classList.contains('open') && !box.contains(e.target) && e.target !== btn) { box.classList.remove('open'); btn.classList.remove('open'); clearInterval(poll); } });
+            async function save() {
+                const patch = {};
+                inputs.forEach(el => put(patch, el.dataset.k, el.type === 'checkbox' ? el.checked : (el.type === 'number' ? Number(el.value) : el.value)));
+                const out = document.getElementById('srvSaved');
+                try {
+                    const r = await fetch('/api/server_config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+                    out.textContent = r.ok ? 'Saved ✓' : 'Could not save the settings.';
+                } catch (e) { out.textContent = 'Could not save the settings.'; }
+                setTimeout(() => { out.textContent = ''; }, 2500);
+            }
+            inputs.forEach(el => el.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(save, 300); }));
+        })();
+
         // Desabilita os botões "Local" se a pessoa estiver acessando pelo GitHub Pages
         document.addEventListener('DOMContentLoaded', () => {
             const isRunningOnline = window.location.protocol !== 'file:' && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
