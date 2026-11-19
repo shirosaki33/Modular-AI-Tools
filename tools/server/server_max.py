@@ -68,7 +68,8 @@ def load_config():
 CONFIG = load_config()
 
 _EDITABLE_TEXT = {'wiki_mode': ('auto', 'off', 'short', 'full')}
-_NOT_EDITABLE = {'_about', 'api_base'}          # api_base only exists to test the worker against a fake API
+_FREE_TEXT = {'e621_username'}                   # letters, digits, _ . - and spaces only
+_NOT_EDITABLE = {'_about', 'api_base', 'user_agent'}          # api_base only exists to test the worker against a fake API
 
 
 def _sanitize(default, value, name=''):
@@ -91,6 +92,9 @@ def _sanitize(default, value, name=''):
             return None
         return max(0, min(n, 10 ** 7))
     if isinstance(default, str):
+        if name in _FREE_TEXT:
+            t = re.sub(r'[^A-Za-z0-9_.\- ]', '', str(value)).strip()[:60]
+            return t
         return value if value in _EDITABLE_TEXT.get(name, ()) else None
     return None
 

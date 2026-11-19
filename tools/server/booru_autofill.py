@@ -64,6 +64,8 @@ TEMP_DIR = 'autofill_temp'
 
 DEFAULTS = {
     'enabled': True,
+    'e621_username': '',               # goes into the User-Agent as "ModularAITools/1.0 (by <name> on e621)", as e621 asks
+    'user_agent': '',                  # advanced: a full User-Agent text; replaces the one above when not empty
     'danbooru': True,
     'e621': True,
     'follow_wiki_links': True,         # step 2: download the tags that the saved wiki texts link to (needs wiki mode "full")
@@ -317,9 +319,9 @@ def broken_summary(e):
 
 
 # ------------------------------------------------------------------ talking to the server (presence / stop)
-def http_json(url, timeout=25):
+def http_json(url, timeout=25, ua=None):
     """(status, data, retry_after_seconds). status 0 = no connection / unreadable answer."""
-    req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept': 'application/json'})
+    req = urllib.request.Request(url, headers={'User-Agent': ua or UA, 'Accept': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
@@ -785,12 +787,22 @@ class Filler:
 
     def delay(self, sid, kind='single'):
         d = (self.cfg().get('request_delay_ms') or {}).get(sid, 400) / 1000.0
+        if sid == 'e621':
+            d = max(d, 1.0)                                     # e621 allows 1 request per second on average: never faster than that
         return 0.8 if (kind == 'batch' and sid == 'danbooru') else d
+
+    def user_agent(self):
+        """e621 asks for a descriptive User-Agent that says who runs the program: "Project/1.0 (by username on e621)"."""
+        c = self.cfg()
+        if str(c.get('user_agent') or '').strip():
+            return str(c['user_agent']).strip()
+        u = re.sub(r'[^A-Za-z0-9_.\- ]', '', str(c.get('e621_username') or '')).strip()
+        return 'ModularAITools/1.0 (by {} on e621)'.format(u) if u else UA
 
     # --- requests (with standby)
     def request(self, sid, path):
         """('ok', data) | ('notfound', None) | ('error', None) | ('refused', None)"""
-        st, data, ra = http_json(self.base(sid) + path)
+        st, data, ra = http_json(self.base(sid) + path, ua=self.user_agent())
         self.last_path = getattr(self, 'last_path', {})
         self.last_path[sid] = path
         if st == 200 and data is not None:
@@ -815,9 +827,14 @@ class Filler:
         wait = min(COOL['first'] + COOL['step'] * (self.cool[sid] - 1), COOL['max'])
         if hit.get('retry_after'):
             wait = min(max(wait, hit['retry_after']), COOL['retry_after_max'])
+        if hit.get('status') == 403:                            # 403 = access denied (not just "too fast"): the site blocked this program for a while
+            wait = min(300 * self.cool[sid], 900)
         what = describe((getattr(self, 'last_path', {}) or {}).get(sid, ''))
         log('{} refused the request{} for {} - standby for {}s, then the same one is asked again'.format(
             sid, ' (HTTP {})'.format(hit['status']) if hit.get('status') else '', what, int(wait)), 'WAIT')
+        if hit.get('status') == 403 and self.cool[sid] == 1:
+            log('{}: HTTP 403 means the site is blocking this program for now (too many requests, or the User-Agent). '
+                'Fill in "Your e621 username" in the gear of the index page and keep the delay at 1000 ms or more.'.format(sid), 'WAIT')
         self.store.journals[sid].flush()                        # what this site learned is safe on disk before a long wait
         self.leave()                                            # and the other site may move the temporary files meanwhile
         try:

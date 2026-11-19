@@ -71,7 +71,7 @@
         .settings-dropdown label { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #9ecfff; font-weight: bold; cursor: pointer; user-select: none; }
         .settings-dropdown label.row { align-items: center; justify-content: space-between; }
         .settings-dropdown input[type="checkbox"] { width: auto; margin: 2px 0 0; accent-color: #00ff99; flex-shrink: 0; }
-        .settings-dropdown input[type="number"], .settings-dropdown select { background: #1a1a1a; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 3px 5px; font-size: 12px; width: 78px; flex: none; }
+        .settings-dropdown input[type="number"], .settings-dropdown input[type="text"], .settings-dropdown select { background: #1a1a1a; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 3px 5px; font-size: 12px; width: 78px; flex: none; }
         .settings-dropdown select { width: auto; }
         .settings-group-label { font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px; margin-top: 4px; margin-bottom: -2px; }
         .settings-dropdown hr { border: 0; border-top: 1px solid #333; margin: 3px 0; }
@@ -115,8 +115,9 @@
             <select data-k="booru_autofill.wiki_mode"><option value="auto">Same as the app</option><option value="off">Off</option><option value="short">Short</option><option value="full">Full</option></select></label>
         <label class="row" title="How long after the last tag use before the worker starts again.">Resume after tag use (s)<input type="number" min="0" data-k="booru_autofill.idle_grace_seconds"></label>
         <label class="row">Tags per round<input type="number" min="1" data-k="booru_autofill.batch_size"></label>
+        <label class="row" title="e621 asks every program to say who runs it. It is sent as: ModularAITools/1.0 (by your-name on e621). Not needed for Danbooru.">Your e621 username<input type="text" maxlength="60" style="width:130px" data-k="booru_autofill.e621_username"></label>
         <label class="row">Delay between requests, Danbooru (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.danbooru"></label>
-        <label class="row">Delay between requests, e621 (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.e621"></label>
+        <label class="row" title="e621 allows about 1 request per second, so values below 1000 are raised to 1000.">Delay between requests, e621 (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.e621"></label>
         <label class="row" title="Each site writes what it learns into a small temporary file at once. This is how often both temporary files are moved into the final files together (minimum 30).">Move to the final files every (s)<input type="number" min="30" data-k="booru_autofill.commit_every_seconds"></label>
         <div id="srvSaved"></div>
     </div>
@@ -154,8 +155,9 @@
                     <li><b>Add new tags from the site catalog:</b> when nothing else is left, walks each site's tag list from the most used tag down and adds the tags that are not saved yet.</li>
                     <li><b>Wiki text:</b> how much of each wiki is saved. <i>Same as the app</i> follows the option in Tag Interrogator, <i>Off</i> saves none, <i>Short</i> saves a summary, <i>Full</i> saves the complete text (needed for following links; makes <code>wiki_full.json</code> grow).</li>
                     <li><b>Resume after tag use (s):</b> how long to wait after the last time a tool used tags before the worker starts again.</li>
+                    <li><b>Your e621 username:</b> e621 asks every program that uses its API to say who runs it, otherwise it can block the requests (HTTP 403). It is sent as <code>ModularAITools/1.0 (by your-name on e621)</code>. Fill in your own e621 name (an account is not required to exist, but a real name lets the site contact you if something goes wrong).</li>
                     <li><b>Tags per round:</b> how many tags are handled at once. Smaller means gentler on the sites.</li>
-                    <li><b>Delay between requests (ms), Danbooru / e621:</b> pause between requests to each site. Do not set it too low: when a site refuses a request (HTTP 429) the worker waits 1 to 2 minutes and asks the same tag again.</li>
+                    <li><b>Delay between requests (ms), Danbooru / e621:</b> pause between requests to each site (e621 allows about 1 request per second, so anything below 1000 ms is raised to 1000 ms). Do not set it too low: when a site refuses a request (HTTP 429) the worker waits 1 to 2 minutes and asks the same tag again.</li>
                     <li><b>Move to the final files every (s):</b> Danbooru and e621 are processed <i>at the same time</i>. Each one writes what it learns, tag by tag, into its own small temporary file (<code>local/autofill_temp/</code>). This is how often both temporary files are moved together into the final files (cache, wiki texts, unknown tags), each file written in one piece. It also happens before the worker steps aside for a tool, and when the server stops. If the server or the PC stops suddenly, the temporary files are read again on the next start, so nothing is lost. When one site has nothing left to do, it simply stops and the other one carries on alone.</li>
                 </ul>
                 <p class="tip">💡 A copy of each cache file is kept once a day in <code>local/backups/</code> before the worker's first change of the day. The worker never overwrites a file that someone else changed while it was working: it reloads it instead.</p>
@@ -312,7 +314,7 @@
                 } catch (e) { out.textContent = 'Could not save the settings.'; }
                 setTimeout(() => { out.textContent = ''; }, 2500);
             }
-            inputs.forEach(el => el.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(save, 300); }));
+            inputs.forEach(el => { const go = () => { clearTimeout(timer); timer = setTimeout(save, el.type === 'text' ? 700 : 300); }; el.addEventListener('change', go); if (el.type === 'text') el.addEventListener('input', go); });
         })();
 
         // Desabilita os botões "Local" se a pessoa estiver acessando pelo GitHub Pages
