@@ -635,10 +635,14 @@
            { ok:false } = erro | { ok:true, hasWikiInfo, description } */
         async function fetchWiki(wikiName) {
             try {
-                const res = await fetch(`https://${host()}/wiki_pages/${encodeURIComponent(wikiName)}.json`);
+                // e621 dropped /wiki_pages/<name>.json ("old_api"): its wiki is found by searching the title
+                const isE = /e(621|926)\.net/.test(host());
+                const res = await fetch(isE ? `https://${host()}/wiki_pages.json?search[title]=${encodeURIComponent(wikiName)}&limit=1`
+                                            : `https://${host()}/wiki_pages/${encodeURIComponent(wikiName)}.json`);
                 if (res.status === 404) { noteOk(); return { ok: true, hasWikiInfo: false, description: '' }; }
                 if (!res.ok) { noteBadAnswer(res.status, res); return { ok: false, status: res.status }; }
-                const data = await res.json();
+                let data = await res.json();
+                if (isE) data = Array.isArray(data) ? (data[0] || null) : data;
                 noteOk();
                 if (data && data.body && data.body.trim()) return { ok: true, hasWikiInfo: true, description: cleanWiki(data.body), full: String(data.body).trim() };
                 return { ok: true, hasWikiInfo: false, description: '' };

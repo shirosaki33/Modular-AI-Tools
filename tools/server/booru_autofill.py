@@ -819,6 +819,8 @@ class Filler:
         if st in (404, 410):
             self.cool[sid] = self.hard[sid] = 0
             return 'notfound', None
+        if st == 403 and 'old_api' in LAST_ERR['body']:         # the endpoint no longer exists: a plain error, not a block
+            st = 410 + 90
         if st == 0 or st in LIMIT_STATUS:
             self.refused[sid] = {'status': st, 'retry_after': ra}
             return 'refused', None
@@ -1039,7 +1041,14 @@ class Filler:
         return True
 
     def fetch_wiki(self, sid, wiki_name):
-        kind, data = self.ask(sid, '/wiki_pages/{}.json'.format(qs(wiki_name)))
+        if sid == 'e621':                                       # e621 dropped /wiki_pages/<name>.json ("old_api"): the title is searched instead
+            kind, data = self.ask(sid, '/wiki_pages.json?search[title]={}&limit=1'.format(qs(wiki_name)))
+            if kind == 'ok':
+                data = (data[0] if isinstance(data, list) and data else None)
+                if not isinstance(data, dict):
+                    return {'ok': True, 'has': False}
+        else:
+            kind, data = self.ask(sid, '/wiki_pages/{}.json'.format(qs(wiki_name)))
         if kind == 'notfound':
             return {'ok': True, 'has': False}
         if kind != 'ok':
