@@ -319,6 +319,9 @@ def broken_summary(e):
 
 
 # ------------------------------------------------------------------ talking to the server (presence / stop)
+LAST_ERR = {'body': '', 'server': ''}
+
+
 def http_json(url, timeout=25, ua=None):
     """(status, data, retry_after_seconds). status 0 = no connection / unreadable answer."""
     req = urllib.request.Request(url, headers={'User-Agent': ua or UA, 'Accept': 'application/json'})
@@ -335,6 +338,11 @@ def http_json(url, timeout=25, ua=None):
             ra = int(e.headers.get('Retry-After') or 0)
         except Exception:
             pass
+        try:
+            LAST_ERR['body'] = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', e.read(600).decode('utf-8', 'replace'))).strip()[:160]
+            LAST_ERR['server'] = str(e.headers.get('Server') or '')
+        except Exception:
+            LAST_ERR['body'] = ''
         return e.code, None, ra
     except Exception:
         return 0, None, 0
@@ -832,6 +840,9 @@ class Filler:
         what = describe((getattr(self, 'last_path', {}) or {}).get(sid, ''))
         log('{} refused the request{} for {} - standby for {}s, then the same one is asked again'.format(
             sid, ' (HTTP {})'.format(hit['status']) if hit.get('status') else '', what, int(wait)), 'WAIT')
+        if hit.get('status') in (403, 429):
+            log('{}: answer of the site: "{}" (server: {}) - User-Agent sent: {}'.format(
+                sid, LAST_ERR['body'] or 'empty', LAST_ERR['server'] or '?', self.user_agent()), 'WAIT')
         if hit.get('status') == 403 and self.cool[sid] == 1:
             log('{}: HTTP 403 means the site is blocking this program for now (too many requests, or the User-Agent). '
                 'Fill in "Your e621 username" in the gear of the index page and keep the delay at 1000 ms or more.'.format(sid), 'WAIT')
