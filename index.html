@@ -49,7 +49,15 @@
         /* Settings (same look as the gear of the other pages) */
         #btn-settings { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer; line-height: 1.2; }
         #btn-settings:hover, #btn-settings.open { color: #00ff99; border-color: #00ff99; }
-        #btn-help { position: absolute; right: 84px; top: 50%; transform: translateY(-50%); background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer; line-height: 1.2; }
+        #btn-auto { position: absolute; right: 84px; top: 50%; transform: translateY(-50%); background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer; line-height: 1.2; }
+        #btn-auto:hover, #btn-auto.open { color: #00ff99; border-color: #00ff99; }
+        #autoStatus { font-size: 12px; color: #9ecfff; line-height: 1.5; }
+        .settings-dropdown .btn-act { background: #0f2a1a; color: #00cc88; border: 1px solid #1a4a2a; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .settings-dropdown .btn-act:hover { color: #00ff99; border-color: #00aa66; }
+        .settings-dropdown details summary { cursor: pointer; font-size: 11px; color: #888; font-weight: bold; }
+        .settings-dropdown details[open] summary { margin-bottom: 8px; }
+        .settings-dropdown details > div { display: flex; flex-direction: column; gap: 9px; }
+        #btn-help { position: absolute; right: 148px; top: 50%; transform: translateY(-50%); background: none; font-size: 18px; padding: 6px 12px; color: #888; border: 1px solid #333; border-radius: 6px; cursor: pointer; line-height: 1.2; }
         #btn-help:hover { color: #00ff99; border-color: #00ff99; }
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2000; justify-content: center; align-items: center; backdrop-filter: blur(5px); overflow: hidden; }
         .modal-overlay.active { display: flex; }
@@ -87,6 +95,7 @@
 <body>
     <div id="topbar">
         <h1>🧰 Modular AI Tools</h1>
+        <button id="btn-auto" title="Automations (Danbooru / e621 auto-fill)" style="display:none;">🤖</button>
         <button id="btn-help" title="Help" style="display:none;">❓</button>
         <button id="btn-settings" title="Server settings" style="display:none;">⚙️</button>
     </div>
@@ -103,9 +112,24 @@
         <label title="Big cache files are written by a background thread, so the page does not wait for the disk."><input type="checkbox" data-k="cache_saves.background"> Save big cache files in the background</label>
         <label class="row">Background from (KB)<input type="number" min="0" data-k="cache_saves.background_min_kb"></label>
 
+        <div id="srvSaved"></div>
+    </div>
+    
+
+    <div id="auto-dropdown" class="settings-dropdown">
+        <div id="autoStatus">Loading…</div>
+        <button class="btn-act" id="btnCheckNow" title="Starts a check right now, even when the automatic re-check is off. It still steps aside while a tool is using the tag databases.">▶ Check now</button>
         <hr>
-        <div class="settings-group-label">🤖 Danbooru / e621 auto-fill <span style="text-transform:none;font-weight:normal;">(applies within seconds)</span></div>
-        <label title="Works in the background while the server runs, and steps aside when a page uses tags. This is the same switch as the 🤖 Auto-fill when idle option of Tag Manager and Prompt Helper."><input type="checkbox" data-k="booru_autofill.enabled"> 🤖 Auto-fill while no tool uses the tag databases</label>
+        <div class="settings-group-label">⏱ Schedule <span style="text-transform:none;font-weight:normal;">(applies within seconds)</span></div>
+        <label title="Works in the background while the server runs, and steps aside when a page uses tags. This is the same switch as the 🤖 Auto-fill when idle option of Tag Manager and Prompt Helper."><input type="checkbox" data-k="booru_autofill.enabled"> 🤖 Auto-fill enabled (master switch)</label>
+        <label title="Off = after the server starts the worker stays quiet until you press Check now."><input type="checkbox" data-k="booru_autofill.run_on_start"> Start working when the server starts</label>
+        <label title="On every re-check (the time set below) the worker also takes random pages of each site's tag list and adds the tags that are not saved yet. It uses the same timer as the re-check."><input type="checkbox" data-k="booru_autofill.random_download"><span>Random tag download<span class="note">Each re-check also adds tags from random pages of the sites.</span></span></label>
+        <label class="row" title="How many random tags are looked at per site in each round. They are taken in blocks of 100, one block after the other, spaced by the request delay of each site (Advanced).">Random tags per round (per site)<input type="number" min="1" data-k="booru_autofill.random_tags"></label>
+        <label title="On: opening Tag Manager / Prompt Helper does not stop the worker. It keeps downloading into small temporary files without touching the database files in use, and moves them into the final files after you stop using tags (see Resume after tag use). Off: the worker stops while a tool uses tags."><input type="checkbox" data-k="booru_autofill.work_while_in_use"><span>Keep downloading while a tool is open<span class="note">Saved to temporary files; applied to the database after you finish.</span></span></label>
+        <label class="row" title="When everything is up to date the worker looks again after this time (new tags on the sites, catalog). 0 = never: only when you press Check now.">Re-check when up to date (min, 0 = manual)<input type="number" min="0" data-k="booru_autofill.recheck_minutes"></label>
+        <label class="row" title="How long after the last tag use before the worker starts again.">Resume after tag use (s)<input type="number" min="0" data-k="booru_autofill.idle_grace_seconds"></label>
+
+        <div class="settings-group-label">🌐 What it does</div>
         <label><input type="checkbox" data-k="booru_autofill.danbooru"> Danbooru</label>
         <label><input type="checkbox" data-k="booru_autofill.e621"> e621</label>
         <label title="Downloads the tags that the saved wiki texts link to ([[long hair]]) and follows their links in turn. Needs wiki text = full."><input type="checkbox" data-k="booru_autofill.follow_wiki_links"><span>Follow links of the saved wiki texts<span class="note">Same job as “Fill wiki (recursive)”, but it never loses its place.</span></span></label>
@@ -113,24 +137,33 @@
         <label title="When nothing is left to fill, walks each site's tag list from the most used tag down and adds the tags that are not saved yet."><input type="checkbox" data-k="booru_autofill.crawl_catalog"> Add new tags from the site catalog</label>
         <label class="row" title="auto = same as the “Wiki text” option of the Tag Interrogator">Wiki text
             <select data-k="booru_autofill.wiki_mode"><option value="auto">Same as the app</option><option value="off">Off</option><option value="short">Short</option><option value="full">Full</option></select></label>
-        <label class="row" title="How long after the last tag use before the worker starts again.">Resume after tag use (s)<input type="number" min="0" data-k="booru_autofill.idle_grace_seconds"></label>
+
+        <details>
+            <summary>Advanced (speed, e621 username, saving)</summary>
+            <div>
         <label class="row">Tags per round<input type="number" min="1" data-k="booru_autofill.batch_size"></label>
         <label class="row" title="e621 asks every program to say who runs it. It is sent as: ModularAITools/1.0 (by your-name on e621). Not needed for Danbooru.">Your e621 username<input type="text" maxlength="60" style="width:130px" data-k="booru_autofill.e621_username"></label>
         <label class="row">Delay between requests, Danbooru (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.danbooru"></label>
         <label class="row" title="e621 allows about 1 request per second, so values below 1000 are raised to 1000.">Delay between requests, e621 (ms)<input type="number" min="0" data-k="booru_autofill.request_delay_ms.e621"></label>
         <label class="row" title="Each site writes what it learns into a small temporary file at once. This is how often both temporary files are moved into the final files together (minimum 30).">Move to the final files every (s)<input type="number" min="30" data-k="booru_autofill.commit_every_seconds"></label>
-        <div id="srvSaved"></div>
+            <div class="settings-group-label">🚦 Request queue</div>
+            <label title="Only for the automatic work (auto-fill and random download): its requests to Danbooru / e621 wait in one queue per site, one at a time. The first thing the queue does is check that the site is online; only when it is, the requests go on. Tag Manager and Prompt Helper are NOT affected: they ask the sites directly, as before."><input type="checkbox" data-k="request_queue.enabled"><span>Use the request queue (auto-fill only)<span class="note">Checks first that the site is online. Pages are not affected.</span></span></label>
+            <label class="row" title="How old the last online check can be before the queue checks the site again.">Check online every (s)<input type="number" min="5" data-k="request_queue.check_online_every_seconds"></label>
+            <label class="row" title="When the site is not online (or refused a request) the queue waits this long before checking again.">Wait when the site is down (s)<input type="number" min="5" data-k="request_queue.retry_when_down_seconds"></label>
+            <label class="row" title="A request that stays in the queue longer than this gives up with an error.">Give up waiting after (s)<input type="number" min="5" data-k="request_queue.max_wait_seconds"></label>
+            </div>
+        </details>
+        <div id="autoSaved"></div>
     </div>
-    
 
     <div id="modal-help" class="modal-overlay">
         <div class="tool-modal" style="width: 660px; max-width: 94vw;">
-            <h3>❓ Help — Server settings (⚙️)</h3>
+            <h3>❓ Help — Server settings (⚙️) and automations (🤖)</h3>
             <div class="help-body">
                 <p>These options belong to the local server (<code>server_max.py</code>). They are saved in <code>local/server_config.json</code> and are only available when this page is opened through the local server (localhost). Every change is saved automatically.</p>
 
                 <h4>Status</h4>
-                <p>The lines at the top of the panel show whether the server is online, whether PyTorch (and CUDA) and onnxruntime were found, and what the background auto-fill is doing right now: <i>working</i>, <i>paused</i> (a tool is using the tag databases) or <i>off</i>.</p>
+                <p>The lines at the top of the panel show whether the server is online, whether PyTorch (and CUDA) and onnxruntime were found, and what the background auto-fill is doing is shown in the 🤖 panel.</p>
 
                 <h4>🚀 Startup <span style="color:#777;font-weight:normal;">(used the next time the server starts)</span></h4>
                 <ul>
@@ -145,10 +178,17 @@
                     <li><b>Background from (KB):</b> only saves bigger than this go to the background. Smaller ones are written right away.</li>
                 </ul>
 
-                <h4>🤖 Danbooru / e621 auto-fill <span style="color:#777;font-weight:normal;">(applies within seconds)</span></h4>
-                <p>A background worker keeps the local Danbooru / e621 databases up to date, even with every page closed. It steps aside as soon as a tool really uses tags (a lookup, a fill, a save) and starts again a little after you stop. A page that is merely open does not block it. This switch is the same as <b>🤖 Auto-fill when idle</b> in Tag Manager and Prompt Helper.</p>
+                <h4>🤖 Automations panel — Danbooru / e621 auto-fill <span style="color:#777;font-weight:normal;">(applies within seconds)</span></h4>
+                <p>The 🤖 button next to ⚙️ holds everything the server does by itself. A background worker keeps the local Danbooru / e621 databases up to date, even with every page closed. It steps aside as soon as a tool really uses tags (a lookup, a fill, a save) and starts again a little after you stop. A page that is merely open does not block it. This switch is the same as <b>🤖 Auto-fill when idle</b> in Tag Manager and Prompt Helper.</p>
                 <ul>
-                    <li><b>🤖 Auto-fill while no tool uses the tag databases:</b> master switch of the worker.</li>
+                    <li><b>Safety trigger:</b> the automations only run when <code>tag manager.html</code> or <code>prompt helper.html</code> is installed in this folder. Without them the master switch and the random download stay off (and cannot be turned on).</li>
+                    <li><b>▶ Check now:</b> starts a check immediately, even when the automatic re-check is off. It still steps aside while a tool is using tags.</li>
+                    <li><b>🤖 Auto-fill enabled (master switch):</b> turns the worker on or off. Turning it on starts it if the server was started with it off.</li>
+                    <li><b>Start working when the server starts:</b> off = the worker stays quiet after the server starts until you press Check now.</li>
+                    <li><b>Keep downloading while a tool is open:</b> the worker no longer stops when Tag Manager or Prompt Helper uses tags. It keeps downloading, but only into the small temporary files (<code>local/autofill_temp/</code>); the database files the page is using are not touched. After you stop using tags (and the “Resume after tag use” time passes) the temporary files are merged into the final files; an entry is only taken when it is not older than what the page saved meanwhile. Off = the old behavior (the worker stops while a tool uses tags).</li>
+                    <li><b>Random tag download:</b> on every re-check (the same timer, set below) the worker also looks at <b>Random tags per round</b> random tags of each site's tag list (in blocks of 100 from random places, one request after the other, spaced by that site's <b>Delay between requests</b>) and saves the tags that are not known yet, then fills their counts and wiki as usual. Set the quantity and the re-check time as you like. Off by default; with the re-check at <code>0</code> it runs only on Check now.</li>
+                    <li><b>🚦 Request queue (Advanced):</b> the requests of the automatic work (auto-fill and random download) wait in one queue per site, so each one asks individually: one at a time, with the pause of the site (e621 at least 1 s). Tag Manager and Prompt Helper do not use the queue: they ask the sites directly, exactly as before, so they are never slowed down by it. The first thing the queue always does is check that the site is online (the same test as the dots); only when it is online the requests go on. When it is not, or when the site refuses a request, the queue waits (<b>Wait when the site is down</b>) and checks again. Turn it off to let the auto-fill ask the sites directly too.</li>
+                    <li><b>Re-check when up to date (min):</b> when everything is filled, the worker looks again for new tags after this many minutes (default 10). <code>0</code> = never by itself, only with Check now.</li>
                     <li><b>Danbooru / e621:</b> choose which sites are filled.</li>
                     <li><b>Follow links of the saved wiki texts:</b> wiki texts link to other tags (<code>[[long hair]]</code>). The worker downloads the linked tags that are not saved yet (count, category, wiki and text) and follows their links in turn. It is the same job as <i>Fill wiki (recursive)</i>, but it never loses its place: the list of pending links is rebuilt from the saved texts each time. It needs <b>Wiki text</b> to be <i>Full</i>. Wiki pages that are not tags are remembered and not asked again.</li>
                     <li><b>Max. new tags from links (per site):</b> stops following links after this many new tags. <code>0</code> means no limit.</li>
@@ -158,7 +198,7 @@
                     <li><b>Your e621 username:</b> e621 asks every program that uses its API to say who runs it, otherwise it can block the requests (HTTP 403). It is sent as <code>ModularAITools/1.0 (by your-name on e621)</code>. Fill in your own e621 name (an account is not required to exist, but a real name lets the site contact you if something goes wrong).</li>
                     <li><b>Tags per round:</b> how many tags are handled at once. Smaller means gentler on the sites.</li>
                     <li><b>Delay between requests (ms), Danbooru / e621:</b> pause between requests to each site (e621 allows about 1 request per second, so anything below 1000 ms is raised to 1000 ms). Do not set it too low: when a site refuses a request (HTTP 429) the worker waits 1 to 2 minutes and asks the same tag again.</li>
-                    <li><b>Move to the final files every (s):</b> Danbooru and e621 are processed <i>at the same time</i>. Each one writes what it learns, tag by tag, into its own small temporary file (<code>local/autofill_temp/</code>). This is how often both temporary files are moved together into the final files (cache, wiki texts, unknown tags), each file written in one piece. It also happens before the worker steps aside for a tool, and when the server stops. If the server or the PC stops suddenly, the temporary files are read again on the next start, so nothing is lost. When one site has nothing left to do, it simply stops and the other one carries on alone.</li>
+                    <li><b>Move to the final files every (s)</b> <i>(Advanced)</i>: Danbooru and e621 are processed <i>at the same time</i>. Each one writes what it learns, tag by tag, into its own small temporary file (<code>local/autofill_temp/</code>). This is how often both temporary files are moved together into the final files (cache, wiki texts, unknown tags), each file written in one piece. It also happens before the worker steps aside for a tool, and when the server stops. If the server or the PC stops suddenly, the temporary files are read again on the next start, so nothing is lost. When one site has nothing left to do, it simply stops and the other one carries on alone.</li>
                 </ul>
                 <p class="tip">💡 A copy of each cache file is kept once a day in <code>local/backups/</code> before the worker's first change of the day. The worker never overwrites a file that someone else changed while it was working: it reloads it instead.</p>
             </div>
@@ -257,64 +297,103 @@
 
     <div class="footerbar">
         <a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank">GitHub Repository</a>
+        <div data-booru-status style="margin-top:8px;display:flex;justify-content:center;"></div>
         <div class="footer-copy">© 2026 shirosaki33</div>
     </div>
 
+    <script src="tools/shared/booru_status.js"></script>
     <script>
-        // Server settings (local/server_config.json) - only when the page is served by the local server
+        // Server settings (⚙️) and automations (🤖) - both saved in local/server_config.json, only when served by the local server
         (function () {
             const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname) && window.location.protocol !== 'file:';
-            const btn = document.getElementById('btn-settings'), box = document.getElementById('settings-dropdown');
             if (!isLocal) return;                                   // the online version has no server: no gear
-            btn.style.display = '';
+            const panels = [
+                { btn: document.getElementById('btn-settings'), box: document.getElementById('settings-dropdown') },
+                { btn: document.getElementById('btn-auto'), box: document.getElementById('auto-dropdown') }
+            ];
+            panels.forEach(p => { p.btn.style.display = ''; });
             const helpBtn = document.getElementById('btn-help'), help = document.getElementById('modal-help');
             helpBtn.style.display = '';
             helpBtn.addEventListener('click', () => help.classList.add('active'));
             help.addEventListener('click', e => { if (e.target === help) help.classList.remove('active'); });
             document.getElementById('helpClose').addEventListener('click', () => help.classList.remove('active'));
             document.addEventListener('keydown', e => { if (e.key === 'Escape') help.classList.remove('active'); });
-            const inputs = [...box.querySelectorAll('[data-k]')];
+            const inputs = [...document.querySelectorAll('#settings-dropdown [data-k], #auto-dropdown [data-k]')];
             const get = (o, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
             const put = (o, path, v) => { const ks = path.split('.'); ks.slice(0, -1).forEach(k => { o = o[k] = o[k] || {}; }); o[ks[ks.length - 1]] = v; };
-            let timer = null, loaded = false;
+            let timer = null, loaded = false, lastStatus = null;
+            const $ = id => document.getElementById(id);
             async function load() {
                 try {
                     const d = await (await fetch('/api/server_config', { cache: 'no-store' })).json();
                     inputs.forEach(el => { const v = get(d.config, el.dataset.k); if (v === undefined) return; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; });
+                    toolsOk = d.tools_installed !== false;
+                    lockAutomations();
                     loaded = true;
-                } catch (e) { document.getElementById('srvStatus').textContent = 'The local server did not answer.'; }
+                } catch (e) { $('srvStatus').textContent = 'The local server did not answer.'; }
+            }
+            let toolsOk = true;
+            function lockAutomations() {                        // safety trigger: the automations need Tag Manager / Prompt Helper in this folder
+                ['booru_autofill.enabled', 'booru_autofill.random_download'].forEach(k => { const el = document.querySelector('[data-k="' + k + '"]'); if (el) { el.disabled = !toolsOk; if (!toolsOk) el.checked = false; } });
+                $('btnCheckNow').disabled = !toolsOk;
+            }
+            const fmtTime = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            function autoLine(s) {
+                if (s.tools_installed === false) { toolsOk = false; lockAutomations(); return 'Automations are off: Tag Manager / Prompt Helper were not found in this folder.'; }
+                const f = s.presence || {}, a = s.autofill || {}, sc = a.schedule || {};
+                if (!a.running) return 'Auto-fill: off (the worker is not running)';
+                if (sc.mode === 'off') return 'Auto-fill: off (master switch)';
+                if (f.worker === 'working' || sc.mode === 'working') return 'Auto-fill: working in the background';
+                if (f.active) return 'Auto-fill: paused (a tool is using the tag databases)';
+                if (sc.mode === 'manual') return 'Auto-fill: up to date — waiting for “Check now” (automatic re-check is off)';
+                if (sc.mode === 'waiting' && sc.next_check_at) {
+                    const m = Math.max(0, Math.round((sc.next_check_at - Date.now()) / 60000));
+                    return 'Auto-fill: up to date — next check in ' + m + ' min (' + fmtTime(sc.next_check_at) + ')';
+                }
+                return 'Auto-fill: idle';
             }
             async function status() {
                 try {
                     const s = await (await fetch('/api/server_status', { cache: 'no-store' })).json();
                     const w = s.warmup || {}, d = w.detail || {}, py = d.pytorch || {}, on = d.onnxruntime || {};
-                    const f = s.presence || {};
                     const lines = ['Server: online (PID ' + s.pid + ')'];
                     lines.push('PyTorch: ' + (w.state === 'running' ? 'checking…' : py.available ? ('ready ' + (py.torch || '') + (py.cuda ? ' · CUDA ' + (py.gpu || '') : ' · CPU only')) : (py.deps_error ? 'not available' : '—')));
                     lines.push('onnxruntime: ' + (on.version ? 'ready ' + on.version : '—'));
-                    lines.push('Auto-fill: ' + (!s.autofill || !s.autofill.running ? 'off' : (f.worker === 'working' ? 'working in the background' : 'paused (a tool is using the tag databases or nothing is left to do)')));
-                    document.getElementById('srvStatus').innerHTML = lines.join('<br>');
-                } catch (e) { document.getElementById('srvStatus').textContent = 'The local server did not answer.'; }
+                    $('srvStatus').innerHTML = lines.join('<br>');
+                    $('autoStatus').textContent = autoLine(s);
+                } catch (e) { $('srvStatus').textContent = 'The local server did not answer.'; $('autoStatus').textContent = 'The local server did not answer.'; }
             }
             let poll = null;
-            btn.addEventListener('click', e => {
+            function closeAll() { panels.forEach(p => { p.box.classList.remove('open'); p.btn.classList.remove('open'); }); clearInterval(poll); }
+            panels.forEach(p => p.btn.addEventListener('click', e => {
                 e.stopPropagation();
-                const open = box.classList.toggle('open'); btn.classList.toggle('open', open);
-                clearInterval(poll);
-                if (open) { if (!loaded) load(); status(); poll = setInterval(status, 4000); }
-            });
-            document.addEventListener('click', e => { if (box.classList.contains('open') && !box.contains(e.target) && e.target !== btn) { box.classList.remove('open'); btn.classList.remove('open'); clearInterval(poll); } });
+                const wasOpen = p.box.classList.contains('open');
+                closeAll();
+                if (!wasOpen) { p.box.classList.add('open'); p.btn.classList.add('open'); if (!loaded) load(); status(); poll = setInterval(status, 4000); }
+            }));
+            document.addEventListener('click', e => { if (panels.some(p => p.box.classList.contains('open')) && !panels.some(p => p.box.contains(e.target) || p.btn === e.target)) closeAll(); });
+            function flash(text) {
+                [$('srvSaved'), $('autoSaved')].forEach(o => { if (o) o.textContent = text; });
+                setTimeout(() => { [$('srvSaved'), $('autoSaved')].forEach(o => { if (o) o.textContent = ''; }); }, 2500);
+            }
             async function save() {
                 const patch = {};
                 inputs.forEach(el => put(patch, el.dataset.k, el.type === 'checkbox' ? el.checked : (el.type === 'number' ? Number(el.value) : el.value)));
-                const out = document.getElementById('srvSaved');
                 try {
                     const r = await fetch('/api/server_config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
-                    out.textContent = r.ok ? 'Saved ✓' : 'Could not save the settings.';
-                } catch (e) { out.textContent = 'Could not save the settings.'; }
-                setTimeout(() => { out.textContent = ''; }, 2500);
+                    flash(r.ok ? 'Saved ✓' : 'Could not save the settings.');
+                    if (r.ok) setTimeout(status, 800);
+                } catch (e) { flash('Could not save the settings.'); }
             }
             inputs.forEach(el => { const go = () => { clearTimeout(timer); timer = setTimeout(save, el.type === 'text' ? 700 : 300); }; el.addEventListener('change', go); if (el.type === 'text') el.addEventListener('input', go); });
+            $('btnCheckNow').addEventListener('click', async () => {
+                try {
+                    const r = await fetch('/api/autofill_control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'check_now' }) });
+                    const d = await r.json().catch(() => ({}));
+                    flash(r.ok ? 'Check requested ✓' : (d.message || 'Could not request the check.'));
+                    setTimeout(status, 1500);
+                } catch (e) { flash('Could not request the check.'); }
+            });
         })();
 
         // Desabilita os botões "Local" se a pessoa estiver acessando pelo GitHub Pages

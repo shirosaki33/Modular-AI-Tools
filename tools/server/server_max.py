@@ -9,7 +9,7 @@ What it does by itself (settings: local/server_config.json, created on the first
   - Danbooru / e621 auto-fill: tools/server/booru_autofill.py runs as a separate process and keeps filling the caches
     (missing counts / wiki texts, then new tags of each site's catalog) while no page that uses those files is open.
 """
-import atexit, http.server, json, os, re, shutil, stat, subprocess, sys, threading, time, webbrowser
+import atexit, heapq, http.server, json, os, re, shutil, stat, subprocess, sys, threading, time, webbrowser
 from urllib.parse import quote, unquote, urlparse, parse_qs
 
 PORT = 8100
@@ -24,6 +24,7 @@ LOCAL_HOSTS = ('localhost', '127.0.0.1', '::1')
 os.chdir(ROOT)
 
 CONFIG_FILE = os.path.join(LOCAL_DIR, 'server_config.json')
+WAKE_FILE = os.path.join(LOCAL_DIR, '.autofill_wake')   # 'Check now' in the index: the worker checks right away
 STOP_FILE = os.path.join(LOCAL_DIR, '.autofill_stop')   # the auto-fill worker saves and exits when this file appears
 WATCHED_FILES = ('danbooru_cache.json', 'e621_cache.json', 'wiki_full.json', 'unknown_tags.json')   # files the pages and the worker share
 PRESENCE_TTL = 150      # a page that sent no ping for this long (seconds) is considered closed (background tabs ping slowly)
@@ -37,6 +38,7 @@ DEFAULT_CONFIG = {
     'warmup': {'pytorch': True, 'onnxruntime': True, 'pip_check': True},
     'cache_saves': {'background': True, 'background_min_kb': 256},
     'booru_autofill': _AUTOFILL_DEFAULTS,
+    'request_queue': {'enabled': True, 'check_online_every_seconds': 60, 'retry_when_down_seconds': 60, 'max_wait_seconds': 120},
 }
 
 
@@ -65,7 +67,38 @@ def load_config():
     return _merge(DEFAULT_CONFIG, {})
 
 
+
+AUTOMATION_PAGES = ('tag manager.html', 'prompt helper.html')      # the automations only make sense when one of them is installed in this folder
+
+
+def tools_installed():
+    try:
+        names = {f.lower() for f in os.listdir(ROOT)}
+    except OSError:
+        return False
+    return any(n in names for n in AUTOMATION_PAGES)
+
+
+def _gate_automation(cfg):
+    """Safety trigger: without Tag Manager / Prompt Helper in the folder the automations stay off. True = something was switched off."""
+    if tools_installed():
+        return False
+    a = cfg.get('booru_autofill')
+    if not isinstance(a, dict) or not (a.get('enabled') or a.get('random_download')):
+        return False
+    a['enabled'] = False
+    a['random_download'] = False
+    return True
+
+
 CONFIG = load_config()
+if _gate_automation(CONFIG):
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as _f:
+            json.dump(CONFIG, _f, ensure_ascii=False, indent=2)
+        print('[WARN  ] Tag Manager / Prompt Helper were not found in this folder: the automations were switched off', flush=True)
+    except OSError:
+        pass
 
 _EDITABLE_TEXT = {'wiki_mode': ('auto', 'off', 'short', 'full')}
 _FREE_TEXT = {'e621_username'}                   # letters, digits, _ . - and spaces only
@@ -104,6 +137,7 @@ def save_config_changes(changes):
     seconds) and to the running server (cache_saves). The warm-up options are used the next time the server starts."""
     clean = _sanitize({k: v for k, v in DEFAULT_CONFIG.items() if k not in _NOT_EDITABLE}, changes)
     new = _merge(CONFIG, clean)
+    _gate_automation(new)                          # cannot be switched on without Tag Manager / Prompt Helper in the folder
     tmp = CONFIG_FILE + '.tmp'
     os.makedirs(LOCAL_DIR, exist_ok=True)
     with open(tmp, 'w', encoding='utf-8') as f:
@@ -111,7 +145,187 @@ def save_config_changes(changes):
     os.replace(tmp, CONFIG_FILE)
     CONFIG.clear()
     CONFIG.update(new)
+    p = AUTOFILL.get('proc')
+    if (CONFIG.get('booru_autofill') or {}).get('enabled') and (p is None or p.poll() is not None):
+        start_autofill()                           # switched on from the index while the worker was not running
     return CONFIG
+
+# ---------------------------------------------------------------- request queue to Danbooru / e621
+# EVERY request to the two sites (the pages, through tools/shared/booru_status.js, and the auto-fill worker) goes through
+# one queue per site: one request at a time, a pause between requests, pages before the background worker, and the
+# first thing the queue always does is to check that the site is online - only when it is, the requests go on.
+BOORU_UA = 'ModularAITools/1.0 (local Tag Manager; github.com/shirosaki33/Modular-AI-Tools)'
+PAGE_GAP = {'danbooru': 0.25, 'e621': 1.0}        # pause after a request made for a page (the worker uses the delays of its own settings)
+
+
+class _SiteQueue:
+    def __init__(self):
+        self.cv = threading.Condition()
+        self.heap, self.seq, self.busy = [], 0, False
+        self.next_at = 0.0          # earliest start of the next request (pause between requests)
+        self.cool_until = 0.0       # the site refused / is down: nothing is sent before this
+        self.state = {'state': 'checking', 'reason': '', 'ms': None, 'at': 0.0, 'host': ''}
+
+    def acquire(self, prio, max_wait):
+        deadline = time.time() + max_wait
+        with self.cv:
+            self.seq += 1
+            t = (prio, self.seq)
+            heapq.heappush(self.heap, t)
+            while True:
+                now = time.time()
+                ready = max(self.next_at, self.cool_until)
+                if self.heap[0] == t and not self.busy and now >= ready:
+                    heapq.heappop(self.heap)
+                    self.busy = True
+                    return True
+                if now >= deadline:
+                    self.heap.remove(t)
+                    heapq.heapify(self.heap)
+                    self.cv.notify_all()
+                    return False
+                self.cv.wait(timeout=0.5)
+
+    def release(self, gap, cool=0.0):
+        with self.cv:
+            self.busy = False
+            now = time.time()
+            self.next_at = now + gap
+            if cool:
+                self.cool_until = max(self.cool_until, now + cool)
+            self.cv.notify_all()
+
+    def pending(self):
+        with self.cv:
+            return len(self.heap)
+
+
+_BOORU_Q = {'danbooru': _SiteQueue(), 'e621': _SiteQueue()}
+
+
+def _booru_site(url):
+    try:
+        u = urlparse(url)
+    except Exception:
+        return None
+    host = (u.hostname or '').lower()
+    if u.scheme != 'https' or u.username or u.port not in (None, 443):
+        return None
+    if host == 'donmai.us' or host.endswith('.donmai.us'):
+        return 'danbooru'
+    if host in ('e621.net', 'e926.net') or host.endswith('.e621.net') or host.endswith('.e926.net'):
+        return 'e621'
+    return None
+
+
+def _booru_ua(site):
+    c = CONFIG.get('booru_autofill') or {}
+    if str(c.get('user_agent') or '').strip():
+        return str(c['user_agent']).strip()
+    if site == 'e621':
+        name = re.sub(r'[^A-Za-z0-9_.\- ]', '', str(c.get('e621_username') or '')).strip()
+        if name:
+            return 'ModularAITools/1.0 (by {} on e621)'.format(name)
+    return BOORU_UA
+
+
+def _booru_get(site, url, timeout=25):
+    """(status, body bytes, response headers). status 0 = no connection."""
+    import urllib.request, urllib.error
+    req = urllib.request.Request(url, headers={'User-Agent': _booru_ua(site), 'Accept': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(16 * 1024 * 1024), r.headers
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read(64 * 1024)
+        except Exception:
+            body = b''
+        return e.code, body, e.headers
+    except Exception as e:
+        return 0, str(e).encode('utf-8', 'replace'), {}
+
+
+def _booru_probe(site, host):
+    """Same test as the dots of the pages: GET /tags.json?limit=1 must answer fast and with valid JSON."""
+    t0 = time.time()
+    code, body, _h = _booru_get(site, 'https://{}/tags.json?limit=1&_={}'.format(host, int(t0 * 1000)), timeout=8)
+    ms = int((time.time() - t0) * 1000)
+    if code == 0:
+        return {'state': 'offline', 'reason': 'Could not connect', 'ms': None}
+    if code == 429:
+        return {'state': 'issues', 'reason': 'Rate limited (HTTP 429)', 'ms': ms}
+    if code == 403:
+        return {'state': 'issues', 'reason': 'Request blocked (HTTP 403)', 'ms': ms}
+    if code in (502, 503, 504) or 520 <= code <= 530:
+        return {'state': 'offline', 'reason': 'Server unavailable (HTTP {})'.format(code), 'ms': ms}
+    if code >= 500 or code != 200:
+        return {'state': 'issues', 'reason': 'Unexpected response (HTTP {})'.format(code), 'ms': ms}
+    try:
+        json.loads(body.decode('utf-8'))
+    except Exception:
+        return {'state': 'issues', 'reason': 'Invalid response body', 'ms': ms}
+    return {'state': 'online', 'reason': '', 'ms': ms}
+
+
+def booru_proxy(url, prio):
+    """(status, body, extra headers) for GET `url` (a Danbooru / e621 address) after waiting in the queue of its site."""
+    site = _booru_site(url)
+    if not site:
+        return 400, b'{"status": "error", "message": "not a Danbooru / e621 address"}', {}
+    cfg = CONFIG.get('request_queue') or {}
+    q = _BOORU_Q[site]
+    hdr = {'X-Booru-Queue': '1'}
+    if not q.acquire(prio, max(5, float(cfg.get('max_wait_seconds', 120)))):
+        hdr['X-Booru-Down'] = 'queue timeout'
+        return 503, b'{"error": "queue timeout"}', hdr
+    gap, cool = (PAGE_GAP[site] if prio == 0 else None), 0.0
+    if gap is None:
+        gap = max(0.0, float(((CONFIG.get('booru_autofill') or {}).get('request_delay_ms') or {}).get(site, 400)) / 1000.0)
+    if site == 'e621':
+        gap = max(gap, 1.0)                            # e621: never faster than 1 request per second
+    try:
+        st = q.state
+        host = urlparse(url).hostname
+        # 1st: is the site online? (always checked when the last check is old, or when the site was not online)
+        if st['state'] != 'online' or host != st['host'] or time.time() - st['at'] > float(cfg.get('check_online_every_seconds', 60)):
+            res = _booru_probe(site, host)
+            st.update(res, at=time.time(), host=host)
+            if res['state'] != 'online':
+                log('WARN', '{}: the site is not online ({}) - requests wait {}s'.format(site, res['reason'], int(cfg.get('retry_when_down_seconds', 60))))
+        if st['state'] != 'online':
+            cool = max(5.0, float(cfg.get('retry_when_down_seconds', 60)))
+            hdr['X-Booru-Down'] = st['reason'] or st['state']
+            return 503, json.dumps({'error': 'site not online', 'reason': st['reason']}).encode('utf-8'), hdr
+        code, body, h = _booru_get(site, url)
+        try:
+            ra = int(h.get('Retry-After') or 0)
+        except Exception:
+            ra = 0
+        if h:
+            hdr['X-Upstream-Server'] = str(h.get('Server') or '')
+        if ra:
+            hdr['Retry-After'] = str(ra)
+        if code == 0:
+            st['at'] = 0.0                                  # connection failed: check the site again before the next request
+            return 502, body, hdr
+        if code in (429, 403) or code >= 500:
+            st['at'] = 0.0
+            if code in (429, 403):
+                cool = max(float(ra), 30.0 if code == 429 else 60.0)
+        return code, body, hdr
+    finally:
+        q.release(gap, cool)
+
+
+def booru_queue_status():
+    out = {}
+    for site, q in _BOORU_Q.items():
+        st = q.state
+        out[site] = {'state': st['state'], 'reason': st['reason'], 'ms': st['ms'], 'pending': q.pending(),
+                     'checked_ago': round(time.time() - st['at'], 1) if st['at'] else None}
+    return out
+
 
 args = [a for a in sys.argv[1:] if a]
 CHROME = any(a.lower() == 'chrome' for a in args)
@@ -463,8 +677,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if route == '/api/booru_presence':
             return self._reply(200, json.dumps(presence_state()).encode('utf-8'))
         if route == '/api/server_config':
-            body = {'config': CONFIG, 'defaults': {k: v for k, v in DEFAULT_CONFIG.items() if k not in _NOT_EDITABLE}}
+            body = {'config': CONFIG, 'tools_installed': tools_installed(), 'defaults': {k: v for k, v in DEFAULT_CONFIG.items() if k not in _NOT_EDITABLE}}
             return self._reply(200, json.dumps(body, ensure_ascii=False).encode('utf-8'))
+        if route == '/api/booru_fetch':
+            q = parse_qs(urlparse(self.path).query)
+            if not (CONFIG.get('request_queue') or {}).get('enabled', True):
+                return self._reply(404, b'{"status": "error", "message": "request queue is off"}')
+            url = (q.get('url') or [''])[0]
+            try:
+                prio = 0 if (q.get('prio') or ['0'])[0] == '0' else 1
+            except Exception:
+                prio = 1
+            code, body, hdr = booru_proxy(url, prio)
+            try:
+                self.send_response(code)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                for k, v in hdr.items():
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionError):
+                pass
+            return
         if route == '/api/server_status':
             return self._reply(200, json.dumps(server_status(), ensure_ascii=False).encode('utf-8'))
         if route == '/api/models_info':
@@ -742,6 +978,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._locate_folder()
         if route == '/api/booru_presence':
             return self._presence_post()
+        if route == '/api/autofill_control':
+            try:
+                n = int(self.headers.get('Content-Length', 0))
+                data = json.loads(self.rfile.read(min(n, 4096)).decode('utf-8')) if n else {}
+                p = AUTOFILL.get('proc')
+                if data.get('action') != 'check_now':
+                    return self._reply(400, b'{"status": "error", "message": "unknown action"}')
+                if not (p and p.poll() is None):
+                    return self._reply(409, json.dumps({'status': 'error', 'message': 'The auto-fill worker is not running (turn it on first).'}).encode('utf-8'))
+                open(WAKE_FILE, 'w').close()
+                log('INFO', 'Auto-fill: check requested from the index')
+                return self._reply(200, b'{"status": "success"}')
+            except Exception as e:
+                return self._reply(400, json.dumps({'status': 'error', 'message': str(e)}).encode('utf-8'))
         if route == '/api/server_config':
             try:
                 n = int(self.headers.get('Content-Length', 0))
@@ -1086,7 +1336,7 @@ def _warmup():
 def start_autofill():
     cfg = CONFIG.get('booru_autofill') or {}
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'booru_autofill.py')
-    if not cfg.get('enabled', False) or not os.path.isfile(script):
+    if not cfg.get('enabled', False) or not os.path.isfile(script) or not tools_installed():
         return
     try:
         if os.path.exists(STOP_FILE):
@@ -1122,9 +1372,15 @@ def server_status():
             state = json.load(f)
     except Exception:
         pass
+    sched = {}
+    try:
+        with open(os.path.join(LOCAL_DIR, 'autofill_status.json'), 'r', encoding='utf-8') as f:
+            sched = json.load(f)
+    except Exception:
+        pass
     p = AUTOFILL.get('proc')
     return {'pid': os.getpid(), 'warmup': WARMUP, 'presence': presence_state(),
-            'autofill': {'running': bool(p and p.poll() is None), 'state': state},
+            'autofill': {'running': bool(p and p.poll() is None), 'state': state, 'schedule': sched}, 'queue': booru_queue_status(), 'tools_installed': tools_installed(),
             'config': {k: v for k, v in CONFIG.items() if not k.startswith('_')}}
 
 

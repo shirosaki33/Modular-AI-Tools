@@ -36,6 +36,7 @@ Safety:
 Settings: local/server_config.json -> "booru_autofill" (see server_max.py).
 """
 import argparse
+import random
 import json
 import os
 import re
@@ -45,7 +46,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 DAY = 24 * 3600 * 1000
 TTL_COUNT, TTL_WIKI = 15 * DAY, 30 * DAY
@@ -57,13 +58,17 @@ UA = 'ModularAITools/1.0 (local Tag Manager auto-fill; github.com/shirosaki33/Mo
 LIMIT_STATUS = {429, 403, 502, 503, 504} | set(range(520, 531))
 SERVER_ERRORS = {500, 502, 503, 504} | set(range(520, 531))
 COOL = {'first': 60, 'step': 30, 'max': 120, 'retry_after_max': 300, 'hard_fail_limit': 5}
-DONE_RECHECK = 600                     # everything is up to date: look again in 10 minutes
 CACHE_FILES = {'danbooru': 'danbooru_cache.json', 'e621': 'e621_cache.json'}
 BACKUP_KEEP = 4
 TEMP_DIR = 'autofill_temp'
 
 DEFAULTS = {
     'enabled': True,
+    'run_on_start': True,              # False = the worker only works when 'Check now' is pressed in the index
+    'work_while_in_use': True,         # a page using the tag databases does NOT stop the worker: it keeps downloading into the temporary files and moves them into the final files after the page is done
+    'random_download': False,          # on every re-check (recheck_minutes) also take random pages of each site's tag list
+    'random_tags': 100,                # how many random tags to look at per site in each random round (taken in blocks of 100, paced by request_delay_ms)
+    'recheck_minutes': 10,             # everything up to date: look again after this many minutes (0 = never, manual only)
     'e621_username': '',               # goes into the User-Agent as "ModularAITools/1.0 (by <name> on e621)", as e621 asks
     'user_agent': '',                  # advanced: a full User-Agent text; replaces the one above when not empty
     'danbooru': True,
@@ -322,17 +327,38 @@ def broken_summary(e):
 LAST_ERR = {'body': '', 'server': ''}
 
 
+PROXY = {'port': None}                 # set by main(): every request to Danbooru / e621 goes through the queue of the server (server_max.py)
+
+
+def _is_site(url):
+    host = (urlparse(url).hostname or '').lower()
+    return host.endswith('donmai.us') or host.endswith('e621.net') or host.endswith('e926.net')
+
+
 def http_json(url, timeout=25, ua=None):
-    """(status, data, retry_after_seconds). status 0 = no connection / unreadable answer."""
+    """(status, data, retry_after_seconds). status 0 = no connection / unreadable answer.
+    Requests to the sites wait in the server's queue (one at a time per site; the server checks first that the site is online)."""
+    if PROXY['port'] and _is_site(url):
+        r = _http_json_raw('http://127.0.0.1:{}/api/booru_fetch?prio=1&url={}'.format(PROXY['port'], quote(url, safe='')), max(timeout, 180), ua, True)
+        if r is not None:
+            return r
+    return _http_json_raw(url, timeout, ua)
+
+
+def _http_json_raw(url, timeout=25, ua=None, queued=False):
     req = urllib.request.Request(url, headers={'User-Agent': ua or UA, 'Accept': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
+            if queued and not r.headers.get('X-Booru-Queue'):
+                return None
             raw = r.read()
             try:
                 return r.status, json.loads(raw.decode('utf-8')), 0
             except Exception:
                 return 0, None, 0
     except urllib.error.HTTPError as e:
+        if queued and not e.headers.get('X-Booru-Queue'):
+            return None                                          # the queue is switched off (or an old server): ask the site directly
         ra = 0
         try:
             ra = int(e.headers.get('Retry-After') or 0)
@@ -340,12 +366,14 @@ def http_json(url, timeout=25, ua=None):
             pass
         try:
             LAST_ERR['body'] = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', e.read(600).decode('utf-8', 'replace'))).strip()[:160]
-            LAST_ERR['server'] = str(e.headers.get('Server') or '')
+            LAST_ERR['server'] = str((e.headers.get('X-Upstream-Server') if queued else e.headers.get('Server')) or '')
+            if queued and e.headers.get('X-Booru-Down'):
+                LAST_ERR['body'] = 'site not online: ' + str(e.headers.get('X-Booru-Down'))
         except Exception:
             LAST_ERR['body'] = ''
         return e.code, None, ra
     except Exception:
-        return 0, None, 0
+        return (None if queued else (0, None, 0))
 
 
 def tell_server(port, state):
@@ -358,10 +386,27 @@ def tell_server(port, state):
         pass
 
 
+_TP = {'t': 0.0, 'v': True}
+
+
+def tools_present(root):
+    """Tag Manager or Prompt Helper installed in the project folder (checked at most every 10 s)."""
+    if time.time() - _TP['t'] > 10:
+        try:
+            names = {f.lower() for f in os.listdir(root)}
+            _TP['v'] = 'tag manager.html' in names or 'prompt helper.html' in names
+        except OSError:
+            pass
+        _TP['t'] = time.time()
+    return _TP['v']
+
+
 class Gate:
     """Decides when the worker may run: asks the server whether a page is open, and notices when the server is gone."""
 
-    def __init__(self, port, server_pid, stop_file):
+    def __init__(self, port, server_pid, stop_file, wake_file=''):
+        self.wake_file = wake_file
+        self.allow_use = lambda: False                        # set by main(): True = keep working while a page uses the files
         self.port = port
         self.url = 'http://127.0.0.1:{}/api/booru_presence'.format(port)
         self.server_pid = server_pid
@@ -388,8 +433,19 @@ class Gate:
                         self.fails += 1
                         if self.fails >= 8:
                             raise Stop('the server is not answering')
-        if self.active:
+        if self.active and not self.allow_use():
             raise Paused()
+
+    def woken(self, consume=True):
+        """True when the index asked for a check right now ('Check now' creates the wake file)."""
+        if self.wake_file and os.path.exists(self.wake_file):
+            if consume:
+                try:
+                    os.remove(self.wake_file)
+                except OSError:
+                    pass
+            return True
+        return False
 
     def sleep(self, seconds):
         end = time.time() + seconds
@@ -718,6 +774,7 @@ class Filler:
         self.threads = {}
         self.done = {s: False for s in SITES}          # a site with nothing left to do stops; the other one goes on alone
         self.last_commit = time.time()
+        self.rand_left = {s: 0 for s in SITES}         # random catalog pages still to take in this round
 
     # --- waiting / stopping (all threads)
     def poll(self):
@@ -772,6 +829,8 @@ class Filler:
 
     def master_on(self):
         c, a = self.cfg(), self.app_cfg()
+        if not tools_present(self.root):                           # safety trigger: no Tag Manager / Prompt Helper in the folder = off
+            return False
         if not c.get('enabled', True):
             return False
         if a.get('danbooru-info-enabled') is False:            # master switch of the Tag Interrogator
@@ -1225,6 +1284,10 @@ class Filler:
         """Pauses both site threads between two steps, moves the temporary files into the final files, resumes them."""
         if self.store is None:
             return
+        if self.gate.active and self.gate.allow_use():          # a page is using the files: only the temporary files grow, the final ones wait
+            self.store.flush_journals()
+            self.last_commit = time.time()
+            return
         with self.cv:
             self.committing = True
             deadline = time.time() + 180
@@ -1336,6 +1399,17 @@ class Filler:
                 if r['end']:
                     self.ended[sid] = True
             self.sleep(self.delay(sid))
+        elif self.rand_left[sid] > 0:                           # random download: one random page of the site's tag list
+            self.rand_left[sid] -= 1
+            page = random.randint(1, MAX_PAGE[sid])
+            r = self.crawl_page(sid, page)
+            did += 1
+            if r['ok']:
+                self.session[sid]['added'] += r['added']
+                log('{}: random page {} -> {} new tags'.format('Danbooru' if sid == 'danbooru' else 'e621', page, r['added']), 'RANDOM')
+                if r['added']:
+                    self.queue[sid] = None
+            self.sleep(self.delay(sid))
         return did
 
     def run_step(self, sid):
@@ -1439,9 +1513,42 @@ def main():
             box['t'] = time.time()
         return box['v']
 
-    gate = Gate(a.port, a.server_pid, stop_file)
+    wake_file = os.path.join(local, '.autofill_wake')
+    status_file = os.path.join(local, 'autofill_status.json')
+    last_status = {'v': None}
+
+    def set_status(mode, next_at=None):
+        v = {'mode': mode, 'next_check_at': next_at}
+        if v == last_status['v']:
+            return
+        last_status['v'] = v
+        try:
+            tmp = status_file + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(dict(v, updated_at=ms()), f)
+            os.replace(tmp, status_file)
+        except OSError:
+            pass
+
+    PROXY['port'] = a.port
+    gate = Gate(a.port, a.server_pid, stop_file, wake_file)
+    gate.allow_use = lambda: bool(cfg_fn().get('work_while_in_use', True))
+    temp_dir = os.path.join(local, TEMP_DIR)
+
+    def temp_pending():
+        try:
+            return any(f.endswith('.jsonl') and os.path.getsize(os.path.join(temp_dir, f)) > 0 for f in os.listdir(temp_dir))
+        except OSError:
+            return False
     filler = Filler(root, gate, cfg_fn)
     log('Auto-fill worker started (it only works while no page that uses the Danbooru / e621 files is open)')
+    try:
+        os.remove(wake_file)
+    except OSError:
+        pass
+    next_at = None                                         # None = work now; a time (or inf) = waiting for it / for 'Check now'
+    if not cfg_fn().get('run_on_start', True):
+        next_at = float('inf')
     try:
         gate.sleep(float(cfg_fn().get('start_delay_seconds', 10)))
     except Paused:
@@ -1454,17 +1561,36 @@ def main():
                 gate.poll(force=True)
                 if not filler.master_on():
                     filler.release()
+                    set_status('off')
+                    gate.woken()                            # a 'Check now' while switched off is dropped
                     gate.sleep(10)
                     continue
+                if next_at is not None:                     # up to date: wait for the schedule or for 'Check now'
+                    if gate.woken() or time.time() >= next_at:
+                        next_at = None
+                        rc = cfg_fn()
+                        if rc.get('random_download'):                    # same timer as the re-check: this round also takes random pages
+                            n = max(1, -(-int(rc.get('random_tags', 100) or 100) // CRAWL_LIMIT))   # blocks of 100 tags
+                            filler.rand_left = {s_: n for s_ in SITES}
+                    elif not gate.active and temp_pending():             # temporary files left by a session in which a page was open: move them now
+                        next_at = None
+                    else:
+                        set_status('manual' if next_at == float('inf') else 'waiting', None if next_at == float('inf') else int(next_at * 1000))
+                        gate.sleep(1)
+                        continue
                 if not filler.load():
                     log('Some cache file could not be read - trying again in 1 minute', 'WARN')
                     gate.sleep(60)
                     continue
+                set_status('working')
                 if filler.run_cycle():
-                    filler.release('Everything is up to date - checking again in {} minutes'.format(DONE_RECHECK // 60))
+                    mins = float(cfg_fn().get('recheck_minutes', 10) or 0)
+                    filler.release('Everything is up to date - ' + ('checking again in {:g} minutes (or press Check now in the index)'.format(mins) if mins > 0 else 'automatic re-check is off (press Check now in the index)'))
                     for s in SITES:
                         filler.ended[s] = filler.ended[s] and filler.cursor[s] > MAX_PAGE[s]
-                    gate.sleep(DONE_RECHECK)
+                    filler.rand_left = {s_: 0 for s_ in SITES}
+                    gate.woken()
+                    next_at = (time.time() + mins * 60) if mins > 0 else float('inf')
             except Paused:
                 filler.release('A page that uses the Danbooru / e621 files is open - auto-fill paused')
                 while True:
@@ -1501,6 +1627,7 @@ def main():
             filler.release()
         except Exception:
             pass
+        set_status('stopped')
 
 
 if __name__ == '__main__':
