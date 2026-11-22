@@ -78,7 +78,7 @@
         { key: 'timeline',         icon: '🕒',  label: 'Gallery Timeline',       localFile: 'gallery timeline.html',      onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/gallery%20timeline.html' },
         { key: 'tag_manager',      icon: '🏷️', label: 'Tag Manager',            localFile: 'tag manager.html',           onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/tag%20manager.html' },
         { key: 'lora_calc',        icon: '🧮',  label: 'LoRA Calculator',        localFile: 'lora calculator.html',       onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/lora%20calculator.html' },
-        { key: 'lora_evaluate',    icon: '📚',  label: 'Lora Evaluate',          localFile: 'Lora Evaluate.html',         onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Lora%20Evaluate.html' },
+        { key: 'lora_evaluate',    icon: '📚',  label: 'Model Evaluate',         localFile: 'Model Evaluate.html',        onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/Model%20Evaluate.html' },
         { key: 'prompt_helper',    icon: '✨',  label: 'Prompt Helper',          localFile: 'prompt helper.html',         onlineUrl: 'https://shirosaki33.github.io/Modular-AI-Tools/prompt%20helper.html' }
     ];
 
