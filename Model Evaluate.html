@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Model Evaluate</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 :root{--bg:#111;--pn:#161616;--cd:#1b1b1b;--bd:#262626;--mu:#888;--ac:#00ff99;--ac2:#00aa66;--wn:#ffd84d;--er:#ff6666}
@@ -34,6 +35,9 @@ a{color:var(--ac);text-decoration:none}a:hover{color:#fff;text-decoration:underl
 #notice{display:none;margin:10px 20px 0;padding:9px 14px;background:var(--pn);border:1px solid var(--bd);border-radius:8px;color:var(--mu);justify-content:space-between;align-items:center;gap:10px}
 #main{flex:1;display:flex;min-height:0}
 #side{width:176px;flex-shrink:0;padding:14px 8px;border-right:1px solid var(--bd);overflow:auto}
+#lib{display:flex;flex-direction:column;gap:4px;margin:0 0 8px;padding:4px;background:var(--cd);border:1px solid var(--bd);border-radius:10px}
+#lib button{padding:7px 10px;font-size:12px;border:0;border-radius:8px;background:none;color:#aaa;display:flex;justify-content:space-between;align-items:center;gap:6px;text-align:left}
+#lib button i{font-style:normal;font-size:11px;color:var(--mu);font-weight:400}#lib button.on{background:#0d1f18;color:var(--ac)}#lib button:hover{border-color:transparent;color:#fff}
 #side h6{margin:10px 8px 6px;font-size:10px;color:var(--mu);letter-spacing:.06em}
 .cat{padding:8px 10px;border-radius:8px;cursor:pointer;color:#bbb;display:flex;justify-content:space-between;gap:8px}
 .cat:hover{background:var(--cd)}.cat.on{background:#0d1f18;color:var(--ac);font-weight:600}.cat.dim{opacity:.5}
@@ -41,7 +45,8 @@ a{color:var(--ac);text-decoration:none}a:hover{color:#fff;text-decoration:underl
 /* grid */
 #grid{flex:1;overflow:auto;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--sz,160px),1fr));grid-auto-rows:max-content;gap:14px;align-content:start}
 .card{background:var(--pn);border:1px solid var(--bd);border-radius:12px;overflow:hidden;cursor:pointer;position:relative;min-width:0}
-.card:hover{border-color:var(--ac)}
+.card:hover{border-color:var(--ac)}.card.off{opacity:.5}.card.off img,.card.off .ph{filter:grayscale(1)}
+.dng:hover{border-color:var(--er)!important;color:var(--er)}
 .card img,.ph{width:100%;aspect-ratio:3/4;object-fit:cover;display:block;background:#0d0d0d}
 .tg{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.72);border-radius:20px;padding:2px 9px 2px 7px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px}
 .dot{width:8px;height:8px;border-radius:50%;background:#555}.dot.found{background:var(--ac)}.dot.outdated{background:var(--wn)}.dot.notfound{background:var(--er)}
@@ -105,18 +110,19 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
     <label class="chk" title="ON: opening a model rechecks Civitai (refreshes images, author text and versions). OFF: only the Recheck button does."><input type="checkbox" id="arc" checked> Auto-recheck</label>
     <button onclick="runQueue(1)" title="Look up Civitai by hash. Only files that are not in the cache yet. Includes checkpoints (large files are hashed, which can take a while).">Check Civitai</button>
     <span style="position:relative"><button id="help-btn" title="Help">?</button><div id="help-pop"><h4>About Model Evaluate</h4><ul>
-      <li>Reads <code>.safetensors</code> and <code>.ckpt</code> files: LoRAs, checkpoints <b>and diffusion models</b> (UNet/DiT only, like ComfyUI's <code>diffusion_models</code> folder). Use the <b>Type</b> filter to switch between them.</li>
+      <li>Reads <code>.safetensors</code> and <code>.ckpt</code> files: LoRAs, checkpoints <b>and diffusion models</b> (UNet/DiT only, like ComfyUI's <code>diffusion_models</code> folder). The sidebar splits the files into <b>Library - LoRA</b> and <b>Library - Checkpoints</b> (checkpoints, diffusion models and other non-LoRA files).</li>
       <li>Only the <strong>first</strong> Civitai image is saved next to the model as <code>name.preview.png</code> (or jpg/webp). The others are view-only.</li>
       <li>Opening a model rechecks Civitai so previews and author text stay up to date.</li>
       <li>Checkpoints and diffusion models are several GB: they are <b>not</b> hashed automatically. Click <b>Check Civitai</b> to hash them (it can take a while); opening one also checks it.</li>
       <li>Use ★ to favorite models. The eye icon hides a category <b>and its models from All</b>; <b>🗂 Categories</b> builds your own from selected models.</li>
       <li>Cache lives in <code>local/</code> on localhost and/or <code>lora_evaluate_cache.json</code> in your library folders.</li>
+      <li><b>Localhost only:</b> in the detail view, <b>📂 Go to</b> opens the file's folder, <b>⏸ Disable</b> renames it to <code>.disabled</code> so ComfyUI and other tools stop finding it (<b>▶ Enable</b> undoes it; see the <b>Disabled</b> category), and <b>🗑 Delete</b> removes it from the disk for good.</li>
       <li>Works best in Chrome or Edge (File System Access API).</li></ul></div></span>
   </div>
 </div>
 <div id="bar">
   <select id="fd" onchange="page=1;render()"><option value="">All folders</option></select>
-  <select id="kd" onchange="page=1;render()" title="Model type"><option value="">All types</option><option value="LoRA">LoRAs</option><option value="Checkpoint">Checkpoints</option><option value="Diffusion model">Diffusion models</option><option value="Other">Other types</option></select>
+
   <input type="text" id="q" placeholder="Filter by name…" oninput="page=1;debRender()">
   <button onclick="asc=!asc;page=1;render()" title="Reverse order">⇅</button>
   <select id="so" onchange="page=1;render()"><option value="name">Name</option><option value="size">Size</option><option value="date">Date</option><option value="base">Base</option></select>
@@ -126,7 +132,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 </div>
 <div id="notice"><span id="ntx"></span><button id="nbt">Allow</button></div>
 <div id="main">
-  <div id="side"><div id="cats"></div></div>
+  <div id="side"><div id="lib"><button data-lib="LoRA"><span>Library - LoRA</span><i></i></button><button data-lib="Checkpoint"><span>Library - Checkpoints</span><i></i></button></div><div id="cats"></div></div>
   <div id="grid"></div>
   <div id="detail">
     <div id="dl"></div>
@@ -157,7 +163,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 const $=id=>document.getElementById(id),esc=s=>window.escHtml(s??''),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const fv=(m,k)=>{const v=findVal(m,k);return v&&v!=='None'&&v!=='null'?v:null};
 const API='https://civitai.com/api/v1/',CACHE_PATH='local/lora_evaluate_cache.json',CF='lora_evaluate_cache.json';
-const EXT=/\.(safetensors|ckpt)$/i,GB15=1.5*1073741824;
+const EXT=/\.(safetensors|ckpt)(\.disabled)?$/i,isOff=it=>/\.disabled$/i.test(it.name),base=n=>String(n||'').replace(/\.disabled$/i,''),GB15=1.5*1073741824;
 const PREV=['.preview.png','.preview.jpg','.preview.jpeg','.preview.webp','.png','.jpg','.jpeg','.webp'],SIZES=[25,50,75,100];
 const isLocal=['localhost','127.0.0.1','[::1]'].includes(location.hostname);
 let autoRC=true,roots=[],items=[],view=[],all=[],cat='All',cur=-1,asc=true,scale=1,tx=0,ty=0,gal=[],gi=0,page=1,per=100,busy=false,cache={},saveT,chain=Promise.resolve(),mode='none',favs=new Set(),hidden=new Set();
@@ -192,20 +198,24 @@ const cacheLabel=()=>({both:'Cache: local/ + library folders',api:'Cache: local/
 const KEEP='status modelId versionId name version base type trained creator downloads latest images description versionDescription previewSaved previewUrl fileName size path root checkedAt'.split(' ');
 const slim=c=>Object.fromEntries(KEEP.filter(k=>{const v=c[k];return v!=null&&v!==''&&!(Array.isArray(v)&&!v.length)}).map(k=>[k,c[k]]));
 let cidxM=null,cidxS=-1;
-function cidx(){if(cidxM&&cidxS===stamp)return cidxM;cidxM=new Map();for(const e of Object.entries(cache)){const c=e[1];if(!c||c.fileName==null)continue;const k=c.size+'|'+c.fileName;let a=cidxM.get(k);a||cidxM.set(k,a=[]);a.push(e)}cidxS=stamp;return cidxM}
+function cidx(){if(cidxM&&cidxS===stamp)return cidxM;cidxM=new Map();for(const e of Object.entries(cache)){const c=e[1];if(!c||c.fileName==null)continue;const k=c.size+'|'+base(c.fileName);let a=cidxM.get(k);a||cidxM.set(k,a=[]);a.push(e)}cidxS=stamp;return cidxM}
 function rec(it){if(it._hash&&cache[it._hash])return cache[it._hash];if(it._miss===stamp)return null;
-  const E=cidx().get(it.file.size+'|'+it.name)||[],sz=it.file.size,
-  h=E.find(([,c])=>c&&c.size===sz&&c.fileName===it.name&&(!c.path||c.path===it.path)&&(!c.root||c.root===it.root.name))||E.find(([,c])=>c&&c.size===sz&&c.fileName===it.name);
+  const bn=base(it.name),bp=base(it.path),E=cidx().get(it.file.size+'|'+bn)||[],sz=it.file.size,
+  h=E.find(([,c])=>c&&c.size===sz&&base(c.fileName)===bn&&(!c.path||base(c.path)===bp)&&(!c.root||c.root===it.root.name))||E.find(([,c])=>c&&c.size===sz&&base(c.fileName)===bn);
   if(h){it._hash=h[0];return h[1]}it._miss=stamp;return null}
-function ensure(it,h){stamp++;it._hash=h;const c=cache[h]||{};Object.assign(c,{fileName:it.name,size:it.file.size,path:it.path,root:it.root.name});return cache[h]=c}
+function ensure(it,h){stamp++;it._hash=h;const c=cache[h]||{};Object.assign(c,{fileName:base(it.name),size:it.file.size,path:base(it.path),root:it.root.name});return cache[h]=c}
 const st=it=>(rec(it)||{}).status||'';
 /* Type: what Civitai says wins; otherwise what the file header says (or a size guess for old cache entries / .ckpt). */
 const KT={checkpoint:'Checkpoint',lora:'LoRA',locon:'LoRA',dora:'LoRA',unet:'Diffusion model',diffusionmodel:'Diffusion model'};
 const isBig=k=>k==='Checkpoint'||k==='Diffusion model';
 const kindOf=it=>{const t=((rec(it)||{}).type||'').toLowerCase().replace(/[^a-z]/g,'');if(t)return KT[t]||'Other';return it.kind||guessKind(it.file.size)};
 const fmtSz=b=>b>=1073741824?(b/1073741824).toFixed(2)+' GB':Math.max(1,Math.round(b/1048576))+' MB';
-const kOk=it=>{const k=$('kd').value;return!k||kindOf(it)===k};
-const sub=it=>isBig(kindOf(it))?kindOf(it)+' · '+fmtSz(it.file.size):(trigger(it)||'—')+' · '+(dimAlpha(it.meta)||'—');
+/* Two libraries: "Library - LoRA" | "Library - Checkpoints" (checkpoints + diffusion models + any other non-LoRA type) */
+let lib='LoRA';try{lib=localStorage.getItem('modelEvalLib')==='Checkpoint'?'Checkpoint':'LoRA'}catch{}
+const libOf=it=>kindOf(it)==='LoRA'?'LoRA':'Checkpoint';
+const kOk=it=>libOf(it)===lib;
+const KLBL={Checkpoint:'Full checkpoints','Diffusion model':'Diffusion models',Other:'Other types'};
+const sub=it=>(isOff(it)?'⏸ Disabled · ':'')+(isBig(kindOf(it))?kindOf(it)+' · '+fmtSz(it.file.size):(trigger(it)||'—')+' · '+(dimAlpha(it.meta)||'—'));
 
 /* ---------- Leitura do .safetensors ---------- */
 const guessKind=sz=>sz>GB15?'Checkpoint':'LoRA';
@@ -318,18 +328,25 @@ async function manualSearch(){const h=$('mh').value.trim().toLowerCase(),it=view
   $('mh')&&($('mh').disabled=false)}
 
 /* ---------- Lista ---------- */
-const CATS=['All','Illustrious','Pony','Anima','NoobAI','SDXL','SD 1.5','SD 3','Flux','Flux 2','Z-Image','Krea','Qwen','Chroma','HiDream','Wan','Other','Outdated','Local only','Not found'];
-const inCatRaw=(it,k)=>{const s=st(it);return k==='Favorites'?isFav(it):k==='Outdated'?s==='outdated':k==='Not found'?s==='notfound':k==='Local only'?!s:k.startsWith('c:')?!!(window.ccHas&&ccHas(it,k.slice(2))):it.cls===k};
+const CATS=['All','Illustrious','Pony','Anima','NoobAI','SDXL','SD 1.5','SD 3','Flux','Flux 2','Z-Image','Krea','Qwen','Chroma','HiDream','Wan','Other','Outdated','Local only','Not found','Disabled'];
+const inCatRaw=(it,k)=>{const s=st(it);return k.startsWith('k:')?kindOf(it)===k.slice(2):k==='Disabled'?isOff(it):k==='Favorites'?isFav(it):k==='Outdated'?s==='outdated':k==='Not found'?s==='notfound':k==='Local only'?!s:k.startsWith('c:')?!!(window.ccHas&&ccHas(it,k.slice(2))):it.cls===k};
 const inCat=(it,k)=>{if(k!=='All')return inCatRaw(it,k);for(const h of hidden)if(inCatRaw(it,h))return false;return true};
 function counts(cc){const c={},add=k=>c[k]=(c[k]||0)+1;
-  for(const it of items){if(!kOk(it))continue;const s=st(it);inCat(it,'All')&&add('All');add(it.cls);s==='outdated'&&add('Outdated');s==='notfound'&&add('Not found');!s&&add('Local only');isFav(it)&&add('Favorites');for(const k of cc)inCatRaw(it,k)&&add(k)}
+  for(const it of items){if(!kOk(it))continue;const s=st(it);inCat(it,'All')&&add('All');add(it.cls);s==='outdated'&&add('Outdated');s==='notfound'&&add('Not found');isOff(it)&&add('Disabled');!s&&add('Local only');isFav(it)&&add('Favorites');lib==='Checkpoint'&&add('k:'+kindOf(it));for(const k of cc)inCatRaw(it,k)&&add(k)}
   return c}
-const catLabel=k=>k.startsWith('c:')?k.slice(2):k;
+const catLabel=k=>k.startsWith('c:')?k.slice(2):k.startsWith('k:')?KLBL[k.slice(2)]||k.slice(2):k;
 function folders(){const s=[...new Set(items.map(folderOf))].sort(),v=$('fd').value;$('fd').innerHTML='<option value="">All folders</option>'+s.map(x=>`<option>${esc(x)}</option>`).join('');$('fd').value=s.includes(v)?v:''}
-function renderCats(){const cc=window.ccKeys?ccKeys():[],cnt=counts(cc),n=k=>cnt[k]||0,
+function libBar(){const n={LoRA:0,Checkpoint:0};for(const it of items)n[libOf(it)]++;
+  document.querySelectorAll('#lib button').forEach(b=>{b.classList.toggle('on',b.dataset.lib===lib);b.querySelector('i').textContent=n[b.dataset.lib]})}
+function setLib(l){if(l===lib)return;lib=l;try{localStorage.setItem('modelEvalLib',l)}catch{}cat='All';page=1;$('grid').scrollTop=0;render()}
+$('lib').onclick=e=>{const b=e.target.closest('[data-lib]');b&&setLib(b.dataset.lib)};
+function renderCats(){libBar();const cc=window.ccKeys?ccKeys():[],cnt=counts(cc),n=k=>cnt[k]||0,
   hid=[...CATS.filter(k=>k!=='All'),...cc].filter(k=>hidden.has(k)),mine=cc.filter(k=>!hidden.has(k)),
   row=(k,d)=>`<div class="cat${k===cat?' on':''}${d?' dim':''}" data-k="${esc(k)}"><span>${esc(catLabel(k))}</span><span class="rt"><i>${n(k)}</i>${k==='All'?'':`<span class="hide" data-hide="${esc(k)}" title="Hide / show">${d?'🙈':'👁️'}</span>`}</span></div>`;
-  $('cats').innerHTML=`<h6>FAVORITES</h6><div class="cat${cat==='Favorites'?' on':''}" data-k="Favorites"><span>★ Favorites</span><i>${n('Favorites')}</i></div><h6>LIBRARY</h6>`
+  const kr=lib==='Checkpoint'?['Checkpoint','Diffusion model','Other'].filter(x=>n('k:'+x)||cat==='k:'+x):[];
+  $('cats').innerHTML=`<h6>FAVORITES</h6><div class="cat${cat==='Favorites'?' on':''}" data-k="Favorites"><span>★ Favorites</span><i>${n('Favorites')}</i></div>`
+    +(kr.length>1||cat.startsWith('k:')?'<h6>TYPE</h6>'+kr.map(x=>`<div class="cat${cat==='k:'+x?' on':''}" data-k="k:${esc(x)}"><span>${esc(KLBL[x])}</span><i>${n('k:'+x)}</i></div>`).join(''):'')
+    +`<h6>${lib==='LoRA'?'LIBRARY - LORA':'LIBRARY - CHECKPOINTS'}</h6>`
     +CATS.filter(k=>k==='All'||(!hidden.has(k)&&(n(k)||k===cat))).map(k=>row(k)).join('')
     +(mine.length?'<h6>CUSTOM</h6>'+mine.map(k=>row(k)).join(''):'')
     +(hid.length?'<h6>HIDDEN</h6>'+hid.map(k=>row(k,1)).join(''):'')}
@@ -344,7 +361,7 @@ function pager(){const t=all.length,n=Math.max(1,Math.ceil(t/per));$('pager').st
 const changePage=d=>{page+=d;$('grid').scrollTop=0;render()};
 const togglePer=()=>{per=SIZES[(SIZES.indexOf(per)+1)%SIZES.length];page=1;$('grid').scrollTop=0;render()};
 const empty=()=>`<div id="empty"><strong>${items.length?'No models in this filter.':'No folder loaded.'}</strong><p>${items.length?'Try another category, folder, or name.':'Click <b>Add folder</b> and choose the directory with your .safetensors / .ckpt files (Chrome or Edge, desktop). Civitai data is cached in <code>local/lora_evaluate_cache.json</code> on localhost, or in the library folder when opened from <code>file://</code>.'}</p></div>`;
-const card=(it,i)=>`<div class="card" data-i="${i}" data-k="${esc(it.key)}"><button class="star${isFav(it)?' on':''}" data-star="${i}" title="Favorite">★</button><span class="tg"><span class="dot ${st(it)}"></span>${esc(it.cls)}</span>${it.url?`<img alt="" data-thumb="${esc(it.url)}">`:'<div class="ph"></div>'}<div class="nm" title="${esc(it.name)}">${esc(it.name.replace(EXT,''))}</div><div class="sb">${esc(sub(it))}</div></div>`;
+const card=(it,i)=>`<div class="card${isOff(it)?' off':''}" data-i="${i}" data-k="${esc(it.key)}"><button class="star${isFav(it)?' on':''}" data-star="${i}" title="Favorite">★</button><span class="tg"><span class="dot ${st(it)}"></span>${esc(it.cls)}</span>${it.url?`<img alt="" data-thumb="${esc(it.url)}">`:'<div class="ph"></div>'}<div class="nm" title="${esc(it.name)}">${esc(it.name.replace(EXT,''))}</div><div class="sb">${esc(sub(it))}</div></div>`;
 /* ---------- Dynamic page change (infinite scroll): previous + current + next page stay in the DOM ---------- */
 let dyn=true,wS=0,wE=0,focusIdx=-1,dynRAF=null;
 try{dyn=localStorage.getItem('loraEvalDynamic')!=='0'}catch{}
@@ -439,6 +456,7 @@ function showDetail(i,keep){
   $('dr').innerHTML=`
   <div><div class="hd"><h2>${esc(c.name||it.name.replace(EXT,''))}</h2><div class="hr"><button class="fb${fav?' on':''}" onclick="toggleFav(view[cur],event)">${fav?'★ Favorited':'☆ Favorite'}</button>${link}</div></div><div class="fn">${esc(it.path)}</div></div>
   <div class="pill ${s}">${LABEL[s]||LABEL['']}${s==='outdated'&&c.latest?': '+esc(c.latest):''}</div>
+  ${isLocal?actHtml(it):''}
   <div class="box"><h3>Model info<span class="bdg">${esc(String(c.type||(isCk?kindOf(it):'LoRA')).toUpperCase())}</span></h3>
     <div class="kv">${info.map(([l,v])=>`<div><label>${l}</label><span>${esc(v||'—')}</span></div>`).join('')}<div class="f"><label>Hash</label><span class="mono">${esc(it._hash||'not hashed yet')}</span></div></div>
     <div class="mrow"><input type="text" id="mh" placeholder="Look up a hash manually"><button class="pri" onclick="manualSearch()">Search</button></div>
@@ -452,6 +470,50 @@ $('dl').onclick=e=>{const d=e.target.closest('.li');d&&showDetail(+d.dataset.j)}
 function closeDetail(){focusIdx=cur>=0?(page-1)*per+cur:-1;$('detail').style.display='none';$('detail').classList.remove('has-desc');$('grid').style.display='grid';$('side').style.display=$('bar').style.display='';cur=-1;render()}
 function step(d){if(cur<0)return;const n=(page-1)*per+cur+d;if(n<0||n>=all.length)return;const p=Math.floor(n/per)+1;
   if(p!==page){page=p;view=all.slice((p-1)*per,p*per)}showDetail(n%per)}
+
+/* ---------- Localhost-only tools: 📂 Go to · ⏸ Disable / ▶ Enable · 🗑 Delete ---------- */
+const note=(t,ms)=>{$('fr').textContent=t;ms&&setTimeout(()=>{$('fr').textContent===t&&($('fr').textContent='')},ms)};
+async function post(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=null;try{d=await r.json()}catch{}return{ok:r.ok&&d&&d.status==='success',data:d||{}}}
+const getPaths=async()=>(await idbOp('kv',s=>s.get('rootPaths')).catch(()=>null))||{};
+const setPath=async(k,v)=>{const m=await getPaths();v?m[k]=v:delete m[k];await idbOp('kv',s=>s.put(m,'rootPaths'),1).catch(()=>{})};
+/* The browser does not know the real path of a folder: a small marker file is written in the root folder and the local server finds it on disk. */
+async function locateRoot(root,cands){const marker='_tm_locate_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+'.tmp';
+  try{const w=await(await root.handle.getFileHandle(marker,{create:true})).createWritable();await w.write('Model Evaluate: temporary file used to find this folder on disk. Safe to delete.');await w.close()}catch{return null}
+  try{const r=await post('/api/locate_folder',{name:root.name,marker,candidates:cands||[]});return r.ok?r.data.path:null}catch{return null}
+  finally{try{await root.handle.removeEntry(marker)}catch{}}}
+async function goTo(it){if(!it)return;if(!isLocal){alert('📂 Go to needs the local server (localhost).');return}
+  const root=it.root;if(!root.handle){alert('Files added one by one have no folder to open.');return}
+  const open=p=>post('/api/open_folder',{root:p,folder:it.rel||'',name:it.name}).then(r=>r.ok);
+  try{let path=(await getPaths())[root.name];if(path&&await open(path))return;if(path)await setPath(root.name,null);
+    note('Looking for "'+root.name+'" on disk (first time only)…');path=await locateRoot(root,[]);
+    if(!path){const t=prompt('Paste the full path of the folder "'+root.name+'" (for example F:\\Models\\'+root.name+').\nIt is asked only once and remembered.','');if(!t)return;
+      path=await locateRoot(root,[t.trim().replace(/^"|"$/g,'')]);if(!path){alert('That path is not the folder "'+root.name+'" opened here (or it does not exist).');return}}
+    await setPath(root.name,path);if(!(await open(path)))alert('Could not open the folder in the file manager.')}
+  catch(e){alert('Could not open the folder: '+e.message)}finally{note('')}}
+async function moveFile(it,newName){const fh=await it.dir.getFileHandle(it.name);
+  if(typeof fh.move==='function')try{await fh.move(newName);return fh}catch{}
+  if(!confirm('This browser cannot rename the file in place.\nIt will be copied to "'+newName+'" ('+fmtSz(it.file.size)+') and the original removed afterwards. It needs free space on the same drive. Continue?'))return null;
+  const src=await realFile(it),dst=await it.dir.getFileHandle(newName,{create:true});
+  try{note('Copying '+it.name+'…');await src.stream().pipeTo(await dst.createWritable())}catch(e){try{await it.dir.removeEntry(newName)}catch{}throw e}
+  await it.dir.removeEntry(it.name);return dst}
+async function toggleDisable(it){if(!it)return;if(!isLocal)return;if(!it.dir){alert('The folder is still loading. Try again in a moment.');return}
+  const off=isOff(it),nn=off?base(it.name):it.name+'.disabled';
+  if(!off&&!confirm('Disable "'+base(it.name)+'"?\n\nThe file is renamed to "'+nn+'", so ComfyUI and other tools stop finding it. You can enable it again here.'))return;
+  try{await it.dir.getFileHandle(nn);alert('A file named "'+nn+'" already exists in this folder.');return}catch{}
+  try{const wasFav=isFav(it),oldKey=it.key,fh=await moveFile(it,nn);if(!fh)return;
+    it.name=nn;it.path=(it.rel?it.rel+'/':'')+nn;it.file=await fh.getFile();it.key=it.path+'|'+it.file.size+'|'+it.file.lastModified;
+    if(wasFav&&!it._hash){favs.delete(oldKey);favs.add(it.key);savePrefs()}
+    stamp++;it._miss=0;try{saveScan()}catch{}note(off?'Enabled.':'Disabled: ComfyUI and other tools will no longer list it.',4000);
+    cur>=0?showDetail(cur,1):render()}
+  catch(e){alert('Could not rename the file: '+e.message);note('')}}
+async function deleteModel(it){if(!it)return;if(!isLocal)return;if(!it.dir){alert('The folder is still loading. Try again in a moment.');return}
+  if(!confirm('PERMANENTLY delete "'+base(it.name)+'" ('+fmtSz(it.file.size)+') from the disk?\n\nIt does NOT go to the Recycle Bin and cannot be undone.'))return;
+  try{await it.dir.removeEntry(it.name);
+    if(it.previewName&&/\.preview\.[a-z]+$/i.test(it.previewName))try{await it.dir.removeEntry(it.previewName)}catch{}
+    items=items.filter(x=>x!==it);stamp++;note('Deleted '+base(it.name)+'.',4000);
+    if(cur>=0)closeDetail();else render();folders();try{saveScan()}catch{}}
+  catch(e){alert('Could not delete the file: '+e.message)}}
+const actHtml=it=>`<div class="box"><h3>Local actions<span class="bdg">LOCALHOST</span></h3><div class="mrow" style="margin-top:0"><button onclick="goTo(view[cur])" style="flex:1" title="Open the folder in the file manager">📂 Go to</button>${it.dir?`<button onclick="toggleDisable(view[cur])" style="flex:1" title="${isOff(it)?'Remove the .disabled ending so tools find it again':'Rename to .disabled so ComfyUI and other tools stop finding it'}">${isOff(it)?'▶ Enable':'⏸ Disable'}</button><button class="dng" onclick="deleteModel(view[cur])" style="flex:1" title="Delete the file from the disk (no Recycle Bin)">🗑 Delete</button>`:''}</div>${isOff(it)?'<div class="fn">Disabled: the file ends with .disabled, so ComfyUI and other tools do not list it.</div>':''}</div>`;
 
 /* ---------- Stage / zoom ---------- */
 const thumbU=u=>u.replace('/original=true/','/width=240/');
