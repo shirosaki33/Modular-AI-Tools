@@ -386,19 +386,14 @@ def tell_server(port, state):
         pass
 
 
-_TP = {'t': 0.0, 'v': True}
-
-
 def tools_present(root):
-    """Tag Manager or Prompt Helper installed in the project folder (checked at most every 10 s)."""
-    if time.time() - _TP['t'] > 10:
-        try:
-            names = {f.lower() for f in os.listdir(root)}
-            _TP['v'] = 'tag manager.html' in names or 'prompt helper.html' in names
-        except OSError:
-            pass
-        _TP['t'] = time.time()
-    return _TP['v']
+    """Tag Manager or Prompt Helper installed in the project folder. Looked at only when something is about to be changed
+    (start of a cycle, before moving the temporary files into the final ones), not on a timer."""
+    try:
+        names = {f.lower() for f in os.listdir(root)}
+    except OSError:
+        return True                                           # cannot tell: do not switch anything off because of a read error
+    return 'tag manager.html' in names or 'prompt helper.html' in names
 
 
 class Gate:
@@ -774,6 +769,7 @@ class Filler:
         self.threads = {}
         self.done = {s: False for s in SITES}          # a site with nothing left to do stops; the other one goes on alone
         self.last_commit = time.time()
+        self.tools_gone = False                        # Tag Manager / Prompt Helper disappeared from the folder: nothing is changed any more
         self.rand_left = {s: 0 for s in SITES}         # random catalog pages still to take in this round
 
     # --- waiting / stopping (all threads)
@@ -829,8 +825,6 @@ class Filler:
 
     def master_on(self):
         c, a = self.cfg(), self.app_cfg()
-        if not tools_present(self.root):                           # safety trigger: no Tag Manager / Prompt Helper in the folder = off
-            return False
         if not c.get('enabled', True):
             return False
         if a.get('danbooru-info-enabled') is False:            # master switch of the Tag Interrogator
@@ -1284,6 +1278,10 @@ class Filler:
         """Pauses both site threads between two steps, moves the temporary files into the final files, resumes them."""
         if self.store is None:
             return
+        if not tools_present(self.root):                        # safety trigger, checked right before the final files would change
+            self.tools_gone = True
+            self.store.flush_journals()
+            return
         if self.gate.active and self.gate.allow_use():          # a page is using the files: only the temporary files grow, the final ones wait
             self.store.flush_journals()
             self.last_commit = time.time()
@@ -1460,7 +1458,7 @@ class Filler:
         try:
             while any(t.is_alive() for t in self.threads.values()):
                 self.gate.poll()
-                if not self.master_on():
+                if not self.master_on() or self.tools_gone:
                     raise Off()
                 self.maybe_commit()
                 now = time.time()
@@ -1578,6 +1576,13 @@ def main():
                         set_status('manual' if next_at == float('inf') else 'waiting', None if next_at == float('inf') else int(next_at * 1000))
                         gate.sleep(1)
                         continue
+                if not tools_present(root):                 # safety trigger: checked once, right before this cycle starts changing things
+                    log('Tag Manager / Prompt Helper were not found in the folder - auto-fill stays off', 'WARN')
+                    set_status('off')
+                    next_at = float('inf')
+                    gate.sleep(30)
+                    continue
+                filler.tools_gone = False
                 if not filler.load():
                     log('Some cache file could not be read - trying again in 1 minute', 'WARN')
                     gate.sleep(60)
