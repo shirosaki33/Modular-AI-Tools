@@ -366,8 +366,13 @@ window.renderEditor = function() {
     if (fusedPending.size > 0) {
         const label = document.createElement('div'); label.className = 'ghost-section-label'; label.textContent = '💡 Pending Suggestions';
         tagListVertical.appendChild(label);
+        let ghostShown = 0;
         Array.from(fusedPending).sort().forEach(tag => {
             const isCustomNL = window.checkIfNL(tag);
+            // The Tags / NL filter applies to ghost suggestions too
+            if (window.activeTagFilterMode === 'TAGS' && isCustomNL) return;
+            if (window.activeTagFilterMode === 'NL' && !isCustomNL) return;
+            ghostShown++;
             const row = document.createElement('div'); row.className = 'tag-row ghost';
             row.innerHTML = `<div class="tag-row-left"><span class="tag-name" data-nl-raw="${esc(tag)}"${isCustomNL ? ' style="color:#b890ff;"' : ''}>${esc(window.nlDisplay(tag))}</span></div>
             <div style="display: flex; align-items: center; gap: 10px;">
@@ -378,6 +383,7 @@ window.renderEditor = function() {
             row.querySelector('.tag-ghost-reject').onclick = (e) => { e.stopPropagation(); window.rejectGhostTagActive(tag); };
             tagListVertical.appendChild(row);
         });
+        if (!ghostShown) label.style.display = 'none';
     }
 
 

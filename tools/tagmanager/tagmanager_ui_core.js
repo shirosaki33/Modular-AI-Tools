@@ -1227,12 +1227,17 @@ window.filterActiveTagsByName = function(val) {
     window.activeTagNameFilter = (val || '').trim().toLowerCase();
     const container = document.getElementById('tag-list-vertical');
     if (!container) return;
+    // The name search also filters ghost suggestions (💡); their section label hides when none match
+    let ghostVisible = 0;
     container.querySelectorAll('.tag-row').forEach(row => {
-        if (row.classList.contains('ghost')) { row.style.display = 'flex'; return; }
         const nameEl = row.querySelector('.tag-name');
         const text = (nameEl ? nameEl.textContent : row.textContent).toLowerCase();
-        row.style.display = (!window.activeTagNameFilter || text.includes(window.activeTagNameFilter)) ? 'flex' : 'none';
+        const show = !window.activeTagNameFilter || text.includes(window.activeTagNameFilter);
+        row.style.display = show ? 'flex' : 'none';
+        if (show && row.classList.contains('ghost')) ghostVisible++;
     });
+    const ghostLabel = container.querySelector('.ghost-section-label');
+    if (ghostLabel && container.querySelector('.tag-row.ghost')) ghostLabel.style.display = ghostVisible ? '' : 'none';
 };
 
 window.toggleSuggestFilterImg = function() {
