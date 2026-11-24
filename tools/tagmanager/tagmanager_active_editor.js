@@ -22,6 +22,30 @@ window.toggleActiveGhostFilter = function() {
 }
 
 window.activeTagFilterMode = 'ALL';
+
+// A different dataset was loaded: the Active Image filters (ghost-only, All/Tags/NL, name search) and the
+// ghost filter of the All Dataset Tags list must not carry over from the previous dataset.
+function _aeResetFiltersForNewDataset() {
+    window.showOnlyActiveGhosts = false;
+    const gb = document.getElementById('btn-filter-active-ghosts');
+    if (gb) { gb.classList.remove('active'); gb.style.background = 'transparent'; gb.style.color = '#00ff99'; }
+    window.activeTagFilterMode = 'ALL';
+    const fb = document.getElementById('btn-active-tag-filter');
+    if (fb) fb.textContent = '🏷️ All';
+    window.activeTagNameFilter = '';
+    const inp = document.getElementById('active-add-input');
+    if (inp) inp.value = '';
+    if (typeof masterSelectedGhostTags !== 'undefined') masterSelectedGhostTags.clear();
+    window.showGhostTagsInList = false;
+    const mb = document.getElementById('btn-filter-suggest-img');
+    if (mb) { mb.classList.remove('active'); mb.style.color = ''; mb.style.borderColor = ''; }
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+}
+(function () {
+    const hook = () => { if (window.TM && typeof window.TM.on === 'function') { window.TM.on('dataset:loaded', _aeResetFiltersForNewDataset); return true; } return false; };
+    if (!hook()) document.addEventListener('DOMContentLoaded', hook);
+})();
 window.cycleActiveTagFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
     const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
