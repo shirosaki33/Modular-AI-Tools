@@ -33,6 +33,7 @@ function _aeResetFiltersForNewDataset() {
     const fb = document.getElementById('btn-active-tag-filter');
     if (fb) fb.textContent = '🏷️ All';
     window.activeTagNameFilter = '';
+    window.activeSelectedGhostTags.clear();
     const inp = document.getElementById('active-add-input');
     if (inp) inp.value = '';
     if (typeof masterSelectedGhostTags !== 'undefined') masterSelectedGhostTags.clear();
@@ -46,6 +47,28 @@ function _aeResetFiltersForNewDataset() {
     const hook = () => { if (window.TM && typeof window.TM.on === 'function') { window.TM.on('dataset:loaded', _aeResetFiltersForNewDataset); return true; } return false; };
     if (!hook()) document.addEventListener('DOMContentLoaded', hook);
 })();
+
+// Ghost suggestions (💡 Pending Suggestions) of the Active Image can be selected too.
+// Plain click = one selection only (normal + ghost cleared); Ctrl / Shift let normal and ghost be mixed.
+window.activeSelectedGhostTags = new Set();
+let _aeLastGhostIdx = null;
+(function () {
+    const st = document.createElement('style');
+    st.textContent = '.tag-row.ghost.selected-active { background: rgba(0,170,102,0.28); border-style: solid; border-color: #00ff99; }';
+    document.head.appendChild(st);
+})();
+window.acceptSelectedGhostsActive = function() {
+    const tags = Array.from(window.activeSelectedGhostTags);
+    window.activeSelectedGhostTags.clear();
+    tags.forEach(t => window.acceptGhostTagActive(t));
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+};
+window.rejectSelectedGhostsActive = function() {
+    const tags = Array.from(window.activeSelectedGhostTags);
+    window.activeSelectedGhostTags.clear();
+    tags.forEach(t => window.rejectGhostTagActive(t));
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+};
 window.cycleActiveTagFilter = function() {
     const states = ['ALL', 'TAGS', 'NL'];
     const labels = { 'ALL': '🏷️ All', 'TAGS': '🏷️ Tags', 'NL': '📝 NL' };
@@ -66,7 +89,8 @@ function _aeSplitTags(content) {
    todos os hooks de render a cada clique. */
 function _aeSyncSelectionControls() {
     const activeActions = document.getElementById('active-selection-actions');
-    if(activeActions) activeActions.style.display = activeSelectedTags.size > 0 ? 'flex' : 'none';
+    const _gSel = window.activeSelectedGhostTags.size;
+    if(activeActions) activeActions.style.display = (activeSelectedTags.size > 0 || _gSel > 0) ? 'flex' : 'none';
 
     // ATUALIZAÇÃO DO BOTÃO "CONVERT TO NL/TAG" NA BARRA DE AÇÕES ATIVA
     const convertBtn = document.querySelector('#active-selection-actions .btn-nl-edit');
@@ -104,12 +128,25 @@ function _aeSyncSelectionControls() {
         const hasCustom = Array.from(activeSelectedTags).some(t => window.checkIfNL(t));
         replaceBtn.style.display = hasCustom ? 'none' : 'block';
     }
+
+    // Ghost selection: Accept / Reject buttons; the normal-tag buttons only show when normal tags are selected too
+    const accBtn = document.getElementById('btn-accept-sel-ghosts');
+    const rejBtn = document.getElementById('btn-reject-sel-ghosts');
+    if (accBtn) accBtn.style.display = _gSel > 0 ? 'block' : 'none';
+    if (rejBtn) rejBtn.style.display = _gSel > 0 ? 'block' : 'none';
+    if (activeSelectedTags.size === 0 && _gSel > 0) {
+        ['.btn-replace', '.btn-reorder-tag', '.btn-nl-edit', '.btn-edit-nl', '.btn-remove'].forEach(sel => {
+            const b = document.querySelector('#active-selection-actions ' + sel); if (b) b.style.display = 'none';
+        });
+        const mb = document.getElementById('btn-merge-to-nl'); if (mb) mb.style.display = 'none';
+    }
 }
 
 function _aeUpdateActiveSelectionUI() {
     const list = document.getElementById('tag-list-vertical');
-    if (list) list.querySelectorAll('.tag-row:not(.ghost)').forEach(row => {
-        if (row._tmTag !== undefined) row.classList.toggle('selected-active', activeSelectedTags.has(row._tmTag));
+    if (list) list.querySelectorAll('.tag-row').forEach(row => {
+        if (row._tmGhostTag !== undefined) row.classList.toggle('selected-active', window.activeSelectedGhostTags.has(row._tmGhostTag));
+        else if (row._tmTag !== undefined) row.classList.toggle('selected-active', activeSelectedTags.has(row._tmTag));
     });
     _aeSyncSelectionControls();
     if (window.TM) window.TM.emit('selection:active', activeSelectedTags);
@@ -138,7 +175,7 @@ window.renderEditor = function() {
         if (activeAddContainerEmpty) activeAddContainerEmpty.style.display = 'none';
         const activeActionsEmpty = document.getElementById('active-selection-actions');
         if (activeActionsEmpty) activeActionsEmpty.style.display = 'none';
-        activeSelectedTags.clear();
+        activeSelectedTags.clear(); window.activeSelectedGhostTags.clear();
         return;
     }
 
@@ -370,6 +407,7 @@ window.renderEditor = function() {
                     if (activeSelectedTags.has(tag)) activeSelectedTags.delete(tag); else activeSelectedTags.add(tag);
                     lastSelectedActiveTagIndex = i;
                 } else {
+                    if (!e.shiftKey) { window.activeSelectedGhostTags.clear(); _aeLastGhostIdx = null; }   // plain click: one selection only
                     if (activeSelectedTags.has(tag) && activeSelectedTags.size === 1) { activeSelectedTags.clear(); }
                     else { activeSelectedTags.clear(); activeSelectedTags.add(tag); lastSelectedActiveTagIndex = i; }
                 }
@@ -391,7 +429,10 @@ window.renderEditor = function() {
         const label = document.createElement('div'); label.className = 'ghost-section-label'; label.textContent = '💡 Pending Suggestions';
         tagListVertical.appendChild(label);
         let ghostShown = 0;
-        Array.from(fusedPending).sort().forEach(tag => {
+        const _ghostList = Array.from(fusedPending).sort();
+        // forget selected ghosts that are no longer pending for the selected image(s)
+        Array.from(window.activeSelectedGhostTags).forEach(t => { if (!fusedPending.has(t)) window.activeSelectedGhostTags.delete(t); });
+        _ghostList.forEach((tag, gi) => {
             const isCustomNL = window.checkIfNL(tag);
             // The Tags / NL filter applies to ghost suggestions too
             if (window.activeTagFilterMode === 'TAGS' && isCustomNL) return;
@@ -405,6 +446,24 @@ window.renderEditor = function() {
             </div>`;
             row.querySelector('.tag-ghost-accept').onclick = (e) => { e.stopPropagation(); window.acceptGhostTagActive(tag); };
             row.querySelector('.tag-ghost-reject').onclick = (e) => { e.stopPropagation(); window.rejectGhostTagActive(tag); };
+            row._tmGhostTag = tag;
+            if (window.activeSelectedGhostTags.has(tag)) row.classList.add('selected-active');
+            row.style.cursor = 'pointer';
+            row.onclick = (e) => {
+                const G = window.activeSelectedGhostTags;
+                if (e.shiftKey && G.size > 0 && _aeLastGhostIdx !== null) {
+                    const a = Math.min(_aeLastGhostIdx, gi), b = Math.max(_aeLastGhostIdx, gi);
+                    G.clear(); for (let j = a; j <= b; j++) G.add(_ghostList[j]);
+                } else if (e.ctrlKey || e.metaKey) {
+                    if (G.has(tag)) G.delete(tag); else G.add(tag);
+                    _aeLastGhostIdx = gi;
+                } else {
+                    if (!e.shiftKey) { activeSelectedTags.clear(); lastSelectedActiveTagIndex = null; }   // plain click: one selection only
+                    if (G.has(tag) && G.size === 1) G.clear();
+                    else { G.clear(); G.add(tag); _aeLastGhostIdx = gi; }
+                }
+                _aeUpdateActiveSelectionUI();
+            };
             tagListVertical.appendChild(row);
         });
         if (!ghostShown) label.style.display = 'none';
@@ -499,7 +558,7 @@ window.removeSelectedActiveTags = function() {
     _aeRefreshAfterTagChange();
 }
 
-window.clearActiveSelection = function() { activeSelectedTags.clear(); if(typeof window.renderEditor === 'function') window.renderEditor(); }
+window.clearActiveSelection = function() { activeSelectedTags.clear(); window.activeSelectedGhostTags.clear(); if(typeof window.renderEditor === 'function') window.renderEditor(); }
 
 /* newTag pode ser uma tag ou uma lista (inlineAdd manda várias de uma vez:
    1 refresh em vez de 1 por tag). */

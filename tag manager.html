@@ -378,6 +378,8 @@
                 <button class="btn-multi btn-reorder-tag" onclick="window.reorderSelectedActiveTag()" style="background: #1a2a3c; border-color: #2a5a8c; color: #8fd0ff;" title="Reorder tag: move the selected tag(s) to a line number (line 1 = top)">↕️ Reorder tag</button>
                 <button class="btn-multi btn-nl-edit" onclick="window.convertToCustomNL()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">🪄 Convert to NL</button>
                 <button class="btn-multi btn-edit-nl" onclick="window.editSelectedNLTag()" style="display:none; background: #1a3a5c; border-color: #2a5a8c; color: #4db8ff;" title="Rewrite this NL tag (same as the ✏️ pencil)">✏️ Edit</button>
+                <button id="btn-accept-sel-ghosts" class="btn-multi" onclick="window.acceptSelectedGhostsActive()" style="display:none; background:#0a3a22; border-color:#00aa66; color:#00ff99;" title="Accept the selected ghost suggestions">✓ Accept Selected</button>
+                <button id="btn-reject-sel-ghosts" class="btn-multi" onclick="window.rejectSelectedGhostsActive()" style="display:none; background:#2a0000; border-color:#aa0000; color:#ff6060;" title="Reject the selected ghost suggestions">✕ Reject Selected</button>
                 <button class="btn-multi btn-remove" onclick="removeSelectedActiveTags()">🗑️ Remove Selected</button>
                 <button class="btn-multi" style="background: #333; color: #aaa; border-color: #444;" onclick="clearActiveSelection()">Cancel</button>
             </div>
