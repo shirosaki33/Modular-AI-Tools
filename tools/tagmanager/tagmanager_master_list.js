@@ -267,7 +267,7 @@ window.renderMasterTagList = function() {
                     lastSelectedMasterTagIndex = index;
                 } else {
                     // plain click: drops EVERY selection, ghost ones included
-                    masterSelectedGhostTags.clear(); lastSelectedGhostTagIndex = null;
+                    if (!e.shiftKey) { masterSelectedGhostTags.clear(); lastSelectedGhostTagIndex = null; }   // Shift keeps the other kind selected
                     if (masterSelectedTags.has(tag) && masterSelectedTags.size === 1) { masterSelectedTags.clear(); }
                     else { masterSelectedTags.clear(); masterSelectedTags.add(tag); lastSelectedMasterTagIndex = index; }
                 }
@@ -327,7 +327,7 @@ window.renderMasterTagList = function() {
                     lastSelectedGhostTagIndex = gIndex;
                 } else {
                     // plain click: drops EVERY selection, normal tags included
-                    masterSelectedTags.clear(); lastSelectedMasterTagIndex = null;
+                    if (!e.shiftKey) { masterSelectedTags.clear(); lastSelectedMasterTagIndex = null; }   // Shift keeps the other kind selected
                     if (masterSelectedGhostTags.has(tag) && masterSelectedGhostTags.size === 1) { masterSelectedGhostTags.clear(); }
                     else { masterSelectedGhostTags.clear(); masterSelectedGhostTags.add(tag); lastSelectedGhostTagIndex = gIndex; }
                 }
