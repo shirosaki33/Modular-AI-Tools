@@ -29,7 +29,8 @@ window._postLocalCacheOnUnload = function(body) {
     } catch (e) {}
 };
 
-// 1. DIRETÓRIOS DB (Mantido no IndexedDB)
+// 1. DIRETÓRIOS DB (Mantido no IndexedDB) + copy in local/dirs_tagmanager.json (tools/shared/dir_mirror.js)
+window.tmDirMirror = window.DirMirror ? DirMirror.setup({ app: 'tagmanager', db: dbName, store: storeName, isDir: k => !String(k).startsWith('path_') }) : null;
 window.initDB = function() {
     return new Promise((res, rej) => {
         try {

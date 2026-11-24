@@ -520,6 +520,9 @@
             <input type="number" id="viewcount-monthly-customday" min="1" max="28" value="1" onchange="onViewCountMonthlyCustomDayChange()" style="background:#111; color:#00ff99; border:1px solid #444; border-radius:8px; padding:8px; font-size:13px; width:100%; box-sizing:border-box; outline:none;">
         </div>
     </div>
+
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+    <button onclick="ghClearSavedDirectories()" style="background:#2a0d0d; color:#ff8080; border:1px solid #803030; font-size:12px; padding:6px 10px; cursor:pointer;" title="Removes every saved directory from the list (browser and the copy in local/). Images and files on disk are not touched. Use it when a saved folder stops opening.">🗑️ Clear saved directories</button>
 </div>
 
 <div id="workspace">
@@ -644,6 +647,7 @@
 <script src="parsers/invokeai.js"></script>
 <script src="parsers/fooocus.js"></script>
 
+<script src="tools/shared/dir_mirror.js?v=2"></script>
 <script src="tools/shared/thumb_loader.js?v=3"></script>
 <script src="tools/quick_links.js"></script>
 <script src="tools/gallery/gallery_tag_system.js"></script>
@@ -652,6 +656,6 @@
 <script src="tools/gallery/gallery_view_tools.js"></script>
 
 <script src="tools/gallery/gallery_ui.js"></script>
-<script src="tools/gallery/gallery_core.js"></script>
+<script src="tools/gallery/gallery_core.js?v=3"></script>
 </body>
 </html>

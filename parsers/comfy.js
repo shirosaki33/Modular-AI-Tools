@@ -131,6 +131,22 @@
         const title  = String(nodeTitle(node) || '');
         const allType = type + ' ' + title;
 
+        // Image-to-image loader: the real latent size comes from the loaded image, which the
+        // metadata does not store. Flag it (with the preset as a fallback guess); the caller
+        // recovers the real size from the saved image's own dimensions.
+        if (/LoadImageI2I/i.test(type)) {
+            const fb = Array.isArray(inp.width) ? findSizeFromNode(json, inp.width[0], depth + 1, new Set(visited)) : null;
+            return { w: fb ? fb.w : 0, h: fb ? fb.h : 0, fromImage: true, scale: 1 };
+        }
+
+        // Resolution-preset nodes (e.g. "768x1344"): the chosen preset is the real size when the
+        // mode is "resolution"; their width/height widgets keep stale default values (1024x1024).
+        if (typeof inp.selection === 'string' && (inp.mode === undefined || /^resolution$/i.test(String(inp.mode)))) {
+            const m = inp.selection.match(/(\d+)\s*[x×]\s*(\d+)/i);
+            const presetPair = m && sizePair(m[1], m[2]);
+            if (presetPair) return presetPair;
+        }
+
         const direct = sizePair(
             inp.width  ?? inp.W ?? inp.image_width  ?? inp.empty_latent_width  ?? inp.latent_width  ?? inp.target_width,
             inp.height ?? inp.H ?? inp.image_height ?? inp.empty_latent_height ?? inp.latent_height ?? inp.target_height
@@ -140,6 +156,40 @@
         if (/EmptyLatent|Latent.*Image|Image Dimension|Resolution|Image Size|SDXL.*Empty|Canvas|AspectRatio/i.test(allType)) {
             const nums = wv.filter(v => typeof v === 'number' && validDim(v));
             if (nums.length >= 2) return { w: Math.round(nums[0]), h: Math.round(nums[1]) };
+        }
+
+        // T2I / I2I alternator: follow only the branch that was actually used
+        if (inp.latent_true_T2I !== undefined && inp.latent_false_I2I !== undefined) {
+            const flag = resolveInputValue(json, inp.using_now, ['value']);
+            const useT2I = !(flag === false || flag === 'false' || flag === 0);
+            const branch = useT2I ? inp.latent_true_T2I : inp.latent_false_I2I;
+            if (Array.isArray(branch)) {
+                const got = findSizeFromNode(json, branch[0], depth + 1, visited);
+                if (got) return got;
+            }
+        }
+
+        // Scale-by nodes (HiresFix, ImageScaleBy, LatentUpscaleBy...): upstream size x factor
+        const scaleRaw = inp.scale_factor ?? inp.scale_by;
+        if (scaleRaw !== undefined) {
+            const k = Number(Array.isArray(scaleRaw)
+                ? resolveInputValue(json, scaleRaw, ['scale_factor', 'scale_by', 'value', 'float', 'number'])
+                : scaleRaw);
+            if (Number.isFinite(k) && k > 0) {
+                let base = null;
+                for (const key of ['image', 'images', 'pixels', 'samples', 'latent', 'latent_image']) {
+                    if (Array.isArray(inp[key])) {
+                        base = findSizeFromNode(json, inp[key][0], depth + 1, visited);
+                        if (base) break;
+                    }
+                }
+                if (base) {
+                    const mult = Number(inp.round_to_multiple);
+                    const snap = v => mult >= 1 ? Math.max(mult, Math.round(v * k / mult) * mult) : Math.round(v * k);
+                    if (base.fromImage) return { w: base.w ? snap(base.w) : 0, h: base.h ? snap(base.h) : 0, fromImage: true, scale: (base.scale || 1) * k };
+                    return { w: snap(base.w), h: snap(base.h) };
+                }
+            }
         }
 
         // Follow priority latent inputs
@@ -175,6 +225,9 @@
        INPUT VALUE RESOLVER
        ================================================================ */
 
+    // Output slot 1 of the T2I/I2I alternator is the denoise value
+    function idxIsDenoise(val) { return Array.isArray(val) && Number(val[1]) === 1; }
+
     function resolveInputValue(json, val, keys, depth, visited) {
         depth   = depth   || 0;
         visited = visited || new Set();
@@ -191,6 +244,13 @@
         const type  = String(node.class_type || '');
         const title = String(nodeTitle(node) || '');
         const all   = type + ' ' + title;
+
+        // T2I / I2I alternator: denoise is 1.0 for text-to-image, the I2I value otherwise
+        if (inp.latent_true_T2I !== undefined && inp.latent_false_I2I !== undefined && idxIsDenoise(val)) {
+            const flag = resolveInputValue(json, inp.using_now, ['value'], depth + 1, visited);
+            const useT2I = !(flag === false || flag === 'false' || flag === 0);
+            return useT2I ? 1 : resolveInputValue(json, inp.denoise_i2i, ['denoise_i2i', 'value'], depth + 1, visited);
+        }
 
         const probeKeys = [
             ...(keys || []),
@@ -663,8 +723,51 @@
             denoise:   String(resolveInputValue(json, inp.denoise ?? inp.denoising_strength ?? inp.strength, ['denoise', 'denoising_strength', 'strength', 'value', 'Xi', 'Xf']) ?? ''),
             start_step: String(resolveInputValue(json, inp.start_at_step, ['start_at_step', 'value']) ?? ''),
             end_step:   String(resolveInputValue(json, inp.end_at_step, ['end_at_step', 'value']) ?? ''),
-            size:      resolvedSize ? (resolvedSize.w + ' x ' + resolvedSize.h) : ''
+            size:      resolvedSize && resolvedSize.w && resolvedSize.h ? (resolvedSize.w + ' x ' + resolvedSize.h) : '',
+            _fromImage: !!(resolvedSize && resolvedSize.fromImage),
+            _scale:     resolvedSize && resolvedSize.scale ? resolvedSize.scale : 1
         };
+    }
+
+    /* Boolean behind a link (Primitive / validator nodes); true when it cannot be known. */
+    function resolveBool(json, val, depth) {
+        depth = depth || 0;
+        if (!Array.isArray(val)) return !(val === false || val === 'false' || val === 0 || val === null || val === undefined || val === '');
+        const node = json && json[String(val[0])];
+        if (!node || depth > 10) return true;
+        const inp = node.inputs || {};
+        for (const k of ['value', 'anything', 'boolean']) {
+            if (inp[k] !== undefined) return resolveBool(json, inp[k], depth + 1);
+        }
+        return true;
+    }
+
+    /* Id of the KSampler whose output ends up in the saved image (follows Stage Switch nodes). */
+    function traceFinalSampler(json, ref, depth, visited) {
+        if (!Array.isArray(ref) || depth > 40) return null;
+        const id = String(ref[0] ?? '');
+        const node = json[id];
+        if (!node || visited.has(id)) return null;
+        visited.add(id);
+        if (isKSampler(node)) return id;
+        const inp = node.inputs || {};
+        if (/StageSwitch/i.test(String(node.class_type))) {
+            let best = null;
+            for (let n = 1; n <= 8; n++) {
+                const l = inp['latent_' + n];
+                if (!Array.isArray(l)) continue;
+                if (n > 1 && !resolveBool(json, inp['enabled_' + n])) continue;
+                best = l;
+            }
+            return best ? traceFinalSampler(json, best, depth + 1, visited) : null;
+        }
+        for (const k of ['images', 'image', 'anything', 'samples', 'latent', 'latent_image', 'pixels']) {
+            if (Array.isArray(inp[k])) {
+                const got = traceFinalSampler(json, inp[k], depth + 1, visited);
+                if (got) return got;
+            }
+        }
+        return null;
     }
 
     /* Python's json writes NaN / Infinity / -Infinity, which JSON.parse rejects.
@@ -697,7 +800,7 @@
     /**
      * Parses a ComfyUI workflow JSON string.
      */
-    function parseComfyJSON(jsonStr) {
+    function parseComfyJSON(jsonStr, imageDims) {
         // --- Parse JSON ---
         let json;
         try { 
@@ -740,6 +843,41 @@
 
         p.size = normSizeString(p.size);
 
+        // --- Dimension validator ---
+        // 1) compare the saved image's pixel size with every size the metadata yields (one per sampler);
+        // 2) if any matches, the metadata is trusted as is;
+        // 3) otherwise (e.g. image-to-image: the loaded image's size is not stored) rebuild each
+        //    sampler's size from the real image size and the proportions between the stages.
+        const extraParams = orderedIds.slice(1).map(id => kSamplerParams(json, id)).filter(Boolean);
+        const dims = imageDims && sizePair(imageDims.width, imageDims.height);
+        let sizeAdjusted = false;
+        if (dims && primaryParams) {
+            const all = [primaryParams, ...extraParams];
+            const known = all.map(sp => normSizeString(sp.size)).filter(Boolean);
+            if (!known.includes(sizeToString(dims))) {
+                let finalId = null;
+                const saveId = Object.keys(json).find(id => /Save/i.test(String(json[id] && json[id].class_type)));
+                if (saveId) finalId = traceFinalSampler(json, json[saveId].inputs && (json[saveId].inputs.images ?? json[saveId].inputs.image), 0, new Set());
+                if (!finalId) finalId = orderedIds[orderedIds.length - 1];
+                const fp = finalId === orderedIds[0] ? primaryParams : (extraParams.find(x => x.node_id === finalId) || primaryParams);
+                const dimOf = sp => { const m = String(sp.size || '').match(/(\d+)\s*x\s*(\d+)/); return m ? { w: +m[1], h: +m[2] } : null; };
+                const fd = dimOf(fp);
+                const rebuilt = sp => {
+                    if (sp._fromImage && fp._fromImage) {                    // exact scale chain from the loaded image
+                        return sizeToString(sizePair(dims.w * sp._scale / fp._scale, dims.h * sp._scale / fp._scale));
+                    }
+                    const sd = dimOf(sp);                                    // proportion between the stage sizes
+                    return sd && fd ? sizeToString(sizePair(dims.w * sd.w / fd.w, dims.h * sd.h / fd.h)) : '';
+                };
+                const np = rebuilt(primaryParams);
+                if (np) {
+                    sizeAdjusted = true;
+                    p.size = np;
+                    extraParams.forEach(sp => { sp.size = rebuilt(sp) || sp.size; });
+                }
+            }
+        }
+
         // --- Prompts ---
         const prompts = collectAllPromptNodes(json);
         let pos = prompts.positive || '';
@@ -780,9 +918,10 @@
             _extras: {
                 denoise:   p.denoise   || null,
                 clip_skip: p.clip_skip || null,
+                sizeAdjusted,
                 vae:       models.vaes.join(' | ')       || null,
                 clipText:  [...models.clips, ...models.text_encoders].join(' | ') || null,
-                extraSamplers: orderedIds.slice(1).map(id => kSamplerParams(json, id)).filter(Boolean),
+                extraSamplers: extraParams,
                 sections:  collectEnhancerSection(json, prompts.autoNeg),
             }
         };

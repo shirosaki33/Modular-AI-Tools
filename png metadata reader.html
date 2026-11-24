@@ -84,6 +84,10 @@ input[type="file"] { display: none; }
 .collapsible-section.collapsed .section-content { display: none; }
 /* Grid layout lives in a class (not inline) so a collapsed section can actually hide it. */
 .param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* Estimated size (recalculated from the image dimensions because the metadata did not match) */
+.param-grid>div>span.size-estimate.size-est{color:#ffcc00!important}
+.size-help{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:6px;border:1px solid #ffcc00;border-radius:50%;color:#ffcc00;font-size:10px;font-weight:bold;line-height:1;cursor:help;vertical-align:middle}
+
 
 #loraList .lora-item { padding: 8px 0; border-bottom: 1px dashed #222; font-size: 13px; display: flex; align-items: center; justify-content: space-between; }
 #loraList .lora-item:last-child { border-bottom: none; }
@@ -409,6 +413,13 @@ function showAlert(msg, type) {
 
 // Texto vindo dos metadados (prompts, nomes de modelo) entra no HTML escapado.
 const escHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Size value shown in yellow with a "?" tooltip when the parser recalculated it from the image dimensions.
+const sizeEstimateHTML = val => {
+    const d = window.currentImageDims;
+    const imgTxt = d ? ` (${d.width} x ${d.height})` : '';
+    const tip = `Estimated size: the image dimensions${imgTxt} did not match any size found in the metadata, so this value was calculated from the image dimensions.`;
+    return `<span class="size-estimate size-est" style="color:#ffcc00;">${escHTML(val)}<span class="size-help" title="${escHTML(tip)}">?</span></span>`;
+};
 
 function autoResize(el) { setTimeout(() => { el.style.height = 'auto'; el.style.height = (el.scrollHeight) + 'px'; }, 10); }
 
@@ -545,7 +556,7 @@ function applyMetadataToUI(meta) {
             hasParams = true; 
             const div = document.createElement('div');
             div.style.cssText = "font-size: 13px; background: #111; padding: 6px 10px; border-radius: 6px; border: 1px solid #222;";
-            div.innerHTML = `<span class="topbar-label">${escHTML(lbl)}:</span> <span style="color:#00ff99;">${escHTML(val)}</span>`;
+            div.innerHTML = `<span class="topbar-label">${escHTML(lbl)}:</span> ` + ((lbl === 'Size' && meta._extras && meta._extras.sizeAdjusted) ? sizeEstimateHTML(val) : `<span style="color:#00ff99;">${escHTML(val)}</span>`);
             paramList.appendChild(div);
         }
     });
@@ -644,7 +655,7 @@ function applyMetadataToUI(meta) {
                 if (val) {
                     const div = document.createElement('div');
                     div.style.cssText = "font-size: 13px; background: #111; padding: 6px 10px; border-radius: 6px; border: 1px solid #222;";
-                    div.innerHTML = `<span class="topbar-label">${escHTML(lbl)}:</span> <span style="color:#00ff99;">${escHTML(val)}</span>`;
+                    div.innerHTML = `<span class="topbar-label">${escHTML(lbl)}:</span> ` + ((lbl === 'Size' && meta._extras && meta._extras.sizeAdjusted) ? sizeEstimateHTML(val) : `<span style="color:#00ff99;">${escHTML(val)}</span>`);
                     grid.appendChild(div);
                 }
             });

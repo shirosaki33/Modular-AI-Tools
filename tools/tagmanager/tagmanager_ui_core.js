@@ -608,6 +608,20 @@ window.updateSelect = async function() {
     handles.forEach(h => {
         const opt = document.createElement('option'); opt.value = h.name; opt.textContent = h.name; list.appendChild(opt);
     });
+    if (window.tmDirMirror) await window.tmDirMirror.fillSelect(list, handles.map(h => h.name));   // lost by the browser: "↻ name (re-link)"
+}
+
+/* ⚙️ Clear saved directories: empties the list (browser + local/dirs_tagmanager.json). Datasets on disk are not touched. */
+window.clearSavedDirectories = async function() {
+    if (!confirm('Remove ALL saved directories from the list?\n\nYour datasets and files are not touched. You will need to add the folders again.')) return;
+    let keys = [];
+    try {
+        const db = await window.initDB();
+        keys = await new Promise(r => { const q = db.transaction(storeName, 'readonly').objectStore(storeName).getAllKeys(); q.onsuccess = () => r(q.result); q.onerror = () => r([]); });
+    } catch (e) {}
+    if (window.tmDirMirror) await window.tmDirMirror.clearDirs(keys);
+    else for (const k of keys) await window.deleteHandle(k);
+    location.reload();
 }
 
 function _setSavedFolderButtons(isSaved) {
@@ -657,6 +671,20 @@ window.removeDirectory = async function() {
 window.loadSelectedDirectory = async function() {
     const name = document.getElementById('dir-list').value;
     if (!name) return;
+    if (name.startsWith('relink:')) {                  // lost by the browser: pick the folder again under the same key
+        const oldKey = name.slice(7);
+        const dh = await window.tmDirMirror.relink(oldKey);
+        if (!dh) { document.getElementById('dir-list').value = ''; return; }
+        await window.saveHandle(oldKey, dh);
+        await window.updateSelect();
+        document.getElementById('dir-list').value = oldKey;
+        window.rootHandle = dh;
+        window.rootHandleKey = oldKey;
+        _setSavedFolderButtons(true);
+        document.getElementById('current-folder-display').textContent = `📂 ${dh.name}`;
+        window.loadGallery(dh);
+        return;
+    }
     const handles = await window.getHandles();
     const h = handles.find(x => x.name === name)?.handle;
     if (h) {

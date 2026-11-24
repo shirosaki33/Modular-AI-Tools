@@ -276,6 +276,11 @@
 
     <!-- Danbooru / e621 options (alias tags, e621, icons) live in the Tag Interrogator popout
          (tagmanager_danbooru_panel.js). Only its master switch is added here, before Backup. -->
+    <div class="settings-group-label">📂 Saved directories</div>
+    <button onclick="window.clearSavedDirectories()" style="background:#2a0d0d; color:#ff8080; border:1px solid #803030; font-size:11px;" title="Removes every saved directory from the list (browser and the copy in local/). Datasets on disk are not touched. Use it when a saved folder stops opening.">🗑️ Clear saved directories</button>
+
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+
     <div class="settings-group-label">💾 Backup</div>
     <div style="display: flex; gap: 5px;">
         <button onclick="window.exportBackup()" style="background: #0d2a18; color: #00ff99; border: 1px solid #00aa66; font-size: 11px; flex: 1;" title="Export all presets and settings to a JSON file.">💾 Export Backup</button>
@@ -692,6 +697,7 @@
         </div>
 
         <button id="btn-create-empty" class="btn-action" onclick="window.generateEmptyFiles()" style="background: #2f1a5c; border-color: #4a2a8c; color: #b890ff;">📄 Generate Empty Missing Files</button>
+        <button id="btn-reset-untagged" class="btn-action" onclick="window.resetDatasetToUntagged()" style="margin-top: 10px; background: #4a1118; border-color: #7a222c; color: #ffb6c0;" title="Erase every caption (tags and NL) and leave empty files, so the dataset can be captioned from scratch">🧹 Reset Dataset to Untagged</button>
 
         <div class="progress-box" id="progress-container"><div class="progress-fill" id="progress-bar"></div></div>
         <div class="progress-text" id="progress-text">0 / 0 Processed</div>
@@ -809,7 +815,8 @@ python -m pip install einops timm</pre>
 <script src="tools/quick_links.js"></script>
 <script src="tools/tagmanager/tagmanager_base.js"></script>
 <script src="tools/tagmanager/tagmanager_notice.js"></script>
-<script src="tools/tagmanager/tagmanager_db.js"></script>
+<script src="tools/shared/dir_mirror.js?v=2"></script>
+<script src="tools/tagmanager/tagmanager_db.js?v=2"></script>
 <script src="tools/tagmanager/tagmanager_config_store.js"></script>
 <script src="tools/tagmanager/tagmanager_local_store.js"></script>
 <script src="tools/shared/tagmanager_wiki_full.js"></script>
@@ -830,7 +837,7 @@ python -m pip install einops timm</pre>
 <script src="tools/tagmanager/tagmanager_master_list.js"></script>
 <script src="tools/tagmanager/tagmanager_ui_presets.js"></script>
 <script src="tools/tagmanager/tagmanager_ui_list.js"></script>
-<script src="tools/tagmanager/tagmanager_ui_core.js"></script>
+<script src="tools/tagmanager/tagmanager_ui_core.js?v=2"></script>
 <script src="tools/tagmanager/tagmanager_nav.js"></script>
 
 <!-- Auto-Caption VLM engines (same files as the Prompt Helper). tagmanager_batch_vlm.js must come first and after ui_core. -->

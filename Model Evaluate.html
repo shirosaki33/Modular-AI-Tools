@@ -104,7 +104,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 </head>
 <body>
 <div id="topbar">
-  <div class="topbar-section"><button class="pri" onclick="addFolder()">+ Add folder</button><button onclick="addFiles()">Add files</button></div>
+  <div class="topbar-section"><button class="pri" onclick="addFolder()">+ Add folder</button><button onclick="addFiles()">Add files</button><button onclick="clearFolders()" title="Removes every saved folder from the list (browser and the copy in local/). Model files are not touched. Use it when a saved folder stops opening." style="color:#ff8080">🗑️ Clear folders</button></div>
   <div class="topbar-section center"><span id="app-title">📚 Model Evaluate 📚</span></div>
   <div class="topbar-section right" id="topbar-right">
     <label class="chk" title="ON: opening a model rechecks Civitai (refreshes images, author text and versions). OFF: only the Recheck button does."><input type="checkbox" id="arc" checked> Auto-recheck</label>
@@ -157,6 +157,7 @@ pre{max-height:300px;overflow:auto;font-size:11px;color:#777;white-space:pre-wra
 <div id="cr"><a href="https://github.com/shirosaki33/Modular-AI-Tools" target="_blank" rel="noopener">GitHub Repository</a><br>© 2026 shirosaki33</div>
 
 <!-- Mesmo módulo do Lora Metadata Reader: findVal, escHtml, detectSystemInfo, detectTrainingTiming, resolve*, sanitizeCivitaiDesc -->
+<script src="tools/shared/dir_mirror.js?v=2"></script>
 <script src="tools/shared/thumb_loader.js?v=3"></script>
 <script src="tools/lora/lora_meta_reader.js?v=7"></script>
 <script>
@@ -171,6 +172,12 @@ const tried=new Set();let stamp=0;const debRender=(()=>{let t;return()=>{clearTi
 
 /* ---------- IndexedDB (handles de pasta + favoritos) ---------- */
 const idb=()=>new Promise((ok,no)=>{const r=indexedDB.open('LoraEvaluateDB',2);r.onupgradeneeded=()=>{['h','kv'].forEach(s=>r.result.objectStoreNames.contains(s)||r.result.createObjectStore(s))};r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+/* copy of the saved folders (store h) and the preferences (store kv) in local/: tools/shared/dir_mirror.js */
+const meDirs=window.DirMirror?DirMirror.setup({app:'modelevaluate',db:'LoraEvaluateDB',store:'h'}):null;
+if(window.DirMirror)DirMirror.setup({app:'modelevaluate_prefs',db:'LoraEvaluateDB',store:'kv'});
+async function relinkFolder(key){const h=await meDirs.relink(key);if(!h)return;await idbOp('h',s=>s.put(h,key),1);await init()}
+async function clearFolders(){if(!confirm('Remove ALL saved folders from the list?\n\nYour model files are not touched. You will need to add the folders again.'))return;
+  const keys=(await idbAll()).map(x=>x[0]);if(meDirs)await meDirs.clearDirs(keys);else for(const k of keys)await idbOp('h',s=>s.delete(k),1);location.reload()}
 const idbOp=async(store,fn,rw)=>{const d=await idb();return new Promise((ok,no)=>{const t=d.transaction(store,rw?'readwrite':'readonly'),q=fn(t.objectStore(store));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>no(t.error)})};
 const idbAll=async()=>{const d=await idb();return new Promise(ok=>{const s=d.transaction('h').objectStore('h'),k=s.getAllKeys(),v=s.getAll();s.transaction.oncomplete=()=>ok(k.result.map((x,i)=>[x,v.result[i]]))})};
 async function loadPrefs(){try{favs=new Set(await idbOp('kv',s=>s.get('favorites'))||[]);hidden=new Set(await idbOp('kv',s=>s.get('hiddenCats'))||[]);autoRC=(await idbOp('kv',s=>s.get('autoRecheck')))!==false;$('arc').checked=autoRC}catch{}}
@@ -279,7 +286,7 @@ async function scanAll(fromSaved){const sc=fromSaved?null:await loadScan();
   else{items.push(...fresh);items.forEach(i=>i.cls=classify(i));folders();render();saveScan()}
   await syncPrev();await runQueue()}
 const rescan=()=>{$('fl').textContent='Reading folders…';return scanAll()};
-async function addFolder(){try{const h=await showDirectoryPicker({mode:'readwrite'});await idbOp('h',s=>s.put(h,h.name),1);roots.find(r=>r.name===h.name)||roots.push({name:h.name,handle:h});$('fl').textContent='Reading '+h.name+'…';await scanAll()}catch(e){e.name!=='AbortError'&&alert('Could not open the folder: '+e.message)}}
+async function addFolder(){try{const h=await showDirectoryPicker({mode:'readwrite'});await idbOp('h',s=>s.put(h,h.name),1);{const ex=roots.find(r=>r.name===h.name);ex?ex.handle=h:roots.push({name:h.name,handle:h})}/* same name: the NEW folder replaces the old one (before, the old handle stayed in use) */$('fl').textContent='Reading '+h.name+'…';await scanAll()}catch(e){e.name!=='AbortError'&&alert('Could not open the folder: '+e.message)}}
 async function addFiles(){try{const hs=await showOpenFilePicker({multiple:true,types:[{description:'Models',accept:{'application/octet-stream':['.safetensors','.ckpt']}}]});
   let r=roots.find(x=>!x.handle);if(!r)roots.push(r={name:'(loose files)',handle:null,loose:[]});
   for(const h of hs){const file=await h.getFile(),[raw,kind]=await readInfo(file);r.loose.push({root:r,dir:null,name:file.name,rel:'',path:file.name,file,previewName:null,key:file.name+'|'+file.size+'|'+file.lastModified,url:null,raw,kind,meta:expandMeta(raw),cls:'Other'})}
@@ -544,7 +551,11 @@ $('arc').onchange=ev=>{autoRC=ev.target.checked;idbOp('kv',s=>s.put(autoRC,'auto
 /* ---------- Init ---------- */
 async function init(){await loadCache();const stored=await idbAll(),need=[];roots=roots.filter(r=>!r.handle);
   for(const[name,h]of stored){let ok=false;try{ok=await h.queryPermission({mode:'readwrite'})==='granted'}catch{}ok?roots.push({name,handle:h}):need.push(name)}
-  $('notice').style.display=need.length?'flex':'none';
+  if(meDirs)await meDirs.ready;const lost=meDirs?meDirs.missing(stored.map(x=>x[0])):[];
+  $('notice').style.display=need.length||lost.length?'flex':'none';
+  if(!need.length&&lost.length){$('ntx').textContent='The browser lost '+(lost.length>1?'these saved folders':'this saved folder')+': '+lost.map(x=>x.name).join(', ')+'. Pick it again to bring it back.';
+    $('nbt').textContent='↻ Re-link '+lost[0].name;$('nbt').onclick=()=>relinkFolder(lost[0].key)}
+  else $('nbt').textContent='Allow';
   if(need.length){$('ntx').textContent='The browser is asking for permission again for: '+need.join(', ');
     $('nbt').onclick=async()=>{for(const[n,h]of stored)if(need.includes(n))try{await h.requestPermission({mode:'readwrite'})}catch{}await init()}}
   if(!roots.length){render();return}

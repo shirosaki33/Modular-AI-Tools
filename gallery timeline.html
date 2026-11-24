@@ -80,6 +80,10 @@
         }
         .folder-item:hover { border-color: #00ff99; }
         .folder-item.active { background: #0d2a18; border-color: #00aa66; color: #00ff99; }
+        .adv-note { color: #8a8a8a; font-size: 12px; line-height: 1.6; padding: 8px 4px; }
+        .adv-skipped { color: #b8893a; font-size: 11px; }
+        #adv-folders { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #262626; margin-top: 4px; }
+        .adv-folder { cursor: pointer; border-style: dashed; }
         .folder-item.hidden-folder { opacity: 0.45; }
         .hidden-group-header {
             display: flex; align-items: center; gap: 6px; flex-shrink: 0; cursor: pointer; user-select: none;
@@ -395,6 +399,8 @@
 
 <div id="settings-dropdown" class="settings-dropdown" style="width: 290px;">
     <label><input type="checkbox" id="toggle-filename-field" onchange="toggleFilenameField(); saveSettingsToDB();" checked> Show File Names</label>
+    <label title="Show the 'Filter by name...' box in the top bar (hidden by default)"><input type="checkbox" id="toggle-name-filter" onchange="tlNameFilterToggle()"> Show 'Filter by name' box</label>
+    <label title="When 'Search folders...' finds nothing in the open directory, also look in the other saved directories"><input type="checkbox" id="toggle-advanced-search" onchange="tlAdvToggle()"> Advanced folder search (other directories)</label>
     <label title="Pages load and unload while you scroll, so you never need the page buttons"><input type="checkbox" id="toggle-dynamic-pages" onchange="tlOnDynamicToggle()" checked> Dynamic page change (infinite scroll)</label>
     <div style="display:flex; flex-direction:column; gap:10px; padding-top: 8px; border-top: 1px solid #263b5a; margin-top: 2px;">
         <div style="display:flex; flex-direction:column; gap:4px;">
@@ -424,6 +430,9 @@
             </select>
         </div>
     </div>
+
+    <hr style="border: 0; border-top: 1px solid #333; margin: 5px 0;">
+    <button onclick="tlClearSavedDirectories()" style="background:#2a0d0d; color:#ff8080; border:1px solid #803030; font-size:12px; padding:6px 10px; cursor:pointer;" title="Removes every saved directory from the list (browser and the copy in local/). Images and files on disk are not touched. Use it when a saved folder stops opening.">🗑️ Clear saved directories</button>
 </div>
 
 <div id="workspace">
@@ -559,11 +568,12 @@
 <script src="parsers/invokeai.js"></script>
 <script src="parsers/fooocus.js"></script>
 
+<script src="tools/shared/dir_mirror.js?v=2"></script>
 <script src="tools/shared/thumb_loader.js?v=4"></script>
 <script src="tools/gallery/gallery_ui.js"></script>
-<script src="tools/gallery/gallery_core.js"></script>
+<script src="tools/gallery/gallery_core.js?v=3"></script>
 <!-- Must be loaded LAST: overrides the single-folder directory/grid logic of gallery_core.js -->
-<script src="tools/gallery/timeline_core.js?v=2"></script>
+<script src="tools/gallery/timeline_core.js?v=8"></script>
 <script src="tools/gallery/timeline_links.js?v=1"></script>
 <script src="tools/quick_links.js"></script>
 </body>

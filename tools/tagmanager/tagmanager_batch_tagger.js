@@ -842,6 +842,69 @@ window.generateEmptyFiles = async function() {
     if(window.showAlert) window.showAlert(`Created ${created} empty files.`, "success");
 }
 
+// Resets the dataset to an UNTAGGED state: every caption (tags and NL) becomes an empty file again, so the
+// folder can be captioned from scratch. Uses only the selected images when the Auto-Caption subset banner is on.
+window.resetDatasetToUntagged = async function() {
+    if (window._autoCaptionTask) {
+        if (window.showAlert) window.showAlert("Auto-Caption is running (see ⏳ Tasks). Stop it before resetting the dataset.", "warn");
+        return;
+    }
+    const { handle: targetHandle, files } = getTargetEnv();
+    if (!files || !files.length || !targetHandle) {
+        if (window.showAlert) window.showAlert("No images or folder loaded.", "error");
+        return;
+    }
+    const subset = (Array.isArray(window._autoCaptionImgs) && window._autoCaptionImgs.length) ? window._autoCaptionImgs : null;
+    const targets = (subset || files).filter(img => img && !img.hidden);
+    const withText = targets.filter(img => img.content && String(img.content).trim()).length;
+    if (!targets.length) {
+        if (window.showAlert) window.showAlert("No images to reset.", "info");
+        return;
+    }
+    if (!confirm(`⚠️ Reset ${subset ? 'the ' + targets.length + ' selected image(s)' : 'the whole dataset (' + targets.length + ' image(s))'} to untagged?\n\n` +
+        `${withText} caption(s) with text will be ERASED (tags and natural language) and replaced by empty files. This cannot be undone.`)) return;
+
+    if ((await targetHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+        if ((await targetHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+            if (window.showAlert) window.showAlert("Write permission denied.", "error");
+            return;
+        }
+    }
+
+    const formatEl = document.getElementById('save-format');
+    const pStore = (typeof pendingTagsStore !== 'undefined') ? pendingTagsStore : null;
+    const rStore = window.pendingRemoveStore || null;
+    let done = 0, failed = 0;
+    for (const img of targets) {
+        img.baseName = img.baseName || img.name.substring(0, img.name.lastIndexOf('.'));
+        img.parentDirHandle = img.parentDirHandle || targetHandle;
+        img.content = "";
+        img.type = 'tags';
+        img.ext = img.hasFile ? (img.ext || 'txt') : (formatEl ? formatEl.value : 'txt');
+        img.pendingAdd = [];
+        img.pendingRemove = [];
+        if (pStore) delete pStore[img.baseName];
+        if (rStore) delete rStore[img.baseName];
+        const ok = await window.saveImageToDisk(img);
+        if (ok) { img.hasFile = true; done++; } else failed++;
+    }
+    if (pStore && typeof savePendingTagsStore === 'function') { try { await savePendingTagsStore(targetHandle, pStore); } catch (e) {} }
+
+    if (typeof masterTagSet !== 'undefined') {
+        masterTagSet.clear();
+        files.forEach(img => { if (img.content) String(img.content).split(',').forEach(t => { if (t.trim()) masterTagSet.add(t.trim()); }); });
+    }
+    if (typeof masterSelectedTags !== 'undefined') masterSelectedTags.clear();
+    if (typeof activeSelectedTags !== 'undefined') activeSelectedTags.clear();
+    if (typeof window.markDatasetEdited === 'function') window.markDatasetEdited();
+    if (typeof window.updateTagsDatalist === 'function') window.updateTagsDatalist();
+    if (typeof window.refreshListStatus === 'function') window.refreshListStatus();
+    if (typeof window.renderMasterTagList === 'function') window.renderMasterTagList();
+    if (typeof window.renderEditor === 'function') window.renderEditor();
+    if (typeof window.applyFilters === 'function') window.applyFilters();
+    if (window.showAlert) window.showAlert(`Dataset reset: ${done} caption(s) emptied${failed ? `, ${failed} failed` : ''}.`, failed ? "warn" : "success");
+};
+
 const BATCH_TARGET_SIZE = 448;
 
 async function preprocessImage(imgUrl) {

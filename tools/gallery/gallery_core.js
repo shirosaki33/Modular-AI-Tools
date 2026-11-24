@@ -274,6 +274,9 @@ async function batchUpdateJSONs() {
    ================================================================ */
 const dbName    = 'GalleryDB';
 const storeName = 'directories';
+/* Local copy of the saved directories + their settings (local/dirs_holder.json): see tools/shared/dir_mirror.js */
+const ghMirror = (window.DirMirror && !document.getElementById('tl-toast'))      // the Timeline page also loads this file: it has its own copy
+    ? DirMirror.setup({ app: 'holder', db: dbName, store: storeName, localOnly: true }) : null;
 
 // LEVEL CONTROL VARIABLES
 let rootHandle    = null; 
@@ -415,11 +418,15 @@ window.onload = async () => {
 async function updateSelect() {
     const list = document.getElementById('dir-list'); list.innerHTML = '<option value="">Select a directory...</option>';
     const handles = await getHandles(); handles.forEach(h => { const opt = document.createElement('option'); opt.value = h.name; opt.textContent = h.name; list.appendChild(opt); });
+    if (ghMirror) await ghMirror.fillSelect(list, handles.map(h => h.name));      // directories the browser lost: "↻ name (re-link)"
 }
 
 async function addDirectory() { 
     try { 
         const dh = await window.showDirectoryPicker({ mode: 'readwrite' }); 
+        // A saved directory with the same name that is ANOTHER folder (or a lost one): replace it and drop its path label.
+        const old = (await getHandles()).find(x => x.name === dh.name)?.handle;
+        if (old && !(await ghSameFolder(old, dh))) await deleteHandle('path_' + dh.name);
         await saveHandle(dh.name, dh); 
         await updateSelect(); 
         document.getElementById('dir-list').value = dh.name; 
@@ -470,8 +477,31 @@ async function removeDirectory() {
     await updateSelect(); 
 }
 
+/* ⚙️ Clear saved directories: empties the list (browser + local/dirs_holder.json). Files on disk are not touched. */
+/* true when the saved handle points to the same folder on disk (a stale or lost handle counts as different) */
+async function ghSameFolder(a, b) { if (!a || !b) return false; try { return await a.isSameEntry(b); } catch (e) { return false; } }
+
+async function ghClearSavedDirectories() {
+    if (!confirm('Remove ALL saved directories from the list?\n\nYour images and files are not touched. You will need to add the folders again.')) return;
+    const keys = (await getHandles()).map(h => h.name);
+    if (ghMirror) await ghMirror.clearDirs(keys);
+    else for (const k of keys) await deleteHandle(k);
+    location.reload();
+}
+
 async function loadSelectedDirectory() {
-    const name = document.getElementById('dir-list').value; if (!name) return; const handles = await getHandles();
+    const name = document.getElementById('dir-list').value; if (!name) return;
+    if (name.startsWith('relink:')) {                                  // lost by the browser: pick the folder again, everything saved for it comes back
+        const oldKey = name.slice(7);
+        const dh = await ghMirror.relink(oldKey);
+        if (!dh) { document.getElementById('dir-list').value = ''; return; }
+        await saveHandle(oldKey, dh);                                  // same key as before: its path label, auto-rename... come back
+        await updateSelect();
+        document.getElementById('dir-list').value = oldKey;
+        loadGallery(dh);
+        return;
+    }
+    const handles = await getHandles();
     const h = handles.find(x => x.name === name)?.handle;
     if (h) { 
         if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') await h.requestPermission({ mode: 'readwrite' }); 

@@ -63,6 +63,10 @@ let tlStripItems = [];
 let tlStripDirty = false;
 let tlSettingsPromise = null;
 let tlFilterTimer = null;
+let tlAdvSearch = false;           // ⚙️ "Advanced folder search": a folder search with no match here also looks in the other saved directories
+let tlAdvCache = null;             // {key, res} of the last advanced search
+let tlAdvToken = 0;
+let tlNameFilter = false;          // ⚙️ "Show 'Filter by name'": the name filter box is hidden unless this is on
 let tlToastTimer = null;
 let tlUidCounter = 0;
 let tlNotes = [];                  // notes of the open image: not shown anymore, but kept when saving the JSON
@@ -70,6 +74,9 @@ let tlRootPath = '';               // real path of the root on disk (localhost o
 let tlCreatedAvailable = false;    // creation dates were read from the server for this root
 
 const $tl = id => document.getElementById(id);
+/* Local copy of the saved directories + their settings (local/dirs_timeline.json): see tools/shared/dir_mirror.js */
+const tlMirror = !window.DirMirror ? null : DirMirror.setup({ app: 'timeline', db: 'GalleryTimelineDB', store: 'kv', localOnly: true, nameOf: k => k.replace(/^dir:/, ''),
+    skip: k => k.startsWith('cache:') || k === 'session' || k === 'last' });
 const tlIsLocal = () => /^https?:$/.test(location.protocol) && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
 
 /* ================================================================
@@ -137,7 +144,9 @@ async function saveSettingsToDB() {
             folderDateMode: tlFolderDateMode,
             imageOrder:     tlImageOrder,
             sidebarOpen:    tlSidebarOpen,
-            dynamicPages:   tlDynamic
+            dynamicPages:   tlDynamic,
+            advancedSearch: tlAdvSearch,
+            nameFilter:     tlNameFilter
         });
     } catch (e) { console.error('Error saving settings:', e); }
 }
@@ -157,6 +166,10 @@ function loadSettingsFromDB() {
             tlSidebarOpen = s.sidebarOpen !== undefined ? !!s.sidebarOpen : true;
             tlDynamic = s.dynamicPages !== undefined ? !!s.dynamicPages : true;
             $tl('toggle-dynamic-pages').checked = tlDynamic;
+            tlAdvSearch = !!s.advancedSearch;
+            $tl('toggle-advanced-search').checked = tlAdvSearch;
+            tlNameFilter = !!s.nameFilter;
+            $tl('toggle-name-filter').checked = tlNameFilter;
             itemsPerPage = TL_PAGE_SIZES.includes(s.itemsPerPage) ? s.itemsPerPage : 100;
             $tl('folder-date-mode').value = tlFolderDateMode;
             $tl('image-order-mode').value = tlImageOrder;
@@ -265,7 +278,7 @@ function tlUpdateChrome() {
     const has = !!tlRoot;
     $tl('btn-remove').style.display  = has ? 'inline-block' : 'none';
     $tl('btn-refresh').style.display = has ? 'inline-block' : 'none';
-    $tl('filter-tag').style.display  = has ? 'inline-block' : 'none';
+    $tl('filter-tag').style.display  = has && tlNameFilter ? 'inline-block' : 'none';
     $tl('btn-folders').style.display = has ? 'inline-block' : 'none';
     $tl('btn-folders').classList.toggle('active', tlSidebarOpen);
     $tl('folder-sidebar').classList.toggle('open', has && tlSidebarOpen);
@@ -292,8 +305,100 @@ window.onload = async () => {
         await updateSelect();
         $tl('dir-list').value = '';
         if (!tlRoot) renderGrid();
+        tlMaybeRestoreSession();
     } catch (e) { console.warn(e); }
 };
+
+/* ================================================================
+   SESSION RESTORE
+   The browser (Chrome Memory Saver) discards tabs that sit idle in the background; when the tab comes back the page
+   is loaded again from scratch. The place (directory, first visible image, open image) is saved while you use the
+   app and put back ONLY when the page was reloaded/discarded. A normal fresh open still starts empty.
+   ================================================================ */
+let tlLastAnchor = null;           // { rel, name, off } first visible card of the grid (kept while an image is open)
+let tlSessionTimer = null;
+
+function tlCaptureAnchor() {
+    const grid = $tl('grid-view');
+    if (!tlRoot || tlInDetail || grid.style.display === 'none') return;
+    const c = tlFirstVisibleCard(grid);
+    const it = c ? tlFlat[Number(c.dataset.i)] : null;
+    if (it) tlLastAnchor = { rel: it.folder.relPath, name: it.name, off: c.getBoundingClientRect().top - grid.getBoundingClientRect().top };
+}
+function tlSessionSaveNow() {
+    clearTimeout(tlSessionTimer);
+    if (!tlRoot) return;
+    try {
+        tlCaptureAnchor();
+        tlKvSet('session', {
+            dir: tlRoot.name,
+            anchor: tlLastAnchor,
+            open: tlInDetail && tlCurrent ? { rel: tlCurrent.folder.relPath, name: tlCurrent.name } : null,
+            filter: $tl('filter-tag').value || '',
+            ts: Date.now()
+        });
+    } catch (e) {}
+}
+function tlSessionSaveSoon() { clearTimeout(tlSessionTimer); tlSessionTimer = setTimeout(tlSessionSaveNow, 500); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) tlSessionSaveNow(); });
+document.addEventListener('freeze', tlSessionSaveNow);
+window.addEventListener('pagehide', tlSessionSaveNow);
+
+function tlWasReloaded() {
+    if (document.wasDiscarded) return true;
+    try { const n = performance.getEntriesByType('navigation')[0]; return !!n && n.type === 'reload'; } catch (e) { return false; }
+}
+
+async function tlMaybeRestoreSession() {
+    if (!tlWasReloaded() || tlRoot) return;
+    const s = await tlKvGet('session');
+    if (!s || !s.dir) return;
+    const h = (await tlGetHandles()).find(x => x.name === s.dir)?.handle;
+    if (!h) return;
+    let perm = 'prompt';
+    try { perm = await h.queryPermission({ mode: 'readwrite' }); } catch (e) {}
+    if (perm === 'granted') { await tlRestoreSession(h, s); return; }
+    // The browser asks for folder access again only after a click: show a one-click banner.
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:#14283a;color:#cfe8ff;border:1px solid #4db8ff;border-radius:8px;padding:10px 14px;display:flex;gap:10px;align-items:center;font:13px sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.6);';
+    bar.innerHTML = '<span>The browser reloaded this tab. Restore <b></b>?</span>';
+    bar.querySelector('b').textContent = s.dir;
+    const ok = document.createElement('button'), no = document.createElement('button');
+    ok.textContent = 'Restore session'; no.textContent = 'Dismiss';
+    [ok, no].forEach(b => b.style.cssText = 'cursor:pointer;border:1px solid #4db8ff;background:#263b5a;color:#9ecfff;border-radius:5px;padding:5px 10px;');
+    no.onclick = () => bar.remove();
+    ok.onclick = async () => {
+        try {
+            if ((await h.requestPermission({ mode: 'readwrite' })) !== 'granted') { tlToast('Permission denied for this directory.', 'error'); return; }
+            bar.remove();
+            await tlRestoreSession(h, s);
+        } catch (e) { console.warn(e); }
+    };
+    bar.append(ok, no);
+    document.body.appendChild(bar);
+}
+
+async function tlRestoreSession(h, s) {
+    try {
+        $tl('dir-list').value = s.dir;
+        await tlKvSet('last', s.dir);
+        await tlLoadRoot(h);
+        if (tlRoot !== h) return;
+        if (s.filter && tlNameFilter) { $tl('filter-tag').value = s.filter; tlRecompute(); }
+        const find = a => a ? tlFlat.findIndex(it => it.name === a.name && it.folder.relPath === a.rel) : -1;
+        const idx = find(s.anchor);
+        if (idx >= 0) {
+            currentPage = Math.floor(idx / itemsPerPage) + 1;
+            renderGrid();
+            const grid = $tl('grid-view');
+            const card = grid.querySelector(`.grid-item-wrapper[data-i="${idx}"]`);
+            if (card) grid.scrollTop += card.getBoundingClientRect().top - grid.getBoundingClientRect().top - (s.anchor.off || 0);
+            tlLastAnchor = s.anchor;
+        }
+        const oi = find(s.open);
+        if (oi >= 0) await tlOpenItem(tlFlat[oi]);
+    } catch (e) { console.warn('Session restore failed:', e); }
+}
 
 async function updateSelect() {
     const list = $tl('dir-list');
@@ -304,11 +409,22 @@ async function updateSelect() {
         opt.value = h.name; opt.textContent = h.name;
         list.appendChild(opt);
     });
+    if (tlMirror) await tlMirror.fillSelect(list, handles.map(h => 'dir:' + h.name));      // lost by the browser: "↻ name (re-link)"
 }
+
+/* true when the saved handle points to the same folder on disk (a stale or lost handle counts as different) */
+async function tlSameFolder(a, b) { if (!a || !b) return false; try { return await a.isSameEntry(b); } catch (e) { return false; } }
 
 async function addDirectory() {
     try {
         const dh = await window.showDirectoryPicker({ mode: 'readwrite' });
+        // A saved directory with the same name that is ANOTHER folder (or a lost one): its scan, hidden folders and
+        // real path belonged to that folder, so they are dropped. Before, the new folder inherited them and did not open.
+        const old = await tlKvGet('dir:' + dh.name);
+        if (old && !(await tlSameFolder(old, dh))) {
+            await tlKvDel('hidden:' + dh.name, 'rootpath:' + dh.name, 'cache:' + dh.name);
+            if (tlIsLocal()) { try { await tlCacheWrite(dh.name, null); } catch (e) {} }
+        }
         await tlKvSet('dir:' + dh.name, dh);
         await tlKvSet('last', dh.name);
         await updateSelect();
@@ -317,9 +433,30 @@ async function addDirectory() {
     } catch (e) { if (e.name !== 'AbortError') alert('Permission error.'); }
 }
 
+/* ⚙️ Clear saved directories: empties the list (browser + local/dirs_timeline.json). Files and the scan cache are not touched. */
+async function tlClearSavedDirectories() {
+    if (!confirm('Remove ALL saved directories from the list?\n\nYour images and files are not touched. You will need to add the folders again.')) return;
+    const keys = (await tlGetHandles()).map(h => 'dir:' + h.name).concat(['last', 'session']);
+    if (tlMirror) await tlMirror.clearDirs(keys);
+    else await tlKvDel(...keys);
+    location.reload();
+}
+
 async function loadSelectedDirectory() {
     const name = $tl('dir-list').value;
     if (!name) return;
+    if (name.startsWith('relink:')) {                      // lost by the browser: pick the folder again, everything saved for it comes back
+        const oldKey = name.slice(7);
+        const dh = await tlMirror.relink(oldKey);
+        if (!dh) { $tl('dir-list').value = ''; return; }
+        const nm = oldKey.replace(/^dir:/, '');              // same name as before: hidden folders, real path... come back
+        await tlKvSet('dir:' + nm, dh);
+        await tlKvSet('last', nm);
+        await updateSelect();
+        $tl('dir-list').value = nm;
+        await tlLoadRoot(dh);
+        return;
+    }
     const h = (await tlGetHandles()).find(x => x.name === name)?.handle;
     if (!h) return;
     if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') {
@@ -337,7 +474,7 @@ async function refreshCurrentFolder() {
 async function removeDirectory() {
     if (!tlRoot) return;
     const name = tlRoot.name;
-    await tlKvDel('dir:' + name, 'hidden:' + name, 'rootpath:' + name, 'cache:' + name);
+    await tlKvDel('dir:' + name, 'hidden:' + name, 'rootpath:' + name, 'cache:' + name, 'session');
     if (tlIsLocal()) { try { await tlCacheWrite(name, null); } catch (e) {} }     // the file in local/ is emptied (it is ignored when invalid)
     tlScanId++;                       // cancels a scan in progress
     tlResetData();
@@ -357,6 +494,8 @@ async function removeDirectory() {
 }
 
 function tlResetData() {
+    tlAdvCache = null; tlAdvToken++;
+    tlLastAnchor = null;
     if (window.ThumbLoader) window.ThumbLoader.clear();
     const main = $tl('main-image');
     if (main) main.removeAttribute('src');
@@ -786,6 +925,7 @@ async function tlLoadRoot(handle, keepState, forceScan) {
     tlUpdateHeaderText();
     if (fromCache) tlBackgroundCheck(scanId, cache);
     else tlCacheSave();
+    tlSessionSaveSoon();
 }
 
 function tlTotalImages() { return tlFolders.reduce((n, f) => n + f.images.length, 0); }
@@ -1347,8 +1487,10 @@ function renderFolderSidebar() {
         }
     }
 
-    tlTreeRows('main', q).forEach(r => frag.appendChild(tlMakeFolderRow(r, showDate)));
+    const mainRows = tlTreeRows('main', q);
+    mainRows.forEach(r => frag.appendChild(tlMakeFolderRow(r, showDate)));
     list.appendChild(frag);
+    if (tlAdvSearch && q && tlRoot && !mainRows.length && !hiddenRows.length) list.appendChild(tlAdvBox(q));
     list.scrollTop = prevScroll;
     tlUpdateFolderSummary();
     tlUpdateActiveFolder(true);
@@ -1393,6 +1535,135 @@ function tlInSubtree(f, node) {
     if (node === tlRootNode) return f === node;
     for (let p = f; p; p = p.parent) if (p === node) return true;
     return false;
+}
+
+/* ================================================================
+   ADVANCED FOLDER SEARCH  (⚙️ → "Advanced folder search")
+   When "Search folders..." finds nothing in the open directory, the other saved directories are searched
+   and their matching folders are listed below, in the same sidebar. Uses each directory's saved scan (no image
+   is opened); a directory without a saved scan is read by folder names when its permission is still granted.
+   Click a folder: its directory is opened and the timeline jumps to that folder.
+   ================================================================ */
+const tlEsc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+/* Folders of a directory with their image counts, from the saved scan: [{rel, name, own}] */
+async function tlAdvFoldersOf(h) {
+    let cache = null;
+    try { cache = await tlCacheRead(h.name); } catch (e) { cache = null; }
+    if (cache) return cache.folders.map(f => ({ rel: f.rel, name: f.rel ? f.name : h.name, own: (f.img || []).length }));
+    let perm = 'denied';
+    try { perm = await h.handle.queryPermission({ mode: 'read' }); } catch (e) {}
+    if (perm !== 'granted') return null;
+    const out = [];
+    async function walk(dir, rel, depth) {
+        let own = 0; const subs = [];
+        for await (const e of dir.values()) {
+            if (e.kind === 'file') { if (TL_IMG_RE.test(e.name)) own++; }
+            else if (e.kind === 'directory' && !e.name.startsWith('.')) subs.push(e);
+        }
+        out.push({ rel, name: rel ? dir.name : h.name, own });
+        if (depth < TL_MAX_DEPTH) for (const sd of subs) await walk(sd, rel ? rel + '/' + sd.name : sd.name, depth + 1);
+    }
+    await walk(h.handle, '', 0);
+    return out;
+}
+
+async function tlAdvSearchOthers(q) {
+    const handles = (await tlGetHandles()).filter(h => !tlRoot || h.name !== tlRoot.name);
+    const hits = [], skipped = [];
+    for (const h of handles) {
+        let folders = null;
+        try { folders = await tlAdvFoldersOf(h); } catch (e) { folders = null; }
+        if (!folders) { skipped.push(h.name); continue; }
+        const total = rel => folders.reduce((n, f) => n + (rel === '' || f.rel === rel || f.rel.startsWith(rel + '/') ? f.own : 0), 0);
+        folders.forEach(f => {
+            const label = f.rel || h.name;
+            if (!(f.rel ? f.rel : h.name).toLowerCase().includes(q)) return;
+            const n = total(f.rel);
+            if (n > 0) hits.push({ root: h.name, handle: h.handle, rel: f.rel, name: f.name, own: f.own, total: n });
+        });
+    }
+    hits.sort((a, b) => tlCollator.compare(a.root, b.root) || tlCollator.compare(a.rel, b.rel));
+    return { hits, skipped, searched: handles.length };
+}
+
+function tlAdvBox(q) {
+    const box = document.createElement('div');
+    box.id = 'adv-folders';
+    const key = tlRoot.name + '|' + q;
+    if (tlAdvCache && tlAdvCache.key === key) { tlAdvFill(box, tlAdvCache.res); return box; }
+    box.innerHTML = '<div class="adv-note">🔎 Searching the other directories...</div>';
+    const token = ++tlAdvToken;
+    new Promise(r => setTimeout(r, 250)).then(() => token === tlAdvToken ? tlAdvSearchOthers(q) : null).then(res => {
+        if (!res || token !== tlAdvToken) return;                 // newer search / render took over
+        tlAdvCache = { key, res };
+        if (box.isConnected) tlAdvFill(box, res);
+    }).catch(e => { console.error(e); if (token === tlAdvToken) box.innerHTML = '<div class="adv-note">The advanced search failed. Check the console.</div>'; });
+    return box;
+}
+
+function tlAdvFill(box, res) {
+    box.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'adv-note';
+    if (!res.searched) head.textContent = 'No other saved directory to search in.';
+    else if (!res.hits.length) head.textContent = `🔎 Nothing in the other ${tlPlural(res.searched, 'saved directory', 'saved directories')} either.`;
+    else head.textContent = `🔎 In other directories (${res.hits.length})`;
+    box.appendChild(head);
+    res.hits.slice(0, 200).forEach(hit => {
+        const el = document.createElement('div');
+        el.className = 'folder-item adv-folder';
+        el.title = hit.root + ' / ' + (hit.rel || '(root)');
+        const info = document.createElement('div'); info.className = 'folder-info';
+        const name = document.createElement('div'); name.className = 'folder-name'; name.textContent = hit.rel ? hit.rel : hit.name;
+        const meta = document.createElement('div'); meta.className = 'folder-meta';
+        meta.textContent = `🗂️ ${hit.root} · ${tlPlural(hit.total, 'image')}`;
+        info.append(name, meta);
+        el.appendChild(info);
+        el.onclick = () => tlAdvOpenFolder(hit);
+        box.appendChild(el);
+    });
+    if (res.hits.length > 200) {
+        const more = document.createElement('div'); more.className = 'adv-note'; more.textContent = `Showing 200 of ${res.hits.length}. Type more of the name.`;
+        box.appendChild(more);
+    }
+    if (res.skipped.length) {
+        const sk = document.createElement('div'); sk.className = 'adv-note adv-skipped';
+        sk.textContent = 'Not searched (no saved scan and no permission yet): ' + res.skipped.join(', ');
+        box.appendChild(sk);
+    }
+}
+
+async function tlAdvOpenFolder(hit) {
+    try {
+        const h = hit.handle;
+        if ((await h.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+            if ((await h.requestPermission({ mode: 'readwrite' })) !== 'granted') { tlToast('Permission denied for this directory.', 'error'); return; }
+        }
+        await tlKvSet('last', hit.root);
+        $tl('dir-list').value = hit.root;
+        const q = $tl('folder-search').value;
+        await tlLoadRoot(h);
+        $tl('folder-search').value = q;
+        const node = tlFolders.find(f => f.relPath === hit.rel);
+        if (node) tlJumpToFolder(node); else renderFolderSidebar();
+    } catch (e) { console.error(e); tlToast('Could not open that directory.', 'error'); }
+}
+
+function tlNameFilterToggle() {
+    tlNameFilter = $tl('toggle-name-filter').checked;
+    const had = !!$tl('filter-tag').value;
+    if (!tlNameFilter) $tl('filter-tag').value = '';          // a hidden filter must not keep hiding images
+    tlUpdateChrome();
+    saveSettingsToDB();
+    if (!tlNameFilter && had && tlRoot) { tlStripDirty = true; tlRefreshAll(); }
+}
+
+function tlAdvToggle() {
+    tlAdvSearch = $tl('toggle-advanced-search').checked;
+    tlAdvCache = null; tlAdvToken++;
+    saveSettingsToDB();
+    if (tlRoot) renderFolderSidebar();
 }
 
 /* Jumps to the first section of this folder (or of its subfolders when it holds no image itself) */
@@ -1473,7 +1744,7 @@ $tl('folder-list').addEventListener('click', e => {
         renderFolderSidebar();
     } else tlJumpToFolder(folder);
 });
-$tl('grid-view').addEventListener('scroll', () => { tlUpdateActiveFolder(); tlScheduleDynamic(); }, { passive: true });
+$tl('grid-view').addEventListener('scroll', () => { tlUpdateActiveFolder(); tlScheduleDynamic(); tlSessionSaveSoon(); }, { passive: true });
 
 /* ================================================================
    DETAIL VIEW
@@ -1506,7 +1777,7 @@ async function tlOpenItem(item) {
     }
     tlUpdateLocalButtons();
     if (isEditing) toggleManualEdit();
-    if (!tlInDetail) tlSavedScroll = $tl('grid-view').scrollTop;
+    if (!tlInDetail) { tlSavedScroll = $tl('grid-view').scrollTop; tlCaptureAnchor(); }
     tlInDetail = true;
     tlCurrent = item;
 
@@ -1547,6 +1818,7 @@ async function tlOpenItem(item) {
     });
 
     fillFields(null);
+    tlSessionSaveSoon();
 
     try {
         const jh = await item.folder.handle.getFileHandle(baseName + '.json');
@@ -1589,6 +1861,7 @@ function backToGrid() {
     updatePaginationControls();
     tlUpdateHeaderText();
     if (wasDetail) tlUpdateActiveFolder();
+    tlSessionSaveSoon();
 }
 
 /* Esc closes the image, ← / → walk through the images of the same folder */

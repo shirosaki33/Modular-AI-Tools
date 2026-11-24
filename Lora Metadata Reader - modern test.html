@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LoRa Metadata Reader (modern test)</title>
+	<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='8' fill='none' stroke='%2300ff99' stroke-width='3'/><line x1='19' y1='19' x2='28' y2='28' stroke='%2300ff99' stroke-width='3' stroke-linecap='round'/></svg>">
+	<style>
+		@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		body { background: #111; color: #e0e0e0; font-family: 'Inter', Arial, sans-serif; line-height: 1.4; }
+		
+		/* === TOPBAR STANDARDIZED === */
+		#topbar {
+			background: #0d0d0d;
+			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+			padding: 12px 20px;
+			display: flex; 
+			justify-content: space-between; 
+			align-items: center;
+			z-index: 20;
+			min-height: 54px;
+		}
+		.topbar-section { flex: 1; display: flex; align-items: center; gap: 10px; }
+		.topbar-section.left { justify-content: flex-start; }
+		.topbar-section.center { justify-content: center; text-align: center; }
+		.topbar-section.right { justify-content: flex-end; position: relative; }
+		
+		#app-title { font-size: 18px; font-weight: bold; color: #fff; letter-spacing: 0.5px; white-space: nowrap; }
+
+		.container { max-width: 1280px; margin: 24px auto; padding: 0 20px; }
+
+		/* DROPZONE */
+		.dropzone { border: 2px dashed #444; background: #161616; border-radius: 16px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.3s ease; margin-bottom: 16px; }
+		.dropzone:hover, .dropzone.dragover { background: #1f1f1f; border-color: #00ff99; }
+		.dropzone input[type="file"] { display: none; }
+
+		.main-grid { display: grid; grid-template-columns: 380px 1fr; gap: 24px; align-items: stretch; }
+		.panel-left { display: flex; flex-direction: column; }
+		.lora-data-box { display: flex; flex-direction: column; }
+
+		.cardprompt-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; margin-bottom: 0; padding-bottom: 10px; }
+		.cardprompt-header:hover .cardprompt-toggle-btn { color: #00cc88; }
+		.cardprompt-title { font-size: 18px; font-weight: 600; }
+		.cardprompt-toggle-btn { background: none; border: 1px solid #1e2a22; border-radius: 6px; color: #3a7a5a; font-size: 12px; padding: 3px 10px; cursor: pointer; transition: color .15s, border-color .15s; }
+		.cardprompt-body { overflow: hidden; transition: max-height 0.35s ease; max-height: 9999px; }
+		.cardprompt-body.collapsed { max-height: 0 !important; }
+
+		.conn-alert { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 16px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 14px; border: 1.5px solid #5a1010; background: #1a0606; color: #ff6666; }
+		.conn-alert.visible { display: flex; }
+		.conn-alert-dismiss { background: none; border: none; color: #ff6666; cursor: pointer; font-size: 18px; line-height: 1; padding: 2px 4px; opacity: 0.7; transition: opacity .15s; flex-shrink: 0; }
+		.conn-alert-dismiss:hover { opacity: 1; }
+
+		.panel-left, .lora-data-box { background: #161616; border-radius: 16px; padding: 20px; }
+		.panel-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+
+		/* ADJUSTED LORA NAME DISPLAY TO MATCH IMAGE */
+		.lora-name-display { font-size: 15px; font-weight: 600; color: #ffffff; margin-bottom: 10px; padding: 10px 12px; background: #111; border-radius: 8px; min-height: 38px; word-break: break-word; display: flex; align-items: center; }
+		.lora-name-display.empty { color: #444; background: #111; }
+		.lora-name-display a { color: #00ff99; text-decoration: none; }
+		.lora-name-display a:hover { text-decoration: underline; opacity: 0.85; }
+
+		.civitai-status { font-size: 11px; color: #555; margin-bottom: 8px; min-height: 16px; display: flex; align-items: center; gap: 6px; }
+		.civitai-status.loading { color: #00cc88; }
+		.civitai-status.found   { color: #00ff99; }
+		.civitai-status.error   { color: #ff6666; }
+
+		.hash-progress { font-size: 11px; color: #555; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+		.hash-progress-bar { flex: 1; height: 3px; background: #222; border-radius: 999px; overflow: hidden; }
+		.hash-progress-fill { height: 100%; background: #00cc88; border-radius: 999px; transition: width 0.1s; }
+
+		.manual-hash-row { display: flex; gap: 12px; margin-bottom: 24px; width: 100%; }
+		.manual-hash-input { flex: 1; min-width: 0; background: #161616; border: 2px solid #222; border-radius: 12px; color: #eee; padding: 14px 18px; font-size: 15px; outline: none; transition: all .3s ease; }
+		.manual-hash-input:focus { border-color: #00ff99; background: #1a1a1a; }
+		.manual-hash-btn { background: #00aa66; color: #000; border: none; border-radius: 12px; padding: 0 24px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background .2s; }
+		.manual-hash-btn:hover { background: #00cc88; }
+
+		/* GALLERY */
+		.model-image-wrap { position: relative; width: 100%; margin-bottom: 20px; user-select: none; }
+		.model-image { width: 100%; height: 420px; object-fit: cover; border-radius: 12px; background: #111; box-shadow: 0 10px 20px rgba(0,0,0,0.6); display: block; }
+		.model-image-placeholder { width: 100%; height: 420px; border-radius: 12px; background: #111; box-shadow: 0 10px 20px rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #333; font-size: 13px; gap: 10px; }
+		.model-image-placeholder .ph-icon { font-size: 40px; }
+		.image-loading { position: absolute; inset: 0; background: #111; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #555; gap: 8px; }
+		.spinner { width: 18px; height: 18px; border: 2px solid #333; border-top-color: #00ff99; border-radius: 50%; animation: spin 0.7s linear infinite; }
+		@keyframes spin { to { transform: rotate(360deg); } }
+		.gallery-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.55); border: none; border-radius: 50%; width: 34px; height: 34px; display: none; align-items: center; justify-content: center; cursor: pointer; color: #fff; font-size: 16px; transition: background .2s; z-index: 5; }
+		.gallery-nav:hover { background: rgba(0,204,136,0.45); }
+		.gallery-prev { left: 8px; }
+		.gallery-next { right: 8px; }
+		.model-image-wrap.has-gallery .gallery-nav { display: flex; }
+		.gallery-dots { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); display: none; gap: 5px; z-index: 5; }
+		.model-image-wrap.has-gallery .gallery-dots { display: flex; }
+		.gallery-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.35); cursor: pointer; transition: background .2s; flex-shrink: 0; }
+		.gallery-dot.active { background: #00ff99; }
+		.gallery-counter { position: absolute; top: 8px; right: 10px; background: rgba(0,0,0,0.6); color: #ccc; font-size: 11px; padding: 2px 7px; border-radius: 999px; display: none; z-index: 5; }
+		.model-image-wrap.has-gallery .gallery-counter { display: block; }
+
+		.info-label { font-size: 13px; color: #aaa; margin-bottom: 6px; }
+		.info-value { background: #111; padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-weight: 500; min-height: 38px; color: #ffffff; display: flex; align-items: center; }
+		.info-value a { color: #00ff99; text-decoration: none; }
+		.info-value a:hover { color: #fff; text-decoration: underline; }
+		.info-value.empty { color: #333; }
+
+		.lora-data-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+		.lora-data-title  { font-size: 18px; font-weight: 600; }
+		
+		/* CARDS */
+		.summary-grid { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
+		/* ADJUSTED FLEX BASIS TO FIT 4 IN A ROW */
+		.card { background: #1b1b1b; border-radius: 12px; padding: 18px; flex: 1 1 170px; }
+		.training-card { background: #1b1b1b; border-radius: 12px; padding: 18px; flex: 1 1 200px; }
+		.cardprompt { background: #1b1b1b; border-radius: 12px; padding: 15px; grid-column: 1 / -1; width: 100%; }
+		.card-title, .training-card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+		.training-container { display: flex; flex-wrap: wrap; gap: 16px; }
+        
+		.system-container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: -10px 0 20px; }
+		.system-card { background: #1b1b1b; border-radius: 12px; padding: 18px; min-height: 82px; }
+		.system-card-title { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+		.system-card-value { font-size: 13px; color: #e0e0e0; word-break: break-word; line-height: 1.4; min-height: 18px; }
+		.system-card-value a { color: #00ff99; text-decoration: none; }
+		.system-card-value a:hover { color: #fff; text-decoration: underline; }
+		.system-card-value.empty { color: #333; }
+		.system-card.hidden { display: none; }
+		.system-container.hidden { display: none; }
+		.system-container.single { grid-template-columns: 1fr; }
+		.system-container.single .system-card:first-child { grid-column: 1 / -1; }
+		@media (max-width: 980px) { .system-container { grid-template-columns: 1fr; gap: 16px; } }
+
+		.dataset-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+		.dataset-tag { background: #0d1f18; border: 1px solid #1a3a2a; color: #00cc88; font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+		.dataset-format-hint { font-size: 10px; color: #444; text-align: center; margin-top: 8px; font-style: italic; letter-spacing: 0.03em; }
+
+		.prompt-block { margin-bottom: 14px; }
+		.prompt-block:last-child { margin-bottom: 0; }
+		.promptBox { color: #aaa; margin-bottom: 6px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+		.prompt-label { font-weight: 500; color: #ccc; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.promptArea { background: #0d0d0d; color: #00ff99; width: 100%; box-sizing: border-box; display: block; border: 1px solid #1e1e1e; border-radius: 6px; padding: 8px 10px; font-family: inherit; font-size: 13px; resize: none; overflow: hidden; }
+		.copy-btn { background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; color: #555; font-size: 15px; line-height: 1; transition: color .15s, background .15s; flex-shrink: 0; }
+		.copy-btn:hover { color: #00cc88; background: #1a2a22; }
+		.copy-btn.copied { color: #00cc88; }
+		.prompt-ta-wrap { overflow: hidden; transition: max-height 0.3s ease; }
+		.prompt-block-toggle { display: none; margin-top: 4px; width: 100%; background: none; border: 1px solid #1e2a22; border-radius: 5px; color: #3a7a5a; font-size: 13px; padding: 2px 0; cursor: pointer; transition: color .15s, border-color .15s; text-align: center; line-height: 1.2; }
+		.prompt-block-toggle:hover { color: #00cc88; border-color: #0e3528; }
+		.prompt-block-toggle.visible { display: block; }
+
+		/* --- TOOLS BAR --- */
+		#tools-bar-wrap { max-width: 1280px; margin: 16px auto 0; padding: 0 0 24px; box-sizing: border-box; width: 100%; }
+		#tools-bar { border-radius: 10px; }
+		#tools-bar-header { display: flex; align-items: center; justify-content: center; padding: 13px 20px; cursor: pointer; user-select: none; background: #141421; border-radius: 10px; border: 1px solid #33335a; transition: background 0.15s; position: relative; }
+		#tools-bar-header:hover { background: #1a1a2e; }
+		#tools-bar-label { font-size: 13px; font-weight: bold; color: #c084fc; display: flex; align-items: center; gap: 10px; letter-spacing: 0.3px; }
+		#tools-bar-arrow { position: absolute; right: 18px; top: 50%; transform: translateY(-50%) rotate(0deg); font-size: 13px; color: #7c8db0; transition: transform 0.18s; }
+		#tools-bar.open #tools-bar-arrow { transform: translateY(-50%) rotate(180deg); }
+		#tools-bar-body { display: none; margin-top: 6px; background: #10101a; border: 1px solid #33335a; border-radius: 8px; padding: 12px; box-sizing: border-box; width: 100%; overflow: hidden; }
+		#tools-bar.open #tools-bar-body { display: block; }
+
+		.tool-module { border-radius: 6px; overflow: hidden; border: 1px solid #1e2d40; margin-bottom: 4px; background: #111827; box-sizing: border-box; width: 100%; }
+		.tool-module:last-child { margin-bottom: 0; }
+		.tool-module-header { display: flex; align-items: center; justify-content: space-between; padding: 11px 15px; cursor: pointer; user-select: none; background: #111827; transition: background 0.15s; font-size: 13px; font-weight: bold; }
+		.tool-module-header:hover { background: #161f30; }
+		.tool-module-arrow { font-size: 11px; color: #3a5070; transition: transform 0.18s; transform: rotate(-90deg); }
+		.tool-module.open .tool-module-arrow { transform: rotate(0deg); }
+		.tool-module-body { display: none; border-top: 1px solid #1e2d40; background: #0d1118; padding: 16px; box-sizing: border-box; width: 100%; }
+		.tool-module.open .tool-module-body { display: block; }
+		
+		/* DETECT POPOUT */
+		.detect-popout-overlay { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.55); }
+		.detect-popout-overlay.open { display: block; }
+		.detect-popout { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #111d16; border: 1px solid #1e4a30; border-radius: 12px; width: min(540px,95vw); max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,.7); z-index: 1001; }
+		.detect-popout-head { display: flex; align-items: center; padding: 12px 16px; background: #0f1c13; border-bottom: 1px solid #1e3d28; gap: 10px; }
+		.detect-popout-head h3 { margin: 0; font-size: 14px; color: #00cc88; flex: 1; }
+		.detect-popout-close { background: none; border: none; color: #555; font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1; }
+		.detect-popout-close:hover { color: #eee; }
+		.detect-popout-body { overflow-y: auto; padding: 12px 16px; flex: 1; }
+		.detect-tag-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1e2a20; cursor: pointer; transition: background .1s; border-radius: 4px; }
+		.detect-tag-item:last-child { border-bottom: none; }
+		.detect-tag-item:hover { background: #1a2a1e; }
+		.detect-tag-item:hover .detect-tag-label { color: #00ff99; }
+		.detect-tag-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: 4px; }
+		.detect-tag-label { font-size: 13px; color: #ccc; flex: 1; }
+		.detect-tag-count { font-size: 11px; color: #555; }
+		.detect-popout-empty { font-size: 13px; color: #555; text-align: center; padding: 20px 0; }
+		.detect-popout-hint { font-size: 11px; color: #444; text-align: center; padding: 8px 0 2px; }
+		.detect-filter-row { display: flex; gap: 6px; padding: 8px 16px; background: #0f1c13; border-bottom: 1px solid #1e3d28; flex-wrap: wrap; }
+		.detect-filter-btn { background: #181818; border: 1px solid #2a3a2e; color: #888; border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer; transition: all .15s; }
+		.detect-filter-btn.active { background: #00aa66; border-color: #00aa66; color: #000; font-weight: 700; }
+
+		/* BANNERS */
+		#otAlertBar { display: none; background: #2a0000; border: 1px solid #aa0000; border-radius: 8px; padding: 8px 16px; margin-bottom: 10px; font-size: 13px; color: #ff6060; text-align: center; margin-top: 14px; }
+		.result-banner { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 10px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 18px; letter-spacing: 0.02em; border: 1.5px solid transparent; }
+		.result-banner.found { display: flex; background: #061a10; border-color: #0d5030; color: #00dd88; }
+		.result-banner.not-found { display: flex; background: #1a0606; border-color: #5a1010; color: #ff6666; }
+		.outdated-banner { border-radius: 9999px; height: 38px; display: none; align-items: center; justify-content: space-between; padding: 0 10px 0 20px; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 18px; letter-spacing: 0.02em; border: 1.5px solid #6b5500; background: #1a1400; color: #ffd84d; }
+		.outdated-banner.visible { display: flex; }
+		.banner-dismiss { background: none; border: none; cursor: pointer; color: inherit; font-size: 18px; line-height: 1; padding: 2px 6px; opacity: 0.6; transition: opacity .15s; flex-shrink: 0; }
+		.banner-dismiss:hover { opacity: 1; }
+
+		/* CREATOR & CIVITAI DESC */
+		.creator-block { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding: 8px 12px; background: #111; border-radius: 8px; }
+		.creator-avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid #1a3a2a; flex-shrink: 0; background: #222; }
+		.creator-avatar-placeholder { width: 38px; height: 38px; border-radius: 50%; background: #222; border: 2px solid #1a3a2a; flex-shrink: 0; align-items: center; justify-content: center; font-size: 18px; }
+		.creator-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+		.creator-name-link { font-size: 13px; font-weight: 600; color: #00ff99; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+		.creator-name-link:hover { color: #fff; text-decoration: underline; }
+		.creator-name-link[href="#"] { color: #ffffff; pointer-events: none; }
+		
+		.civitai-model-desc { font-size: 12px; color: #ddd; line-height: 1.6; word-break: break-word; padding-right: 4px; }
+		.civitai-model-desc a { color: #00ff99; text-decoration: none; }
+		.civitai-model-desc a:hover { color: #fff; text-decoration: underline; }
+		.civitai-model-desc p { margin: 0 0 6px; }
+		.civitai-model-desc h1, .civitai-model-desc h2, .civitai-model-desc h3 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; color: #fff; }
+		.civitai-model-desc ul, .civitai-model-desc ol { padding-left: 18px; margin: 4px 0; }
+		.civitai-model-desc li { margin-bottom: 2px; }
+		.civitai-model-desc .img-placeholder { display: inline-block; background: #1a2a1e; border: 1px solid #2a4a30; color: #00cc88; font-size: 11px; padding: 1px 6px; border-radius: 4px; font-family: monospace; }
+
+		/* ADJUSTED CARD ITEMS TO MATCH IMAGE */
+		.card-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
+		.card-item:last-child { padding-bottom: 0; }
+		.card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+		.card-value { font-size: 13px; color: #e0e0e0; word-break: break-all; margin-top: 2px; }
+		.card-value.empty { color: #333; }
+
+		/* FOOTER */
+		.footer-wrap { margin-top: 10px; padding: 20px 0 30px 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+		.footer-wrap a.toolLink { color: #00ff99; font-weight: 600; font-size: 13px; text-decoration: none; letter-spacing: 0.5px; transition: all 0.2s ease; }
+		.footer-wrap a.toolLink:hover { color: #ffffff; text-shadow: 0 0 8px rgba(0, 255, 153, 0.6); }
+		.footer-wrap .copyright { font-size: 12px; color: #555; margin: 0; }
+	</style>
+<style id="modern-theme">
+/* ===== MODERN THEME (test) — overrides only; markup, IDs and JS untouched ===== */
+:root{--m-bg:#0b0e0d;--m-s1:#0f1312;--m-s2:#111513;--m-br:#1f2623;--m-br2:#1b211f;--m-tx:#e6ebe8;--m-mu:#8a968f;--m-dim:#6d7872;--m-ac:#2be39a;--m-acbg:#16231d;--m-acbr:#1f4a38}
+body{background:var(--m-bg)!important;color:var(--m-tx);font-family:'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#topbar{background:var(--m-s1)!important;border-bottom:1px solid var(--m-br)!important;box-shadow:none!important;min-height:52px}
+#app-title{font-size:15px!important;font-weight:500!important;letter-spacing:.2px!important;color:var(--m-tx)!important}
+#app-title .mt-badge{margin-left:10px;font-size:11px;font-weight:500;color:var(--m-ac);background:var(--m-acbg);border:1px solid var(--m-acbr);padding:2px 8px;border-radius:999px;letter-spacing:.04em;vertical-align:2px}
+.dropzone{border:1px dashed #2a3531!important;background:var(--m-s1)!important;border-radius:12px!important;color:var(--m-mu)!important;font-weight:500!important;transition:border-color .15s,background .15s,color .15s}
+.dropzone:hover,.dropzone.drag,.dropzone.dragover{border-color:var(--m-ac)!important;background:#0f1a15!important;color:var(--m-ac)!important}
+.copy-btn{color:var(--m-dim)!important;border-radius:6px!important}
+.copy-btn:hover,.copy-btn.copied{color:var(--m-ac)!important;background:var(--m-acbg)!important}
+.footerbar a,.footer-wrap a.toolLink{color:var(--m-ac)!important;text-shadow:none!important}
+.footer-copy,.footer-wrap .copyright{color:#4a554f!important}
+/* tools bar */
+#tools-bar-header{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+#tools-bar-header:hover{background:var(--m-s2)!important;border-color:#2a3531!important}
+#tools-bar-label{color:#b79cf7!important;font-weight:500!important}
+#tools-bar-body{background:var(--m-s1)!important;border:1px solid var(--m-br)!important;border-radius:12px!important}
+.tool-module{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:10px!important}
+.tool-module-header{background:var(--m-s2)!important;font-weight:500!important}
+.tool-module-header:hover{background:#161c19!important}
+.tool-module-body{background:var(--m-bg)!important;border-top:1px solid var(--m-br)!important}
+.container{max-width:1180px!important;margin:18px auto!important}
+.dropzone{padding:22px 20px!important;margin-bottom:14px!important;border-radius:12px!important}
+.dropzone #dropzoneLabel{font-size:15px!important}
+.manual-hash-row{gap:8px!important;margin-bottom:14px!important}
+.manual-hash-input{background:var(--m-s1)!important;border:1px solid #232b28!important;border-radius:10px!important;padding:10px 14px!important;font-size:13.5px!important}
+.manual-hash-input:focus{border-color:var(--m-ac)!important}
+.manual-hash-btn{background:var(--m-acbg)!important;color:var(--m-ac)!important;border:1px solid var(--m-acbr)!important;border-radius:10px!important;padding:0 20px!important;font-size:13.5px!important;font-weight:500!important}
+.manual-hash-btn:hover{background:#1c2f26!important}
+.main-grid{grid-template-columns:340px minmax(0,1fr)!important;gap:16px!important}
+.panel-left,.lora-data-box{background:var(--m-s2)!important;border:1px solid var(--m-br);border-radius:14px!important;padding:16px!important}
+.panel-title,.lora-data-title{font-size:13px!important;font-weight:500!important;color:var(--m-dim)!important;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px!important}
+.lora-name-display{background:var(--m-bg)!important;border:1px solid var(--m-br2);border-radius:8px!important;font-weight:500!important;font-size:14px!important}
+.lora-name-display a,.info-value a,.system-card-value a,.civitai-model-desc a,.creator-name-link{color:var(--m-ac)!important}
+.civitai-status.loading,.civitai-status.found{color:var(--m-ac)!important}
+.hash-progress-fill{background:var(--m-ac)!important}
+.model-image,.model-image-placeholder,.image-loading{height:380px!important;border-radius:10px!important;box-shadow:none!important;border:1px solid var(--m-br);background:var(--m-s1)!important}
+.image-loading{height:auto!important}
+.spinner{border-top-color:var(--m-ac)!important}
+.gallery-nav{background:rgba(11,14,13,.78)!important;border:1px solid #2a3531!important}
+.gallery-nav:hover{border-color:var(--m-ac)!important;background:rgba(11,14,13,.95)!important}
+.gallery-dot.active{background:var(--m-ac)!important}
+.info-label{font-size:11px!important;text-transform:uppercase;letter-spacing:.06em;color:var(--m-dim)!important}
+.info-value{background:var(--m-bg)!important;border:1px solid var(--m-br2);border-radius:8px!important;min-height:34px!important;margin-bottom:12px!important;font-size:13px}
+.card,.training-card,.cardprompt,.system-card{background:var(--m-s1)!important;border:1px solid var(--m-br);border-radius:12px!important;padding:14px!important}
+.card-title,.training-card-title,.system-card-title{font-size:13.5px!important;font-weight:500!important;color:#c3ccc7!important;border-bottom:1px solid var(--m-br2)!important;margin-bottom:10px!important;padding-bottom:8px!important}
+.summary-grid,.training-container,.system-container{gap:12px!important}
+.card-label{color:var(--m-dim)!important;font-weight:500!important}
+.dataset-tag{background:#0d2a1f!important;border:1px solid #17432f!important;color:var(--m-ac)!important;font-size:11.5px!important;padding:2px 9px!important}
+.promptArea{background:var(--m-bg)!important;color:#b9e8d3!important;border:1px solid var(--m-br2)!important;border-radius:8px!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace!important;font-size:12.5px!important}
+.prompt-block-toggle{border-color:var(--m-br)!important;color:var(--m-mu)!important;border-radius:8px!important}
+.prompt-block-toggle:hover{color:var(--m-ac)!important;border-color:var(--m-acbr)!important}
+.cardprompt-title{font-size:14px!important;font-weight:500!important}
+.cardprompt-toggle-btn{border-color:var(--m-br)!important;color:var(--m-mu)!important}
+.result-banner,.outdated-banner,.conn-alert{border-radius:10px!important;border-width:1px!important;font-weight:500!important}
+.creator-block{background:var(--m-bg)!important;border:1px solid var(--m-br2);border-radius:10px!important}
+.creator-avatar,.creator-avatar-placeholder{border-color:#17432f!important}
+.detect-popout{background:var(--m-s2)!important;border:1px solid var(--m-br)!important;border-radius:14px!important}
+.detect-popout-head,.detect-filter-row{background:var(--m-s1)!important;border-color:var(--m-br)!important}
+.detect-popout-head h3{color:var(--m-ac)!important}
+.detect-filter-btn.active{background:var(--m-acbg)!important;border-color:var(--m-acbr)!important;color:var(--m-ac)!important}
+@media(max-width:900px){.main-grid{grid-template-columns:1fr!important}}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+    <div class="topbar-section left" id="topbar-left"></div>
+    <div class="topbar-section center">
+        <span id="app-title">LoRa Metadata Reader<span class="mt-badge">modern test</span></span>
+    </div>
+    <div class="topbar-section right" id="topbar-right"></div>
+</div>
+
+<div class="container">
+
+	<div class="dropzone" id="dropzone">
+		<div id="dropzoneLabel" style="font-size:17px;font-weight:500;">Choose a safetensors file or drag it here</div>
+		<div style="font-size:12px;color:#666;margin-top:8px;">.safetensors only</div>
+		<input type="file" id="fileInput" accept=".safetensors">
+	</div>
+
+	<div class="conn-alert" id="connAlert">
+		<span>⚠ Could not reach Civitai — online features skipped.</span>
+		<div style="display:flex;align-items:center;gap:8px;">
+			<button style="background:#3a0a0a;border:1px solid #7a2020;border-radius:6px;color:#ff9999;font-size:12px;font-weight:600;padding:3px 10px;cursor:pointer;" onclick="retryConnection()">Retry</button>
+			<button class="conn-alert-dismiss" onclick="hideConnError()" title="Dismiss">×</button>
+		</div>
+	</div>
+	
+	<div class="outdated-banner" id="outdatedBanner">
+		<span>⚠️ Outdated LoRA version detected — a newer version is available on CivitAI</span>
+		<button class="banner-dismiss" onclick="hideOutdatedBanner()" title="Dismiss">×</button>
+	</div>
+
+	<div class="result-banner" id="resultBanner">
+		<span id="resultBannerText"></span>
+		<button class="banner-dismiss" onclick="hideBanner()" title="Dismiss">×</button>
+	</div>			
+
+	<div class="manual-hash-row">
+		<input type="text" id="manualHashInput" class="manual-hash-input" placeholder="Manual hash search (e.g. from Civitai)..." onkeydown="if(event.key==='Enter') manualHashSearch()">
+		<button class="manual-hash-btn" onclick="manualHashSearch()">Search</button>
+	</div>
+
+	<div class="main-grid">
+		<div class="panel-left">
+			<div class="panel-title">Model</div>
+
+			<div class="lora-name-display empty" id="loraNameDisplay">—</div>
+			<div class="civitai-status" id="civitaiStatus"></div>
+			<div class="hash-progress" id="hashProgress" style="display:none;">
+				<span id="hashProgressLabel">Hashing…</span>
+				<div class="hash-progress-bar"><div class="hash-progress-fill" id="hashProgressFill" style="width:0%"></div></div>
+			</div>
+
+			<div class="model-image-wrap" id="imageWrap">
+				<div class="model-image-placeholder" id="imagePlaceholder">
+					<span class="ph-icon">🖼️</span>
+					<span>Load a model to fetch preview</span>
+				</div>
+				<img class="model-image" id="modelImage" src="" alt="Model Preview" style="display:none;">
+				<button class="gallery-nav gallery-prev" id="galleryPrev" onclick="galleryStep(-1)" title="Previous">‹</button>
+				<button class="gallery-nav gallery-next" id="galleryNext" onclick="galleryStep(1)" title="Next">›</button>
+				<div class="gallery-dots" id="galleryDots"></div>
+				<span class="gallery-counter" id="galleryCounter"></span>
+			</div>
+
+			<div class="info-label">Base Model (Checkpoint)</div>
+			<div class="info-value empty" id="baseModelValue">—</div>
+
+			<div id="vaeRow" style="display:none;">
+				<div class="info-label">VAE</div>
+				<div class="info-value empty" id="vaeValue">—</div>
+			</div>
+
+			<div id="creatorLabelRow" style="display:none;">
+				<div class="info-label">Creator</div>
+				<div class="creator-block visible" id="creatorBlock" style="display:flex;margin-bottom:16px;">
+					<img class="creator-avatar" id="creatorAvatar" src="" alt="" onerror="this.style.display='none';document.getElementById('creatorAvatarFallback').style.display='flex'">
+					<div class="creator-avatar-placeholder" id="creatorAvatarFallback" style="display:none;">👤</div>
+					<div class="creator-info">
+						<a class="creator-name-link" id="creatorNameLink" href="#" target="_blank">—</a>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="lora-data-box">
+			<div class="lora-data-header">
+				<div class="lora-data-title">Model Data</div>
+			</div>
+
+			<div class="summary-grid">
+				<div class="card">
+					<div class="card-title">General</div>
+					<div class="card-item"><span class="card-label">Prediction Type</span><span class="card-value empty" id="v-prediction_type">—</span></div>
+					<div class="card-item"><span class="card-label">Batch</span><span class="card-value empty" id="v-batch_size">—</span></div>
+					<div class="card-item"><span class="card-label">Gradient Acc.</span><span class="card-value empty" id="v-gradient_accumulation_steps">—</span></div>
+					<div class="card-item"><span class="card-label">Resolution</span><span class="card-value empty" id="v-resolution">—</span></div>
+					<div class="card-item"><span class="card-label">Clip Skip</span><span class="card-value empty" id="v-clip_skip">—</span></div>
+					<div class="card-item"><span class="card-label">Epoch</span><span class="card-value empty" id="v-epoch">—</span></div>
+					<div class="card-item"><span class="card-label">Steps</span><span class="card-value empty" id="v-steps">—</span></div>
+				</div>
+				<div class="card">
+					<div class="card-title">Network</div>
+					<div class="card-item"><span class="card-label">Module</span><span class="card-value empty" id="v-network_module">—</span></div>
+					<div class="card-item"><span class="card-label">Algorithm</span><span class="card-value empty" id="v-network_args_algo">—</span></div>
+					<div class="card-item"><span class="card-label">Dim / Alpha</span><span class="card-value empty" id="v-dim_alpha">—</span></div>
+					<div class="card-item"><span class="card-label">Conv Dim / Alpha</span><span class="card-value empty" id="v-conv_dim_alpha">—</span></div>
+					<div class="card-item"><span class="card-label">Network Dropout</span><span class="card-value empty" id="v-network_dropout">—</span></div>
+					<div class="card-item"><span class="card-label">IP Noise Gamma</span><span class="card-value empty" id="v-ip_noise_gamma">—</span></div>
+				</div>
+				<div class="card">
+					<div class="card-title">Optimizer</div>
+					<div class="card-item"><span class="card-label">Type</span><span class="card-value empty" id="v-optimizer_type">—</span></div>
+					<div class="card-item"><span class="card-label">Scheduler</span><span class="card-value empty" id="v-lr_scheduler">—</span></div>
+					<div class="card-item"><span class="card-label">Learning Rate</span><span class="card-value empty" id="v-learning_rate">—</span></div>
+					<div class="card-item"><span class="card-label">TE LR</span><span class="card-value empty" id="v-text_encoder_lr">—</span></div>
+					<div class="card-item"><span class="card-label">UNET LR</span><span class="card-value empty" id="v-unet_lr">—</span></div>
+					<div class="card-item"><span class="card-label">Optional Args</span><span class="card-value empty" id="v-optimizer_args">—</span></div>
+					<div class="card-item"><span class="card-label">SNR Gamma</span><span class="card-value empty" id="v-min_snr_gamma">—</span></div>
+					<div class="card-item"><span class="card-label">Warmup Steps</span><span class="card-value empty" id="v-lr_warmup_steps">—</span></div>
+				</div>
+				<div class="card">
+					<div class="card-title">Noise Offset</div>
+					<div class="card-item"><span class="card-label">Noise Offset</span><span class="card-value empty" id="v-noise_offset">—</span></div>
+					<div class="card-item"><span class="card-label">Pyramid Iterations</span><span class="card-value empty" id="v-pyramid_noise_iterations">—</span></div>
+					<div class="card-item"><span class="card-label">Discount</span><span class="card-value empty" id="v-pyramid_noise_discount">—</span></div>
+				</div>
+			</div>
+
+			<div class="system-container hidden">
+				<div class="system-card">
+					<div class="system-card-title">Training Tool</div>
+					<div class="system-card-value empty" id="v-system_tool">—</div>
+				</div>
+				<div class="system-card">
+					<div class="system-card-title">Source</div>
+					<div class="system-card-value empty" id="v-system_source">—</div>
+				</div>
+			</div>
+
+			<div class="training-container">
+				<div class="training-card">
+					<div class="training-card-title">Training Info</div>
+					<div class="card-item"><span class="card-label">Train Date</span><span class="card-value empty" id="v-train_date">—</span></div>
+					<div class="card-item"><span class="card-label">Train Time</span><span class="card-value empty" id="v-train_time">—</span></div>
+					<div class="card-item"><span class="card-label">Total Images</span><span class="card-value empty" id="v-total_images">—</span></div>
+				</div>
+				<div class="training-card">
+					<div class="training-card-title">Dataset</div>
+					<div id="datasetContent" style="margin-top:6px;"></div>
+					<div class="dataset-format-hint" id="datasetFormatHint" style="display:none;">(repeats)_dataset • (images)</div>
+				</div>
+				<div class="training-card">
+					<div class="training-card-title">Training Comment</div>
+					<div id="v-training_comment" style="margin-top:6px;font-size:12px;color:#888;"></div>
+				</div>
+			</div>
+		</div>
+
+		<div class="cardprompt">
+			<div class="cardprompt-header" onclick="toggleCardPrompt()" id="cardPromptHeader">
+				<div class="cardprompt-title">Model Prompts</div>
+				<button class="cardprompt-toggle-btn" id="cardPromptToggleBtn">▲</button>
+			</div>
+			<div class="cardprompt-body" id="cardPromptBody">
+			<div id="promptSection">
+				<div class="prompt-block">
+					<div class="promptBox">
+						<span class="prompt-label">Prompt</span>
+						<button class="copy-btn" onclick="copyFromArea('positiveText',this)" title="Copy">⧉</button>
+					</div>
+					<div class="prompt-ta-wrap" data-state="full">
+						<textarea class="promptArea" id="positiveText" rows="3" placeholder="Tags from training data will appear here after loading a model…"></textarea>
+					</div>
+				</div>
+			</div>
+			</div>
+		</div>
+
+	</div>
+	
+	<div id="tools-bar-wrap">
+		<div id="tools-bar">
+			<div id="tools-bar-header" onclick="toggleToolsBar()">
+				<span id="tools-bar-label">🧰 Tools 🧰</span>
+				<span id="tools-bar-arrow">▲</span>
+			</div>
+			<div id="tools-bar-body">
+				<div id="modulesPlaceholder">
+					<div style="font-size:12px;color:#555;text-align:center;padding:12px;">
+						No tools loaded.
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div id="otAlertBar">⛔ No internet access — Online Tools require a connection ⛔</div>
+
+	<div class="detect-popout-overlay" id="detectOverlay" onclick="closeDetectPopout(event)">
+		<div class="detect-popout" onclick="event.stopPropagation()">
+			<div class="detect-popout-head">
+				<h3>🔍 Tags detected in LoRA training data</h3>
+				<button class="detect-popout-close" onclick="closeDetectPopout()">✕</button>
+			</div>
+			<div class="detect-filter-row" id="detectFilterRow"></div>
+			<div class="detect-popout-body" id="detectPopoutBody"></div>
+			<div class="detect-popout-hint">Click a tag to search it in the Danbooru box</div>
+		</div>
+	</div>
+
+	<div class="footer-wrap" style="margin-top:-30px;">
+		<a href="https://github.com/shirosaki33/Modular-AI-Tools" class="toolLink" target="_blank">GitHub Repository</a>
+		<div class="copyright">© 2026 shirosaki33</div>
+	</div>
+
+</div>
+
+<script>
+'use strict';
+
+/* --- Gerenciador Global de Módulos --- */
+window.registerToolModule = function(title, accentColor, contentEl) {
+    const placeholder = document.getElementById('modulesPlaceholder');
+    if (!placeholder) return;
+    if (placeholder.dataset.hasModules !== 'true') {
+        placeholder.innerHTML = '';
+        placeholder.dataset.hasModules = 'true';
+    }
+    const color = accentColor || '#00cc88';
+    const mod = document.createElement('div');
+    mod.className = 'tool-module';
+    const header = document.createElement('div');
+    header.className = 'tool-module-header';
+    header.innerHTML = `<span style="color:${color};">${title}</span><span class="tool-module-arrow" style="color:${color};">▾</span>`;
+    const body = document.createElement('div');
+    body.className = 'tool-module-body';
+    body.appendChild(contentEl);
+
+    header.onclick = () => {
+        const wasOpen = mod.classList.contains('open');
+        mod.classList.toggle('open');
+        if (!wasOpen && typeof contentEl._onExpand === 'function') {
+            contentEl._onExpand();
+        }
+    };
+    mod.appendChild(header);
+    mod.appendChild(body);
+    placeholder.appendChild(mod);
+};
+
+function toggleToolsBar() {
+    document.getElementById('tools-bar').classList.toggle('open');
+}
+
+// ── MANUAL HASH SEARCH ───────────────────────────────────────────────────────
+async function manualHashSearch() {
+	const hash = document.getElementById('manualHashInput').value.trim();
+	if (!hash) return;
+	const loadId = currentLoadId;
+	setStatus('loading', '🌐 Checking connection…');
+	const hasNet = await checkInternet();
+	if (isStaleLoad(loadId)) return;
+	if (!hasNet) {
+		showOtAlert('⛔ No internet access — Online Tools require a connection');
+		setStatus('error', '⚠ No internet — online lookup skipped.');
+		return;
+	}
+	setStatus('loading', '🌐 Querying Civitai (manual hash)…');
+	try {
+		const ver = await tryHashOnCivitai(hash);
+		if (isStaleLoad(loadId)) return;
+		if (ver) {
+			applyVersion(ver, loadId, hash);
+		} else {
+			setStatus('error', '✗ No matching results found for this hash');
+			showBanner('not-found', '❌  No matching results found');
+		}
+	} catch(e) {
+		if (isStaleLoad(loadId)) return;
+		showConnError();
+		setStatus('error', '⚠ Connection failed — Civitai unreachable.');
+	}
+}
+
+// toggleCardPrompt/_cardPromptOpen/copyFromArea foram movidos para tools/lora/lora_ui.js.
+
+const dropzone  = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+	e.preventDefault(); dropzone.classList.remove('dragover');
+	const f = e.dataTransfer.files[0];
+	if (f && f.name.toLowerCase().endsWith('.safetensors')) processFile(f);
+	else alert('Please drop a .safetensors file.');
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) processFile(fileInput.files[0]); });
+
+let currentLoraName = '';
+let currentMeta     = {};
+let currentFile     = null;
+let currentLoadId   = 0;
+let connErrorShown  = false;
+
+const API = 'https://civitai.com/api/v1/';
+
+function showConnError() {
+	if (connErrorShown) return;
+	connErrorShown = true;
+	document.getElementById('connAlert').classList.add('visible');
+}
+
+function hideConnError() {
+	connErrorShown = false;
+	document.getElementById('connAlert').classList.remove('visible');
+}
+
+async function retryConnection() {
+	hideConnError();
+	setStatus('loading', '⏳ Retrying connection…');
+	if (currentFile) { doHashAndLookup(currentFile, currentLoadId);
+	} else { setStatus('', ''); }
+}
+
+async function processFile(file) {
+	const loadId = ++currentLoadId;
+	resetUI();
+	currentLoadId = loadId;
+	currentFile = file;
+	document.getElementById('dropzoneLabel').textContent = '📂 ' + file.name;
+	currentLoraName = file.name.replace(/\.safetensors$/i, '');
+	const nameEl = document.getElementById('loraNameDisplay');
+	nameEl.textContent = currentLoraName;
+	nameEl.classList.remove('empty');
+
+	let meta = {};
+	try { meta = await readHeader(file); }
+	catch (e) {
+		if (isStaleLoad(loadId, file)) return;
+		setStatus('error', '⚠ Could not parse file header.');
+	}
+	if (isStaleLoad(loadId, file)) return;
+
+	currentMeta = meta;
+	populateUI(window.expandMeta ? window.expandMeta(meta) : meta);
+	
+	if(window.renderTagFrequency) window.renderTagFrequency(meta);
+	if(window.renderMetaRaw) window.renderMetaRaw(meta);
+	if(window.renderMetaEditor) window.renderMetaEditor(meta);
+	
+	doHashAndLookup(file, loadId);
+}
+
+function isStaleLoad(loadId, file) {
+	return loadId !== currentLoadId || (file && file !== currentFile);
+}
+
+async function readHeader(file) {
+	const lenBuf    = await file.slice(0, 8).arrayBuffer();
+	const headerLen = Number(new DataView(lenBuf).getBigUint64(0, true));
+	if (headerLen <= 0 || headerLen > 200_000_000 || headerLen > file.size - 8) throw new Error('Bad header len');
+	const hdrBuf = await file.slice(8, 8 + headerLen).arrayBuffer();
+	const parsed = JSON.parse(new TextDecoder().decode(hdrBuf));
+	return parsed.__metadata__ || {};
+}
+
+// SHA-256 (nativo ou em streaming para arquivos grandes) vive em
+// tools/lora/lora_meta_reader.js — compartilhado com o Lora Evaluate.
+const computeSHA256 = (file, onProgress) => window.loraSha256(file, onProgress);
+
+const META_HASH_KEYS = ['sshs_model_hash', 'sha256_autov2', 'sha256_autov3', 'sha256', 'blake3', 'hash', 'model hash'];
+async function tryHashOnCivitai(hashValue) {
+	if (!hashValue || hashValue.length < 8) return null;
+	// 404 (and other 4xx except 429) = "hash not known": return null so the next
+	// candidate is tried. Network failures, timeouts, 429 and 5xx THROW so the
+	// callers can show the "connection failed" state instead of "not found".
+	const r = await fetch(API + 'model-versions/by-hash/' + encodeURIComponent(hashValue.trim()), { signal: AbortSignal.timeout(10000) });
+	if (r.ok) return await r.json();
+	if (r.status !== 429 && r.status >= 400 && r.status < 500) return null;
+	throw new Error('HTTP ' + r.status);
+}
+
+async function doHashAndLookup(file, loadId = currentLoadId) {
+	const prog  = document.getElementById('hashProgress');
+	const fill  = document.getElementById('hashProgressFill');
+	const label = document.getElementById('hashProgressLabel');
+	prog.style.display = 'flex';
+	setStatus('loading', '🔐 Computing SHA-256…');
+
+	let computedSHA256 = '';
+	try {
+		computedSHA256 = await computeSHA256(file, pct => {
+			if (isStaleLoad(loadId, file)) return;
+			fill.style.width = (pct * 100).toFixed(0) + '%';
+			label.textContent = 'Hashing… ' + (pct * 100).toFixed(0) + '%';
+		});
+	} catch(e) {
+		if (isStaleLoad(loadId, file)) return;
+		prog.style.display = 'none';
+		setStatus('error', '⚠ Hash failed.');
+		return;
+	}
+	if (isStaleLoad(loadId, file)) return;
+	prog.style.display = 'none';
+
+	setStatus('loading', '🌐 Checking connection…');
+	const hasNet = await checkInternet();
+	if (isStaleLoad(loadId, file)) return;
+	if (!hasNet) {
+		showOtAlert('⛔ No internet access — Online Tools require a connection');
+		setStatus('error', '⚠ No internet — online lookup skipped.');
+		return;
+	}
+
+	setStatus('loading', '🌐 Querying Civitai (multi-hash)…');
+	let ver = null;
+	let matchedHash = null;
+
+	const meta = currentMeta || {};
+	const hashCandidates = [];
+	for (const key of META_HASH_KEYS) {
+		const val = meta[key];
+		if (val && typeof val === 'string' && val.trim().length >= 8) {
+			hashCandidates.push({ label: key, value: val.trim() });
+		}
+	}
+
+	hashCandidates.push({ label: 'computed SHA256', value: computedSHA256 });
+	const seenHashes = new Set();
+	const uniqueCandidates = hashCandidates.filter(c => {
+		const k = c.value.toLowerCase();
+		if (seenHashes.has(k)) return false;
+		seenHashes.add(k);
+		return true;
+	});
+	for (const candidate of uniqueCandidates) {
+		try {
+			if (isStaleLoad(loadId, file)) return;
+			setStatus('loading', '🌐 Trying ' + candidate.label + '…');
+			ver = await tryHashOnCivitai(candidate.value);
+			if (isStaleLoad(loadId, file)) return;
+			if (ver) {
+				matchedHash = candidate.value;
+				break;
+			}
+		} catch(e) {
+			showConnError();
+			setStatus('error', '⚠ Connection failed — Civitai unreachable.');
+			return;
+		}
+	}
+
+	if (!ver) {
+		if (isStaleLoad(loadId, file)) return;
+		setStatus('loading', '🌐 Trying exact name search…');
+		try {
+			ver = await strictNameSearch(currentLoraName);
+			if (isStaleLoad(loadId, file)) return;
+		} catch(e) {
+			showConnError();
+			setStatus('error', '⚠ Connection failed during name search.');
+			return;
+		}
+	}
+
+	if (ver) {
+		applyVersion(ver, loadId, matchedHash);
+		return;
+	}
+
+	if (isStaleLoad(loadId, file)) return;
+	resetMediaPreview();
+	setStatus('error', '✗ No matching results found');
+	showBanner('not-found', '❌  No matching results found');
+}
+
+async function strictNameSearch(name) {
+	const types = ['LORA', 'LoCon', 'DoRA'];
+	for (const type of types) {
+		try {
+			const r = await fetch(API + 'models?query=' + encodeURIComponent(name) + '&types=' + type + '&limit=8', { signal: AbortSignal.timeout(8000) });
+			if (!r.ok) continue;
+			const d = await r.json();
+			const items = d.items || [];
+			if (!items.length) continue;
+			const exactModel = items.find(m => m.name.toLowerCase() === name.toLowerCase());
+			if (!exactModel) continue;
+			const firstVer = exactModel.modelVersions?.[0];
+			if (!firstVer) continue;
+			const vr = await fetch(API + 'model-versions/' + firstVer.id, { signal: AbortSignal.timeout(8000) });
+			if (vr.ok) return await vr.json();
+		} catch { }
+	}
+	return null;
+}
+
+// models/{id} era buscado 2× por arquivo (aviso de versão nova + criador/descrição).
+const _modelFetchCache = new Map();
+function fetchModelOnce(modelId) {
+	if (!_modelFetchCache.has(modelId)) {
+		_modelFetchCache.set(modelId, fetch(API + 'models/' + modelId, { signal: AbortSignal.timeout(8000) })
+			.then(r => r.ok ? r.json() : null).catch(() => null)
+			.then(d => { if (!d) _modelFetchCache.delete(modelId); return d; }));
+	}
+	return _modelFetchCache.get(modelId);
+}
+
+async function applyVersion(ver, loadId = currentLoadId, matchedHash = null) {
+	if (isStaleLoad(loadId)) return;
+	const modelName = ver.model?.name || ver.name || currentLoraName;
+	const civUrl    = 'https://civitai.com/models/' + ver.modelId + '?modelVersionId=' + ver.id;
+	setStatus('found', '✓ ' + modelName + ' — ' + ver.name);
+	showBanner('found', '✅  Found on CivitAI — ' + modelName);
+	
+	(async () => {
+		try {
+			if (isStaleLoad(loadId)) return;
+			if (ver.modelId) {
+				const md = await fetchModelOnce(ver.modelId);
+				if (isStaleLoad(loadId) || !md) return;
+				const versions = md.modelVersions || [];
+				if (versions.length > 0 && versions[0].id !== ver.id) {
+					showOutdatedBanner();
+				}
+			}
+		} catch { }
+	})();
+	
+	const nameEl = document.getElementById('loraNameDisplay');
+	nameEl.innerHTML = '<a href="' + civUrl + '" target="_blank">' + escHtml(modelName) + '</a>';
+	const images = (ver.images || []).map(i => i.url).filter(Boolean);
+	if (images.length > 0) setGallery(images);
+
+	applyBaseModel(ver, currentMeta, loadId);
+	let creatorName = ver.model?.creator?.username || '';
+	let creatorImg  = ver.model?.creator?.image    || '';
+	
+	if (ver.modelId && (!creatorName || !ver._modelDescription)) {
+		try {
+			const md = await fetchModelOnce(ver.modelId);
+			if (isStaleLoad(loadId)) return;
+			if (md) {
+				if (!creatorName) {
+					creatorName = md.creator?.username || '';
+					creatorImg  = md.creator?.image    || '';
+				}
+				if (!ver._modelDescription && md.description) {
+					ver._modelDescription = md.description;
+				}
+			}
+		} catch { }
+	}
+	
+	if (!ver._modelDescription && ver.model?.description) ver._modelDescription = ver.model.description;
+	if (!creatorName) creatorName = findVal(currentMeta || {}, ['ss_creator','creator','author','ss_author','model_author']) || '';
+	
+	const creatorUrl = creatorName ? 'https://civitai.com/user/' + encodeURIComponent(creatorName) : '#';
+	const creatorLabelRow = document.getElementById('creatorLabelRow');
+	const creatorAvatar   = document.getElementById('creatorAvatar');
+	const creatorFallbk   = document.getElementById('creatorAvatarFallback');
+	const creatorLink     = document.getElementById('creatorNameLink');
+	if (creatorName) {
+		creatorLink.textContent = creatorName;
+		creatorLink.href        = creatorUrl;
+		if (creatorImg) { creatorAvatar.src = creatorImg; creatorAvatar.style.display = 'block'; creatorFallbk.style.display = 'none'; }
+		else            { creatorAvatar.style.display = 'none'; creatorFallbk.style.display = 'flex'; }
+		if (creatorLabelRow) creatorLabelRow.style.display = 'block';
+	} else {
+		creatorLink.textContent = 'Unknown';
+		creatorLink.href = civUrl;
+		creatorAvatar.style.display = 'none';
+		creatorFallbk.style.display = 'flex';
+		if (creatorLabelRow) creatorLabelRow.style.display = 'block';
+	}
+
+	if (isStaleLoad(loadId)) return;
+	
+	if(window.populateOnline) window.populateOnline(ver, civUrl, modelName, creatorName, creatorUrl, matchedHash);
+	if(window.renderOnlinePrompts) await window.renderOnlinePrompts(ver, loadId);
+	
+	if (isStaleLoad(loadId)) return;
+}
+
+async function applyBaseModel(ver, meta, loadId = currentLoadId) {
+	if (isStaleLoad(loadId)) return;
+	const bm = document.getElementById('baseModelValue');
+	const baseModelStr = ver.baseModel || ver.baseModelType || null;
+	if (baseModelStr) {
+		bm.textContent = baseModelStr;
+		bm.style.color = '#ffffff'; 
+		bm.classList.remove('empty');
+	}
+
+	if (meta) {
+		const modelHash = findVal(meta, ['ss_sd_model_hash','sd_model_hash','sshs_model_hash']);
+		if (modelHash) {
+			try {
+				const r = await fetch(API + 'model-versions/by-hash/' + modelHash, { signal: AbortSignal.timeout(8000) });
+				if (isStaleLoad(loadId)) return;
+				if (r.ok) {
+					const d = await r.json();
+					if (isStaleLoad(loadId)) return;
+					const checkName = d.model?.name || d.name || null;
+					const checkUrl  = d.modelId ? 'https://civitai.com/models/' + d.modelId + '?modelVersionId=' + d.id : null;
+					if (checkName && checkUrl) {
+						bm.innerHTML = '<a href="' + checkUrl + '" target="_blank">' + escHtml(checkName) + '</a>';
+						bm.style.color = '';
+						bm.classList.remove('empty');
+						return;
+					}
+				}
+			} catch { }
+		}
+	}
+	if (!baseModelStr) return;
+	try {
+		const r = await fetch(API + 'models?query=' + encodeURIComponent(baseModelStr) + '&types=Checkpoint&limit=3&sort=Highest%20Rated', { signal: AbortSignal.timeout(8000) });
+		if (isStaleLoad(loadId)) return;
+		if (!r.ok) return;
+		const d = await r.json();
+		if (isStaleLoad(loadId)) return;
+		const match = (d.items || []).find(m => m.name.toLowerCase().includes(baseModelStr.toLowerCase()) || baseModelStr.toLowerCase().includes(m.name.toLowerCase()) );
+		if (match) {
+			bm.innerHTML = '<a href="https://civitai.com/models/' + match.id + '" target="_blank">' + escHtml(match.name) + '</a>';
+			bm.style.color = '';
+			bm.classList.remove('empty');
+		}
+	} catch { }
+}
+
+async function collectAllTrainedWords(ver) {
+	const seen = new Set();
+	const all  = [];
+	const addWords = (arr) => {
+		if (!Array.isArray(arr)) return;
+		arr.forEach(w => {
+			const t = String(w).trim();
+			if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); all.push(t); }
+		});
+	};
+
+	addWords(ver.trainedWords);
+	if (!Array.isArray(ver.trainedWords)) {
+		if (Array.isArray(ver.modelVersions)) ver.modelVersions.forEach(mv => addWords(mv.trainedWords));
+		if (ver.model && Array.isArray(ver.model.modelVersions)) ver.model.modelVersions.forEach(mv => addWords(mv.trainedWords));
+		if (ver.modelId && all.length === 0) {
+			try {
+				const r = await fetch(API + 'models/' + ver.modelId, { signal: AbortSignal.timeout(8000) });
+				if (r.ok) {
+					const fullModel = await r.json();
+					(fullModel.modelVersions || []).forEach(mv => addWords(mv.trainedWords));
+				}
+			} catch { }
+		}
+	}
+	return all;
+}
+
+// Todo o parsing/leitura de metadados (FIELDS, findVal, resolvers, detecção de
+// timing/sistema, populateUI/setField — com o fix do bug de Epoch, chave
+// 'ss_num_epochs') vive em tools/lora/lora_meta_reader.js.
+//
+// Galeria de imagens/vídeos e banners/status/feedback de conexão vivem em
+// tools/lora/lora_ui.js.
+//
+// UI de prompts (toggle do card, colapso de textarea, renderPrompts) e o
+// popout de detecção de tags no Danbooru vivem em tools/lora/lora_ui.js.
+
+function resetUI() {
+	currentLoraName = ''; currentMeta = {}; currentFile = null; resetMediaPreview();
+	hideBanner(); hideOutdatedBanner(); hideConnError();
+	
+	const toolsBar = document.getElementById('tools-bar');
+	if (toolsBar) toolsBar.classList.remove('open');
+	document.querySelectorAll('.tool-module').forEach(m => m.classList.remove('open'));
+
+	const nameEl = document.getElementById('loraNameDisplay');
+	nameEl.textContent = '—'; nameEl.classList.add('empty');
+	const creatorLabelRow = document.getElementById('creatorLabelRow');
+	if (creatorLabelRow) creatorLabelRow.style.display = 'none';
+	document.getElementById('creatorAvatar').src = ''; document.getElementById('creatorAvatar').style.display = 'block';
+	document.getElementById('creatorAvatarFallback').style.display = 'none';
+	document.getElementById('creatorNameLink').textContent = '—'; document.getElementById('creatorNameLink').href = '#';
+
+	const bmEl = document.getElementById('baseModelValue'); bmEl.innerHTML = '—'; bmEl.classList.add('empty');
+	document.getElementById('vaeRow').style.display = 'none';
+	const vaeEl = document.getElementById('vaeValue'); vaeEl.innerHTML = '—'; vaeEl.classList.add('empty');
+	document.querySelectorAll('.card-value').forEach(el => { el.textContent = '—'; el.classList.add('empty'); });
+	document.getElementById('v-training_comment').textContent = '';
+	document.getElementById('datasetContent').innerHTML = ''; document.getElementById('datasetFormatHint').style.display = 'none';
+	setSystemInfo(null);
+	
+	_cardPromptOpen = true;
+	const cardPromptBody = document.getElementById('cardPromptBody'), cardPromptBtn = document.getElementById('cardPromptToggleBtn');
+	if (cardPromptBody) { cardPromptBody.classList.remove('collapsed'); cardPromptBody.style.maxHeight = ''; }
+	if (cardPromptBtn) cardPromptBtn.textContent = '▲';
+	
+	document.getElementById('promptSection').innerHTML = '<div class="prompt-block"><div class="promptBox"><span class="prompt-label">Prompt</span><button class="copy-btn" onclick="copyFromArea(\'positiveText\',this)">⧉</button></div><div class="prompt-ta-wrap" id="promptWrap_0" data-state="full" style="max-height:9999px;"><textarea class="promptArea" id="positiveText" placeholder="Tags from training data will appear here after loading a model…"></textarea></div></div>';
+	
+	document.getElementById('hashProgress').style.display = 'none';
+	document.getElementById('otAlertBar').style.display = 'none';
+	setStatus('','');
+}
+
+// sanitizeCivitaiDesc foi movida para tools/lora/lora_meta_reader.js
+// (export window.sanitizeCivitaiDescLocal também vive lá agora).
+
+
+
+window.collectAllTrainedWordsLocal = collectAllTrainedWords;
+window.isStaleLoadLocal = isStaleLoad;
+window.currentLoraNameLocal = () => currentLoraName;
+window.currentFileLocal = () => currentFile;
+window.currentMetaLocal = () => currentMeta;
+
+// Popout de detecção de tags Danbooru (DANBOORU_CAT, openDetectPopout,
+// extractTagsFromMeta, renderDetectPopout, closeDetectPopout) vive em
+// tools/lora/lora_ui.js (precisa carregar antes de tools/shared/danbooru.js).
+</script>
+
+<script src="tools/lora/lora_meta_reader.js?v=8"></script>
+<script src="tools/lora/lora_ui.js?v=7"></script>
+<script src="tools/quick_links.js?v=5"></script>
+<script src="tools/lora/lora_meta_tools.js?v=6"></script>
+<script src="tools/shared/danbooru.js?v=5"></script>
+<script src="tools/lora/lora_civitai.js?v=5"></script>
+
+</body>
+</html>
