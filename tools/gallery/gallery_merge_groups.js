@@ -429,7 +429,10 @@ function paintMergeGroupUI(primaryName, img, badge, label) {
     const fileItem = currentFiles.find(f => f.name === activeName);
 
     if (fileItem) {
-        img.src = fileItem.url;
+        // Goes through the ThumbLoader block system (same as the grid cards). Setting img.src directly was undone by it
+        // (it kept restoring the first version's thumbnail), so only the 🔗 number changed when the arrows were clicked.
+        if (typeof ghAttachThumb === 'function') ghAttachThumb(img, fileItem.url);
+        else img.src = fileItem.url;
         img.dataset.filename = activeName;
         img.onclick = () => openDetailView(fileItem.url, activeName);
     }
