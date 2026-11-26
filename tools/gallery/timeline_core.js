@@ -503,6 +503,7 @@ function tlResetData() {
     tlFolders = []; tlFolderByUid = new Map(); tlRootNode = null;
     tlFlat = []; tlVisibleCount = new Map(); tlPageItems = [];
     tlStripFolder = null; tlStripItems = []; tlStripDirty = false;
+    tlLazyCheck = false; tlCheckSeen = new Set(); tlCheckPending = new Set(); tlCheckRunning = false; tlNeedCreated = false;
     tlCurrent = null; tlNotes = [];
     tlExpanded = new Set();
     const strip = $tl('thumbnail-strip');
@@ -649,8 +650,8 @@ async function applyFolderPath() {
      - on the localhost server -> local/timeline_cache/<directory name>.json  (always a file, never IndexedDB)
      - online / file://        -> the app's own IndexedDB ('cache:<directory name>')
    Next time the timeline is built from that cache right away; image files are opened only when their preview is
-   needed. Then a background check lists the folders again (no getFile on known images), applies what changed
-   (new / removed images and folders) and refreshes the cache. The ↻ button always does a full scan.
+   needed. A folder is then checked against the disk (one listing, no getFile on known images) only when it is shown; the
+   changes (new / removed images and folders) are applied and the cache is refreshed. The ↻ button always does a full scan.
    Known limit: an image replaced in place keeping its name is only noticed by the full scan.
    ================================================================ */
 const TL_CACHE_VERSION = 1;
@@ -725,7 +726,7 @@ async function tlNodesFromCache(root, cache, scanId) {
                 uid: 0, relPath: f.rel, name: d ? f.name : root.name, label: f.rel || '/ (root files)', handle, parent, children: [],
                 images: [], jsonSet: new Set(f.json || []), minTs: 0, maxTs: 0, createdTs: f.c || null, _sub: 0, _key: undefined
             };
-            node.images = (f.img || []).map(a => ({ name: a[0], lastModified: a[1], size: a[2], handle: null, file: null, folder: node, url: null }));
+            node.images = (f.img || []).map(a => ({ name: a[0], lastModified: a[1], size: a[2], handle: null, file: null, folder: node, url: null, lazy: true }));
             byRel.set(f.rel, node);
             if (parent) parent.children.push(node);
         });
@@ -748,8 +749,10 @@ async function tlEnsureFile(item) {
 
 /* Key of an image for the thumbnail loader: the blob url when it exists, otherwise a made-up key + a lazy source */
 const tlLazyKey = item => 'tl:' + item.folder.uid + ':' + item.name;
-const tlKey = item => item.file ? tlUrl(item) : (item.url || tlLazyKey(item));
-const tlThumbOpts = item => item.file ? {} : { getBlob: () => tlEnsureFile(item).then(i => i.file) };
+/* Images from the saved scan (item.lazy) keep the SAME key before and after their file is opened. With a key that changed to the
+   blob url as soon as the file existed, every re-render looked like a new image: the preview was built again from scratch. */
+const tlKey = item => item.lazy ? tlLazyKey(item) : (item.file ? tlUrl(item) : (item.url || tlLazyKey(item)));
+const tlThumbOpts = item => (item.lazy || !item.file) ? { getBlob: () => tlEnsureFile(item).then(i => i.file) } : {};
 
 function tlDisposeItem(it) {
     if (window.ThumbLoader) { window.ThumbLoader.forget(tlLazyKey(it)); if (it.url) window.ThumbLoader.forget(it.url); }
@@ -776,58 +779,79 @@ function tlRenderKeepingPlace() {
     }
 }
 
-/* After a cached boot: lists the folders again (no getFile on known images), finds what changed and applies it.
-   Phase 1 reads the disk and builds a plan; phase 2 applies the plan in one synchronous step. */
-async function tlBackgroundCheck(scanId, cache) {
-    tlSetStatus('Checking for changes...');
-    const plan = [];                                         // { node, added:[item], removed:Set(name), jsons:Set, newDirs:[{nodes,rootNode}], goneDirs:[node], live:Map(name->handle) }
-    let level = [tlRootNode];
-    try {
-        while (level.length) {
-            const next = [];
-            await tlPool(level, 8, async node => {
-                if (scanId !== tlScanId) return;
-                const imgs = new Map(), jsons = new Set(), dirs = new Map();
-                for await (const e of node.handle.values()) {
-                    if (e.kind === 'file') {
-                        if (TL_IMG_RE.test(e.name)) imgs.set(e.name, e);
-                        else if (/\.json$/i.test(e.name)) jsons.add(e.name);
-                    } else if (e.kind === 'directory' && !e.name.startsWith('.')) dirs.set(e.name, e);
-                }
-                const have = new Map(node.images.map(i => [i.name, i]));
-                const added = [];
-                await tlPool(Array.from(imgs.values()).filter(e => !have.has(e.name)), 24, async e => {
-                    const f = await e.getFile();
-                    added.push({ name: e.name, handle: e, file: f, lastModified: f.lastModified, size: f.size, folder: node, url: null });
-                });
-                const removed = new Set(node.images.filter(i => !imgs.has(i.name)).map(i => i.name));
-                const newDirs = [], goneDirs = node.children.filter(c => !dirs.has(c.name));
-                for (const [name, entry] of dirs) {
-                    const child = node.children.find(c => c.name === name);
-                    if (child) { child.handle = entry; next.push(child); }
-                    else if (depthOk(node.relPath)) {
-                        const rel = node.relPath ? node.relPath + '/' + name : name;
-                        const sub = await tlScanRoot(entry, scanId, { rel, depth: rel.split('/').length, parent: node });
-                        if (sub && sub.rootNode) newDirs.push(sub);
-                    }
-                }
-                const sameJson = jsons.size === node.jsonSet.size && Array.from(jsons).every(j => node.jsonSet.has(j));
-                if (added.length || removed.size || newDirs.length || goneDirs.length || !sameJson) plan.push({ node, added, removed, jsons, sameJson, newDirs, goneDirs, live: imgs });
-                else node.images.forEach(i => { i.handle = imgs.get(i.name) || i.handle; });
-            });
-            if (scanId !== tlScanId) return;
-            level = next;
-        }
-    } catch (e) {
-        console.warn('Background check failed (the cached timeline stays as it is):', e);
-        if (scanId === tlScanId) tlUpdateHeaderText();
-        return;
-    }
-    if (scanId !== tlScanId) return;
+/* After a cached boot the saved scan is trusted, and a folder is checked against the disk only when it is shown
+   (like the original block loading: only the folders you actually browse are touched, nothing is listed in bulk).
+   Checking = ONE directory listing (no getFile on known images; getFile only for images that are new). The root is
+   always checked once (new top-level folders), every other folder the first time its cards are drawn.
+   Phase 1 reads the disk and builds a plan; phase 2 applies the plans of a batch in one synchronous step.
+   The ↻ button still does a full scan of everything. */
+let tlLazyCheck = false;                  // true only for a boot from the saved scan
+let tlCheckSeen = new Set();              // folder uids already checked in this load
+let tlCheckPending = new Set();           // folders waiting for their check
+let tlCheckRunning = false;
+let tlNeedCreated = false;                // the saved scan had no folder creation dates: fetch them once
 
+function tlQueueFolderCheck(node) {
+    if (!tlLazyCheck || !node || tlCheckSeen.has(node.uid)) return;
+    tlCheckSeen.add(node.uid);
+    tlCheckPending.add(node);
+    if (!tlCheckRunning) setTimeout(tlRunFolderChecks, 120, tlScanId);     // small delay: a quick scroll queues many folders at once
+}
+
+/* Reads one folder from the disk. Returns a plan when something differs from the saved scan, otherwise null
+   (and refreshes the handles of its images so the previews do not need a lookup by name). */
+async function tlReadNodePlan(node, scanId) {
+    const imgs = new Map(), jsons = new Set(), dirs = new Map();
+    try {
+        for await (const e of node.handle.values()) {
+            if (e.kind === 'file') {
+                if (TL_IMG_RE.test(e.name)) imgs.set(e.name, e);
+                else if (/\.json$/i.test(e.name)) jsons.add(e.name);
+            } else if (e.kind === 'directory' && !e.name.startsWith('.')) dirs.set(e.name, e);
+        }
+    } catch (err) {
+        if (err && err.name === 'NotFoundError' && node.parent) return { vanished: true, node };   // the folder was deleted on disk
+        throw err;
+    }
+    if (scanId !== tlScanId) return null;
+    const have = new Map(node.images.map(i => [i.name, i]));
+    const added = [];
+    await tlPool(Array.from(imgs.values()).filter(e => !have.has(e.name)), 24, async e => {
+        const f = await e.getFile();
+        added.push({ name: e.name, handle: e, file: f, lastModified: f.lastModified, size: f.size, folder: node, url: null });
+    });
+    const removed = new Set(node.images.filter(i => !imgs.has(i.name)).map(i => i.name));
+    const newDirs = [], goneDirs = node.children.filter(c => !dirs.has(c.name));
+    for (const [name, entry] of dirs) {
+        const child = node.children.find(c => c.name === name);
+        if (child) child.handle = entry;
+        else if (depthOk(node.relPath)) {
+            const rel = node.relPath ? node.relPath + '/' + name : name;
+            const sub = await tlScanRoot(entry, scanId, { rel, depth: rel.split('/').length, parent: node });
+            if (sub && sub.rootNode) newDirs.push(sub);
+        }
+    }
+    const sameJson = jsons.size === node.jsonSet.size && Array.from(jsons).every(j => node.jsonSet.has(j));
+    if (added.length || removed.size || newDirs.length || goneDirs.length || !sameJson) return { node, added, removed, jsons, sameJson, newDirs, goneDirs, live: imgs };
+    node.images.forEach(i => { i.handle = imgs.get(i.name) || i.handle; });
+    return null;
+}
+
+async function tlApplyPlans(plans, scanId) {
     let changed = false, dirty = false;
-    plan.forEach(p => {
+    const dropTree = g => {
+        const drop = new Set();
+        (function mark(n) { drop.add(n); n.children.forEach(mark); })(g);
+        drop.forEach(n => { n.images.forEach(tlDisposeItem); tlFolderByUid.delete(n.uid); });
+        tlFolders = tlFolders.filter(n => !drop.has(n));
+    };
+    plans.forEach(p => {
         const { node } = p;
+        if (p.vanished) {
+            if (node.parent && tlFolderByUid.has(node.uid)) { dropTree(node); node.parent.children = node.parent.children.filter(c => c !== node); changed = true; }
+            return;
+        }
+        if (!tlFolderByUid.has(node.uid)) return;                  // removed meanwhile (by another plan)
         if (p.removed.size) {
             node.images.filter(i => p.removed.has(i.name)).forEach(tlDisposeItem);
             node.images = node.images.filter(i => !p.removed.has(i.name));
@@ -837,14 +861,7 @@ async function tlBackgroundCheck(scanId, cache) {
         if (p.added.length) { node.images = node.images.concat(p.added); changed = true; }
         if (p.removed.size || p.added.length) tlUpdateFolderRange(node);
         if (!p.sameJson) { node.jsonSet.clear(); p.jsons.forEach(j => node.jsonSet.add(j)); dirty = true; }
-        p.goneDirs.forEach(g => {
-            const drop = new Set();
-            (function mark(n) { drop.add(n); n.children.forEach(mark); })(g);
-            drop.forEach(n => { n.images.forEach(tlDisposeItem); tlFolderByUid.delete(n.uid); });
-            tlFolders = tlFolders.filter(n => !drop.has(n));
-            node.children = node.children.filter(c => c !== g);
-            changed = true;
-        });
+        p.goneDirs.forEach(g => { dropTree(g); node.children = node.children.filter(c => c !== g); changed = true; });
         p.newDirs.forEach(sub => {
             node.children.push(sub.rootNode);
             node.children.sort((a, b) => tlCollator.compare(a.name, b.name));
@@ -853,14 +870,42 @@ async function tlBackgroundCheck(scanId, cache) {
         });
     });
 
-    // folder creation dates (localhost): only when something changed or the cache never had them
-    if (changed || !cache.created) {
+    // folder creation dates (localhost): only when something changed or the saved scan never had them
+    if (changed || tlNeedCreated) {
+        tlNeedCreated = false;
         await tlFetchCreatedDates();
         if (scanId !== tlScanId) return;
         if (tlFolderDateMode === 'created') changed = true;
     }
     if (changed) tlRenderKeepingPlace(); else tlUpdateHeaderText();
     if (changed || dirty) tlCacheSave();
+}
+
+async function tlRunFolderChecks(scanId) {
+    if (tlCheckRunning || scanId !== tlScanId) return;
+    tlCheckRunning = true;
+    const t0 = performance.now();
+    let checked = 0;
+    try {
+        while (tlCheckPending.size && scanId === tlScanId) {
+            const batch = Array.from(tlCheckPending);
+            tlCheckPending.clear();
+            const plans = [];
+            await tlPool(batch, 3, async node => {
+                if (scanId !== tlScanId) return;
+                const p = await tlReadNodePlan(node, scanId);
+                checked++;
+                if (p) plans.push(p);
+            });
+            if (scanId !== tlScanId) return;
+            await tlApplyPlans(plans, scanId);
+        }
+        if (scanId === tlScanId && checked) console.info(`[Timeline] checked ${checked} folder(s) against the disk in ${Math.round(performance.now() - t0)} ms`);
+    } catch (e) {
+        console.warn('Folder check failed (the saved scan stays as it is):', e);
+    } finally {
+        if (scanId === tlScanId) { tlCheckRunning = false; if (tlCheckPending.size) setTimeout(tlRunFolderChecks, 120, scanId); }
+    }
 }
 const depthOk = rel => (rel === '' ? 0 : rel.split('/').length) < TL_MAX_DEPTH;
 
@@ -909,7 +954,9 @@ async function tlLoadRoot(handle, keepState, forceScan) {
     tlRootNode = res.rootNode;
     tlFolders.forEach(f => tlFolderByUid.set(f.uid, f));
     if (fromCache) {
-        // creation dates come with the cache; the background check refreshes them when something changed
+        tlLazyCheck = true;                                   // must be on before the first render: the folders it draws are checked
+        tlNeedCreated = !cache.created;
+        // creation dates come with the cache; they are refreshed when a folder check finds a change
         tlCreatedAvailable = !!(cache.created && tlIsLocal() && tlRootPath);
         tlDiskStatus = tlCreatedAvailable ? 'Creation dates read from disk (saved).' : '';
         tlUpdateDateModeOptions();
@@ -923,8 +970,10 @@ async function tlLoadRoot(handle, keepState, forceScan) {
     renderFolderSidebar();
     if (keepState && !tlDynamic) $tl('grid-view').scrollTop = prevScroll;
     tlUpdateHeaderText();
-    if (fromCache) tlBackgroundCheck(scanId, cache);
-    else tlCacheSave();
+    if (fromCache) {
+        console.info(`[Timeline] opened from the saved scan: ${tlFolders.length} folders, ${tlTotalImages()} images`);
+        tlQueueFolderCheck(tlRootNode);                       // new top-level folders; every other folder is checked when it is shown
+    } else tlCacheSave();
     tlSessionSaveSoon();
 }
 
@@ -1144,6 +1193,7 @@ function tlBuildRange(container, from, to, joinGrid) {
         const item = tlFlat[i];
         if (item.folder !== curFolder) {
             curFolder = item.folder;
+            tlQueueFolderCheck(curFolder);                          // saved-scan boot: this folder is checked against the disk once, now that it is shown
             const sec = tlMakeSection(curFolder, i === from && from > 0 && tlFlat[from - 1].folder === curFolder);
             frag.appendChild(sec.root);
             gridEl = sec.grid;
