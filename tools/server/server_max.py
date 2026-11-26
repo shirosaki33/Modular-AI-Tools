@@ -1215,6 +1215,33 @@ def kill_pid(pid):
             pass
 
 
+RESTART_CODE = 42                      # exit code that tells "Modular AI Tools localhost.bat" to start the server again in the same window
+
+
+def wait_restart_key(seconds=10):
+    """After Ctrl+C and the saving: R = restart (True), any other key or no key = exit (False). Needs the Windows console
+    (the .bat); anywhere else it returns False at once and the server simply stops."""
+    if os.name != 'nt':
+        return False
+    try:
+        import msvcrt
+        while msvcrt.kbhit():                          # keys typed before: not an answer
+            msvcrt.getwch()
+        print('\n  Press R to restart the server, any other key to exit ({} s)...'.format(seconds), flush=True)
+        end = time.time() + seconds
+        while time.time() < end:
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch in ('\x00', '\xe0'):             # arrow / function key: a second code follows
+                    msvcrt.getwch()
+                    continue
+                return ch.lower() == 'r'
+            time.sleep(0.05)
+    except (ImportError, OSError, KeyboardInterrupt):
+        pass
+    return False
+
+
 def ask(prompt):
     try:
         return input(prompt).strip().lower()
@@ -1399,4 +1426,11 @@ except KeyboardInterrupt:
     log('INFO', 'Stopping (saving pending files)...')
     stop_autofill()
     WRITER.wait(timeout=30)
+    try:
+        httpd.server_close()                           # frees the port before a restart
+    except Exception:
+        pass
     log('INFO', 'Server stopped.')
+    if wait_restart_key():
+        log('INFO', 'Restarting...')
+        sys.exit(RESTART_CODE)
