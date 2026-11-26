@@ -58,9 +58,13 @@ UA = 'ModularAITools/1.0 (local Tag Manager auto-fill; github.com/shirosaki33/Mo
 LIMIT_STATUS = {429, 403, 502, 503, 504} | set(range(520, 531))
 SERVER_ERRORS = {500, 502, 503, 504} | set(range(520, 531))
 COOL = {'first': 60, 'step': 30, 'max': 120, 'retry_after_max': 300, 'hard_fail_limit': 5}
+SWEEP_BIG = 999999999                   # first cursor of an id sweep: page=b<id> = the tags just below this id, newest first
+SWEEPS = ('tags', 'aliases', 'deprecated')
 CACHE_FILES = {'danbooru': 'danbooru_cache.json', 'e621': 'e621_cache.json'}
 BACKUP_KEEP = 4
 TEMP_DIR = 'autofill_temp'
+EXT_PREFIX = 'comfy_pending'                  # file of the ComfyUI node, in the same folder as the cache files (local/)
+EXT_LIVE = EXT_PREFIX + '.jsonl'
 
 DEFAULTS = {
     'enabled': True,
@@ -79,6 +83,10 @@ DEFAULTS = {
     'wiki_mode': 'auto',               # 'auto' = same as the Tag Interrogator option (dbp-wiki-mode); or 'off' / 'short' / 'full'
     'idle_grace_seconds': 20,          # after a page closes (or touches the files) the worker waits this long (read by the server)
     'batch_size': 20,
+    'auto_pace': True,                 # True = the worker chooses the delay between requests, the re-check time and the amounts by itself (the numbers of this file are only the starting point)
+    'id_sweep': True,                  # walks the WHOLE tag list of each site by id (no page limit), then only looks for tags / aliases created since
+    'sweep_limit': 200,                # rows per request of the id sweep (the sites accept up to 320)
+    'alias_backlog': False,            # False = only aliases created from now on (the old ones are found when a tag is looked up); True = read every active alias once
     'start_delay_seconds': 10,
     'commit_every_seconds': 180,       # how often the temporary files are moved into the final files (both sites together)
     'request_delay_ms': {'danbooru': 400, 'e621': 700},
@@ -163,6 +171,8 @@ def wiki_links(body):
 
 def describe(path):
     """Short name of a request for the log."""
+    if 'page=b' in path:
+        return 'an alias sweep page' if path.startswith('/tag_aliases') else 'a tag sweep page'
     m = re.search(r'page=(\d+)', path)
     if 'search[name_comma]' in path:
         return 'a batch of tag names'
@@ -530,6 +540,7 @@ class Store:
         self.stats = {}
         self.ulock = threading.RLock()                         # the unknown-tags list is shared by both sites
         self.journals = {s: Journal(os.path.join(local, TEMP_DIR, s + '.jsonl')) for s in SITES}
+        self.ext_files = set()                                 # files of other programs read but not yet moved into the final files
 
     def jadd(self, site, **rec):
         self.journals[site].add(rec)
@@ -540,44 +551,101 @@ class Store:
 
     def replay(self):
         """Applies the temporary files left by a worker that stopped before moving them into the final files.
-        An entry is only taken when it is not older than what the final file already has."""
+        An entry is only taken when it is not older than what the final file already has.
+        Also takes the file of the ComfyUI node (see ingest_external)."""
         total = 0
         for s in SITES:
             recs = self.journals[s].read()
-            c, w = self.cache[s], self.wiki[s]
             for r in recs:
-                o, k = r['o'], r.get('k')
-                if o == 'c' and k and isinstance(r.get('e'), dict):
-                    if k in c and stamp_of(c[k]) > stamp_of(r['e']):
-                        continue
-                    c[k] = r['e']
-                    self.dirty.add(s)
-                elif o == 'cx' and k:
-                    c.pop(k, None)
-                    self.dirty.add(s)
-                elif o == 'u' and k:
-                    self._unknown_apply(s, k, bool(r.get('v')))
-                elif o == 'w' and k and isinstance(r.get('e'), dict):
-                    cur = w.get(k)
-                    if cur and (cur.get('ts') or 0) > (r['e'].get('ts') or 0):
-                        continue
-                    if cur and cur.get('m') != 's' and r['e'].get('m') == 's':
-                        continue
-                    w[k] = r['e']
-                    self.dirty.add('wiki')
-                elif o == 'wx' and k:
-                    if w.pop(k, None) is not None:
-                        self.dirty.add('wiki')
-                elif o == 'cur':
-                    cur = self.state.setdefault('cursor', {})
-                    cur[s] = max(int(cur.get(s) or 1), int(r.get('v') or 1))
-                    self.dirty.add('state')
-                elif o == 'ls' and k:
-                    ls = self.state.setdefault('link_skip', {})
-                    if k not in ls.setdefault(s, []):
-                        ls[s].append(k)
-                    self.dirty.add('state')
+                self._apply(s, r)
             total += len(recs)
+        total += self.ingest_external()
+        return total
+
+    def _apply(self, s, r):
+        """One record of a temporary file ({'o': kind, 'k': key, ...}) of site s."""
+        c, w = self.cache[s], self.wiki[s]
+        o, k = r['o'], r.get('k')
+        if o == 'c' and k and isinstance(r.get('e'), dict):
+            if k in c and stamp_of(c[k]) > stamp_of(r['e']):
+                return
+            c[k] = r['e']
+            self.dirty.add(s)
+        elif o == 'cx' and k:
+            c.pop(k, None)
+            self.dirty.add(s)
+        elif o == 'u' and k:
+            self._unknown_apply(s, k, bool(r.get('v')))
+        elif o == 'w' and k and isinstance(r.get('e'), dict):
+            cur = w.get(k)
+            if cur and (cur.get('ts') or 0) > (r['e'].get('ts') or 0):
+                return
+            if cur and cur.get('m') != 's' and r['e'].get('m') == 's':
+                return
+            w[k] = r['e']
+            self.dirty.add('wiki')
+        elif o == 'wx' and k:
+            if w.pop(k, None) is not None:
+                self.dirty.add('wiki')
+        elif o == 'cur':
+            cur = self.state.setdefault('cursor', {})
+            cur[s] = max(int(cur.get(s) or 1), int(r.get('v') or 1))
+            self.dirty.add('state')
+        elif o == 'sw' and k and isinstance(r.get('v'), dict):
+            cur = self.state.setdefault('idsweep', {}).setdefault(s, {}).get(k)
+            if cur and (cur.get('upd') or 0) > (r['v'].get('upd') or 0):
+                return
+            self.state['idsweep'][s][k] = dict(r['v'])
+            self.dirty.add('state')
+        elif o == 'ls' and k:
+            ls = self.state.setdefault('link_skip', {})
+            if k not in ls.setdefault(s, []):
+                ls[s].append(k)
+            self.dirty.add('state')
+
+    def ingest_external(self):
+        """Tags found by the ComfyUI node (ComfyUI-Shiro-autocomplete). The node only APPENDS lines to
+        local/comfy_pending.jsonl, one JSON object per line: {"s": "danbooru"|"e621", "o": ..., "k": ..., "e": ...}
+        with the same kinds of record as the temporary files of this worker (c / cx / u). The file is renamed first, so the node
+        keeps appending to a NEW file; the renamed copy is deleted only after the final files were written (commit),
+        and read again by the next run when that did not happen."""
+        live = os.path.join(self.local, EXT_LIVE)
+        if os.path.isfile(live):
+            try:
+                os.replace(live, os.path.join(self.local, '{}.{}.processing'.format(EXT_PREFIX, ms())))
+            except OSError:
+                pass                                            # still open on the other side: the next round takes it
+        try:
+            names = sorted(f for f in os.listdir(self.local) if f.startswith(EXT_PREFIX + '.') and f.endswith('.processing'))
+        except OSError:
+            return 0
+        total = 0
+        for name in names:
+            path = os.path.join(self.local, name)
+            if path in self.ext_files:
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            r = json.loads(line)
+                        except Exception:
+                            continue
+                        if isinstance(r, dict) and r.get('s') in SITES and isinstance(r.get('o'), str):
+                            if r['o'] == 'c' and isinstance(r.get('e'), dict):
+                                cur = self.cache[r['s']].get(r.get('k'))
+                                if isinstance(cur, dict):           # already known: the node's fields win, the rest (wiki flags...) is kept
+                                    if stamp_of(cur) > stamp_of(r['e']):
+                                        continue
+                                    r = dict(r, e=dict(cur, **r['e']))
+                            self._apply(r['s'], r)
+                            total += 1
+            except OSError as e:
+                log('Could not read {}: {}'.format(name, e), 'ERROR')
+                continue
+            self.ext_files.add(path)
+        if total:
+            log('Took {:,} change(s) from the ComfyUI node'.format(total), 'SAVE')
         return total
 
     def _unknown_apply(self, site, key, flag):
@@ -693,6 +761,15 @@ class Store:
                 log('Could not save the state: {}'.format(e), 'FAILED')
         for j in self.journals.values():
             j.clear()
+        for p in list(self.ext_files):                          # the final files hold their content now
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                log('Could not remove {}: {}'.format(os.path.basename(p), e), 'FAILED')
+                continue
+            self.ext_files.discard(p)
         if wrote:
             log('Moved the temporary files into the final ones: ' + ', '.join(wrote), 'SAVE')
         return wrote
@@ -771,6 +848,7 @@ class Filler:
         self.last_commit = time.time()
         self.tools_gone = False                        # Tag Manager / Prompt Helper disappeared from the folder: nothing is changed any more
         self.rand_left = {s: 0 for s in SITES}         # random catalog pages still to take in this round
+        self.pace = {s: 1.0 for s in SITES}            # automatic slow-down factor: grows when a site refuses, shrinks while it answers
 
     # --- waiting / stopping (all threads)
     def poll(self):
@@ -850,7 +928,8 @@ class Filler:
         d = (self.cfg().get('request_delay_ms') or {}).get(sid, 400) / 1000.0
         if sid == 'e621':
             d = max(d, 1.0)                                     # e621 allows 1 request per second on average: never faster than that
-        return 0.8 if (kind == 'batch' and sid == 'danbooru') else d
+        d = 0.8 if (kind == 'batch' and sid == 'danbooru') else d
+        return d * (self.pace[sid] if self.cfg().get('auto_pace', True) else 1.0)
 
     def user_agent(self):
         """e621 asks for a descriptive User-Agent that says who runs the program: "Project/1.0 (by username on e621)"."""
@@ -868,6 +947,7 @@ class Filler:
         self.last_path[sid] = path
         if st == 200 and data is not None:
             self.cool[sid] = self.hard[sid] = 0
+            self.pace[sid] = max(1.0, self.pace[sid] * 0.97)    # automatic pace: a good answer speeds up a little (back to the base delay)
             return 'ok', data
         if st in (404, 410):
             self.cool[sid] = self.hard[sid] = 0
@@ -887,6 +967,7 @@ class Filler:
     def standby(self, sid):
         hit = self.refused[sid] or {}
         self.cool[sid] += 1
+        self.pace[sid] = min(6.0, self.pace[sid] * 1.5)         # automatic pace: a refusal slows every later request of this site down
         wait = min(COOL['first'] + COOL['step'] * (self.cool[sid] - 1), COOL['max'])
         if hit.get('retry_after'):
             wait = min(max(wait, hit['retry_after']), COOL['retry_after_max'])
@@ -1246,6 +1327,153 @@ class Filler:
             self.store.dirty.add(sid)
         return {'ok': True, 'n': len(rows), 'added': added, 'end': len(rows) < CRAWL_LIMIT}
 
+    # --- id sweep: walks the WHOLE tag list by id (the page-number limit does not apply to page=b<id>), then only what is new
+    def sweep_state(self, sid, name):
+        sw = self.store.state.setdefault('idsweep', {}).setdefault(sid, {})
+        return sw.setdefault(name, {'next': SWEEP_BIG, 'top': 0, 'pass_top': 0, 'done': False, 'bad': False})
+
+    def sweep_save(self, sid, name, st):
+        st['upd'] = ms()
+        self.store.dirty.add('state')
+        self.store.jadd(sid, o='sw', k=name, v=dict(st))
+
+    def sweep_reset(self):
+        """A new re-check round: every finished sweep starts again from the newest id and stops where the last one began."""
+        if self.store is None:
+            return
+        for sid in SITES:
+            for name, st in list((self.store.state.get('idsweep', {}).get(sid) or {}).items()):
+                if st.get('done'):
+                    st.update(done=False, next=SWEEP_BIG, pass_top=0)
+                    self.sweep_save(sid, name, st)
+
+    def sweep_path(self, name, cursor, limit):
+        if name == 'aliases':
+            return '/tag_aliases.json?search[status]=active&limit={}&page=b{}'.format(limit, cursor)
+        if name == 'deprecated':
+            return '/tags.json?search[is_deprecated]=true&search[order]=date&limit={}&page=b{}'.format(limit, cursor)
+        return '/tags.json?search[hide_empty]=true&search[order]=date&limit={}&page=b{}'.format(limit, cursor)
+
+    def sweep_step(self, sid):
+        """One request of the id sweep. Returns 1 when something was done, 0 when every sweep of this site is up to date."""
+        for name in SWEEPS:
+            if name == 'deprecated' and sid != 'danbooru':      # e621 has no deprecated tags (only aliases)
+                continue
+            st = self.sweep_state(sid, name)
+            if st.get('done') or st.get('bad'):
+                continue
+            self.sweep_page(sid, name, st)
+            return 1
+        return 0
+
+    def sweep_add_tags(self, sid, rows, deprecated_only):
+        """Tags with at least 1 post. A tag with 0 posts is only taken when the site marks it as deprecated."""
+        c, now, added = self.cache(sid), ms(), 0
+        for row in rows:
+            name = row.get('name')
+            if not name:
+                continue
+            try:
+                posts = int(row.get('post_count') or 0)
+            except (TypeError, ValueError):
+                posts = 0
+            dep = bool(row.get('is_deprecated'))
+            if deprecated_only:
+                if not dep:
+                    continue
+            elif posts < 1 and not dep:
+                continue
+            key = to_key(name)
+            if self.is_unknown(sid, key):
+                continue
+            if key in c:
+                if dep and not c[key].get('isDeprecated') and isinstance(c[key], dict):
+                    self.put(sid, key, {'isDeprecated': True})
+                continue
+            e = row_patch(row, now)
+            e.update({'aliasTo': None, 'aliasChecked': True, 'aliasTs': now})
+            c[key] = e
+            self.store.jadd(sid, o='c', k=key, e=e)
+            added += 1
+        if added:
+            self.store.dirty.add(sid)
+        return added
+
+    def sweep_add_aliases(self, sid, rows):
+        """New active aliases: the old name (0 posts) is saved as an alias of the main tag."""
+        c, added = self.cache(sid), 0
+        for row in rows:
+            ant, con = row.get('antecedent_name'), row.get('consequent_name')
+            if not ant or not con:
+                continue
+            key = to_key(ant)
+            ex = c.get(key)
+            if self.is_unknown(sid, key) or (isinstance(ex, dict) and ex.get('aliasTo')):
+                continue
+            to = str(con).replace('_', ' ')
+            info = c.get(to_key(con))
+            if not isinstance(info, dict) or info.get('count') is None:
+                info = self.single_info(sid, to)                # the main tag may not be saved yet: one lookup (as the alias check does)
+                self.sleep(self.delay(sid))
+            now = ms()
+            self.put(sid, key, {'count': (info or {}).get('count') or 0, 'category': (info or {}).get('category') or 0,
+                                'aliasTo': to, 'aliasChecked': True, 'aliasTs': now, 'isDeprecated': True, 'ts': now})
+            added += 1
+        return added
+
+    def sweep_page(self, sid, name, st):
+        site = 'Danbooru' if sid == 'danbooru' else 'e621'
+        limit = max(10, min(300, int(self.cfg().get('sweep_limit', 200) or 200)))
+        kind, data = self.ask(sid, self.sweep_path(name, st['next'], limit))
+        if kind not in ('ok', 'notfound'):
+            self.sleep(self.delay(sid))
+            return
+        rows = [r for r in tags_array(data) if isinstance(r, dict)] if kind == 'ok' else []
+        ids = []
+        for r in rows:
+            try:
+                ids.append(int(r.get('id')))
+            except (TypeError, ValueError):
+                pass
+        if rows and not ids:                                    # the site does not give ids: this sweep cannot work, do not loop on it
+            st['bad'] = True
+            self.sweep_save(sid, name, st)
+            log('{}: the {} sweep needs the id of each row and the site did not send it - sweep switched off'.format(site, name), 'WARN')
+            return
+        added = 0
+        if rows:
+            if name == 'aliases':
+                added = self.sweep_add_aliases(sid, rows)
+            else:
+                added = self.sweep_add_tags(sid, rows, name == 'deprecated')
+                if name == 'deprecated' and not any(r.get('is_deprecated') for r in rows):
+                    st['bad'] = True                            # the site ignored the filter (it would send every tag): stop right here
+                    self.sweep_save(sid, name, st)
+                    log('{}: the deprecated filter is not supported by the site - deprecated sweep switched off'.format(site), 'WARN')
+                    return
+        self.session[sid]['added'] += added
+        if added:
+            self.queue[sid] = None                              # the new tags still need their wiki: rebuild the list
+        end = not rows
+        if rows:
+            mn, mx = min(ids), max(ids)
+            st['pass_top'] = max(st.get('pass_top') or 0, mx)
+            if st.get('top') and mn <= st['top']:
+                end = True                                      # reached what the last round already saw: only the new part was needed
+            elif name == 'aliases' and not st.get('top') and not self.cfg().get('alias_backlog', False):
+                end = True                                      # first round of the aliases: only the newest page, the backlog is not read
+            else:
+                st['next'] = mn
+        if end:
+            st['done'] = True
+            st['top'] = max(st.get('top') or 0, st.get('pass_top') or 0)
+            st['next'] = SWEEP_BIG
+            log('{}: {} sweep finished ({:+,} new in the last page)'.format(site, name, added), 'SWEEP')
+        elif added or (len(ids) and (st['next'] // 1000) % 50 == 0):
+            log('{}: {} sweep at id {:,} (+{:,} new in this page)'.format(site, name, st['next'], added), 'SWEEP')
+        self.sweep_save(sid, name, st)
+        self.sleep(self.delay(sid))
+
     # --- loading / moving the temporary files into the final ones
     def load(self):
         if self.store is not None:
@@ -1292,6 +1520,7 @@ class Filler:
             while self.active > 0 and time.time() < deadline:
                 self.cv.wait(0.5)
         try:
+            self.store.ingest_external()
             self.store.stats = {s: dict(self.session[s]) for s in SITES}
             self.store.state['cursor'] = dict(self.cursor)
             self.store.commit()
@@ -1397,6 +1626,8 @@ class Filler:
                 if r['end']:
                     self.ended[sid] = True
             self.sleep(self.delay(sid))
+        elif cfg.get('id_sweep', True) and self.sweep_step(sid):
+            did += 1
         elif self.rand_left[sid] > 0:                           # random download: one random page of the site's tag list
             self.rand_left[sid] -= 1
             page = random.randint(1, MAX_PAGE[sid])
@@ -1535,6 +1766,11 @@ def main():
 
     def temp_pending():
         try:
+            if os.path.getsize(os.path.join(local, EXT_LIVE)) > 0:       # tags found by the ComfyUI node
+                return True
+        except OSError:
+            pass
+        try:
             return any(f.endswith('.jsonl') and os.path.getsize(os.path.join(temp_dir, f)) > 0 for f in os.listdir(temp_dir))
         except OSError:
             return False
@@ -1544,6 +1780,8 @@ def main():
         os.remove(wake_file)
     except OSError:
         pass
+    auto = {'seen': 0, 'mins': 30.0}                         # automatic re-check time (auto_pace)
+    sweep_reset_due = False
     next_at = None                                         # None = work now; a time (or inf) = waiting for it / for 'Check now'
     if not cfg_fn().get('run_on_start', True):
         next_at = float('inf')
@@ -1567,7 +1805,8 @@ def main():
                     if gate.woken() or time.time() >= next_at:
                         next_at = None
                         rc = cfg_fn()
-                        if rc.get('random_download'):                    # same timer as the re-check: this round also takes random pages
+                        sweep_reset_due = True                           # the id sweeps look again for what is new
+                        if rc.get('random_download') and not (rc.get('auto_pace', True) and rc.get('id_sweep', True)):   # (the id sweep makes random pages pointless)
                             n = max(1, -(-int(rc.get('random_tags', 100) or 100) // CRAWL_LIMIT))   # blocks of 100 tags
                             filler.rand_left = {s_: n for s_ in SITES}
                     elif not gate.active and temp_pending():             # temporary files left by a session in which a page was open: move them now
@@ -1587,9 +1826,18 @@ def main():
                     log('Some cache file could not be read - trying again in 1 minute', 'WARN')
                     gate.sleep(60)
                     continue
+                if sweep_reset_due:
+                    filler.sweep_reset()
+                    sweep_reset_due = False
                 set_status('working')
                 if filler.run_cycle():
                     mins = float(cfg_fn().get('recheck_minutes', 10) or 0)
+                    if cfg_fn().get('auto_pace', True):          # automatic re-check time: sooner after a round that found tags, later after an empty one
+                        tot = sum(filler.session[s_]['added'] for s_ in SITES)
+                        found = tot - auto['seen'] if tot >= auto['seen'] else tot
+                        auto['seen'] = tot
+                        auto['mins'] = max(15.0, auto['mins'] / 2) if found > 0 else min(360.0, auto['mins'] * 1.5)
+                        mins = auto['mins']
                     filler.release('Everything is up to date - ' + ('checking again in {:g} minutes (or press Check now in the index)'.format(mins) if mins > 0 else 'automatic re-check is off (press Check now in the index)'))
                     for s in SITES:
                         filler.ended[s] = filler.ended[s] and filler.cursor[s] > MAX_PAGE[s]
