@@ -36,7 +36,6 @@ Safety:
 Settings: local/server_config.json -> "booru_autofill" (see server_max.py).
 """
 import argparse
-import random
 import json
 import os
 import re
@@ -70,8 +69,7 @@ DEFAULTS = {
     'enabled': True,
     'run_on_start': True,              # False = the worker only works when 'Check now' is pressed in the index
     'work_while_in_use': True,         # a page using the tag databases does NOT stop the worker: it keeps downloading into the temporary files and moves them into the final files after the page is done
-    'random_download': False,          # on every re-check (recheck_minutes) also take random pages of each site's tag list
-    'random_tags': 100,                # how many random tags to look at per site in each random round (taken in blocks of 100, paced by request_delay_ms)
+    'random_download': True,           # random tag download: after the saved tags are complete, walks the WHOLE tag list of each site by id (no page limit) and adds every tag not saved yet (>= 1 post; 0 posts only for new aliases / deprecated tags), then only looks for what was created since
     'recheck_minutes': 10,             # everything up to date: look again after this many minutes (0 = never, manual only)
     'e621_username': '',               # goes into the User-Agent as "ModularAITools/1.0 (by <name> on e621)", as e621 asks
     'user_agent': '',                  # advanced: a full User-Agent text; replaces the one above when not empty
@@ -84,7 +82,6 @@ DEFAULTS = {
     'idle_grace_seconds': 20,          # after a page closes (or touches the files) the worker waits this long (read by the server)
     'batch_size': 20,
     'auto_pace': True,                 # True = the worker chooses the delay between requests, the re-check time and the amounts by itself (the numbers of this file are only the starting point)
-    'id_sweep': True,                  # walks the WHOLE tag list of each site by id (no page limit), then only looks for tags / aliases created since
     'sweep_limit': 200,                # rows per request of the id sweep (the sites accept up to 320)
     'alias_backlog': False,            # False = only aliases created from now on (the old ones are found when a tag is looked up); True = read every active alias once
     'start_delay_seconds': 10,
@@ -847,7 +844,6 @@ class Filler:
         self.done = {s: False for s in SITES}          # a site with nothing left to do stops; the other one goes on alone
         self.last_commit = time.time()
         self.tools_gone = False                        # Tag Manager / Prompt Helper disappeared from the folder: nothing is changed any more
-        self.rand_left = {s: 0 for s in SITES}         # random catalog pages still to take in this round
         self.pace = {s: 1.0 for s in SITES}            # automatic slow-down factor: grows when a site refuses, shrinks while it answers
 
     # --- waiting / stopping (all threads)
@@ -1626,19 +1622,8 @@ class Filler:
                 if r['end']:
                     self.ended[sid] = True
             self.sleep(self.delay(sid))
-        elif cfg.get('id_sweep', True) and self.sweep_step(sid):
+        elif cfg.get('random_download', True) and self.sweep_step(sid):
             did += 1
-        elif self.rand_left[sid] > 0:                           # random download: one random page of the site's tag list
-            self.rand_left[sid] -= 1
-            page = random.randint(1, MAX_PAGE[sid])
-            r = self.crawl_page(sid, page)
-            did += 1
-            if r['ok']:
-                self.session[sid]['added'] += r['added']
-                log('{}: random page {} -> {} new tags'.format('Danbooru' if sid == 'danbooru' else 'e621', page, r['added']), 'RANDOM')
-                if r['added']:
-                    self.queue[sid] = None
-            self.sleep(self.delay(sid))
         return did
 
     def run_step(self, sid):
@@ -1806,9 +1791,6 @@ def main():
                         next_at = None
                         rc = cfg_fn()
                         sweep_reset_due = True                           # the id sweeps look again for what is new
-                        if rc.get('random_download') and not (rc.get('auto_pace', True) and rc.get('id_sweep', True)):   # (the id sweep makes random pages pointless)
-                            n = max(1, -(-int(rc.get('random_tags', 100) or 100) // CRAWL_LIMIT))   # blocks of 100 tags
-                            filler.rand_left = {s_: n for s_ in SITES}
                     elif not gate.active and temp_pending():             # temporary files left by a session in which a page was open: move them now
                         next_at = None
                     else:
@@ -1841,7 +1823,6 @@ def main():
                     filler.release('Everything is up to date - ' + ('checking again in {:g} minutes (or press Check now in the index)'.format(mins) if mins > 0 else 'automatic re-check is off (press Check now in the index)'))
                     for s in SITES:
                         filler.ended[s] = filler.ended[s] and filler.cursor[s] > MAX_PAGE[s]
-                    filler.rand_left = {s_: 0 for s_ in SITES}
                     gate.woken()
                     next_at = (time.time() + mins * 60) if mins > 0 else float('inf')
             except Paused:
